@@ -1,0 +1,46 @@
+{% extends 'base.html' %}{% block content %}
+<div class="pagehead"><div><span class="eyebrow">ДАННЫЕ / ЭКСПОРТ</span><h2>XML-выгрузка</h2><p>Только чтение. XML не отправляется на Sterbrust.</p></div></div>
+<div class="notice warning"><strong>ESOL import contract: НЕ ПОДТВЕРЖДЁН</strong> · Записи в Sterbrust: 0 · только предпросмотр и скачивание.</div>
+<form class="filters" method="get" action="/exports/xml">
+<input type="hidden" name="action" value="preview">
+<label>Режим
+<select name="mode">
+<option value="short" {{'selected' if mode=='short'}}>Короткий XML — выбранные офферы Stage 5</option>
+<option value="full" {{'selected' if mode=='full'}}>Полный XML — данные поставщиков</option>
+</select></label>
+<select name="supplier"><option value="">Все поставщики</option>{% for v in options.suppliers %}<option value="{{v.code}}" {{'selected' if filters.supplier==v.code}}>{{v.name}}</option>{% endfor %}</select>
+{% if mode!='short' %}
+<select name="brand"><option value="">Все бренды</option>{% for v in options.brands %}<option value="{{v}}" {{'selected' if filters.brand==v}}>{{v}}</option>{% endfor %}</select>
+<select name="decision"><option value="">Все решения</option>{% for v in options.decisions %}<option value="{{v}}" {{'selected' if filters.decision==v}}>{{v|ru}}</option>{% endfor %}</select>
+<input name="category" value="{{filters.category}}" placeholder="Категория">
+<select name="availability"><option value="">Любая доступность</option><option value="in_stock" {{'selected' if filters.availability=='in_stock'}}>В наличии</option><option value="out_of_stock" {{'selected' if filters.availability=='out_of_stock'}}>Нет в наличии</option></select>
+<select name="content"><option value="">Любое наполнение</option><option value="complete" {{'selected' if filters.content=='complete'}}>Есть описание</option><option value="missing" {{'selected' if filters.content=='missing'}}>Нет описания</option></select>
+<select name="media"><option value="">Любые изображения</option><option value="complete" {{'selected' if filters.media=='complete'}}>Есть изображения</option><option value="missing" {{'selected' if filters.media=='missing'}}>Нет изображений</option></select>
+{% endif %}
+<button>Предпросмотр</button>
+</form>
+{% if mode=='short' %}
+<p class="notice">Предпросмотр. Формат действующего профиля импорта ESOL ещё не подтверждён. Этот файл автоматически не отправляется на Sterbrust.</p>
+<p>Источник: выбранные офферы Stage 5 (<code>catalog_offer_selection</code>). Conflict / review / new product в этот XML не входят.</p>
+{% endif %}
+{% if preview %}
+{% if error %}<div class="notice error" role="alert">{{error}}</div>
+{% else %}
+<div class="metrics">
+{% if mode=='short' %}
+{% for key,label in [('considered','Всего рассмотрено'),('selected','Выбрано в XML'),('excluded_total','Исключено из XML'),('no_selected_offer','Без выбранного оффера'),('blocked_by_conflict','Заблокировано конфликтом'),('needs_review','Требует проверки'),('safe_new','SAFE_NEW'),('accessories','Accessories'),('without_price','Без цены'),('without_url','Без корректного URL'),('without_category','Без категории'),('blocked_by_identity','Недопустимый identity-статус'),('invalid_selected_data','Другие ошибки selected-данных')] %}
+<article><span>{{label}}</span><strong>{{summary[key]}}</strong></article>
+{% endfor %}
+{% else %}
+{% for key,label in [('products','Товаров'),('matched','Связано с Sterbrust'),('unmatched','Без Sterbrust ID'),('properties','Свойств'),('images','Изображений'),('documents','Документов'),('relations','Связей')] %}<article><span>{{label}}</span><strong>{{summary[key] or 0}}</strong></article>{% endfor %}
+{% endif %}
+<article><span>Offers / products</span><strong>{{stats.offer_count}}</strong></article>
+<article><span>{{'Размер' if mode=='short' else 'Размер образца'}}</span><strong>{{stats.bytes}} байт</strong></article>
+<article><span>{{'SHA-256' if mode=='short' else 'SHA-256 образца'}}</span><strong>{{stats.sha256}}</strong></article>
+<article><span>generated_at</span><strong>{{stats.generated_at}}</strong></article>
+</div>
+<pre class="panel" readonly>{{preview_text|safe}}</pre>
+<p><a class="button" href="/exports/xml/download?{{request.url.query|replace('action=preview','')}}">Скачать XML</a></p>
+{% endif %}
+{% endif %}
+{% endblock %}

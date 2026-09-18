@@ -1,0 +1,18 @@
+{
+  "version": "stage6-safety-v1",
+  "dry_run_default": true,
+  "write_enabled_default": false,
+  "write_enable_environment_variable": "STERBRUST_WRITE_ENABLE",
+  "write_enable_required_value": "YES",
+  "create_new_products": false,
+  "allowed_logical_write_fields": [
+    "price",
+    "availability"
+  ],
+  "quantity_write_enabled": false,
+  "existing_target_allowlist_required": true,
+  "max_products_changed_per_first_run": null,
+  "max_percentage_changed": null,
+  "max_single_price_delta_percent": null,
+  "threshold_policy_status": "AWAITING_USER_APPROVAL_BEFORE_STAGE7"
+}

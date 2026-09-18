@@ -1,0 +1,38 @@
+{
+  "version": "offer-selection-v1",
+  "ranking_order": [
+    "availability",
+    "supplier_priority",
+    "valid_price",
+    "freshness",
+    "deterministic_tie_break"
+  ],
+  "allowed_offer_kinds": ["default"],
+  "availability_ranking": {
+    "in_stock": 0,
+    "incoming": 1,
+    "preorder": 2,
+    "backorder": 2,
+    "unknown": 3,
+    "out_of_stock": 4,
+    "discontinued": 5
+  },
+  "ineligible_availability": ["discontinued"],
+  "supplier_priority": {
+    "partner_st": 0,
+    "optimum": 0
+  },
+  "default_supplier_priority": 0,
+  "price_strategy": "lowest_valid_price",
+  "unknown_price_behavior": "eligible_not_preferred",
+  "zero_price_behavior": "invalid_commercial_evidence",
+  "unknown_availability_behavior": "eligible",
+  "quantity_contradiction_behavior": "review",
+  "freshness": {
+    "require_missed_crawls_zero": true,
+    "require_success_timestamps": true,
+    "require_latest_successful_full_crawl": true,
+    "allow_stale_fallback": false
+  },
+  "deterministic_tie_break": ["supplier_code", "offer_id"]
+}

@@ -1,0 +1,24 @@
+{% extends 'base.html' %}{% block content %}
+<a class="back" href="/products/{{target.supplier_code}}/{{target.external_id}}">← Карточка товара</a>
+<div class="pagehead"><div><span class="eyebrow">ОДИН ТОВАР</span><h2>Повторная проверка товара</h2><p>{{target.supplier_name}} · {{target.external_id}} · URL берётся из сохранённой карточки.</p></div></div>
+<div class="notice warning">Discovery calls = 0 · Full crawl calls = 0 · Sterbrust writes = 0</div>
+{% if not preview %}
+<form method="post"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button>Получить новые данные</button></form>
+{% else %}
+<section class="grid2">
+<article class="panel"><h3>Текущие данные</h3>
+<table><thead><tr><th>Поле</th><th>Значение</th></tr></thead>
+<tbody>{% for key,value in preview.current_data.items() %}<tr><th>{{key}}</th><td>{{value if value not in [None,''] else '—'}}</td></tr>{% endfor %}</tbody></table>
+</article>
+<article class="panel"><h3>Новые данные</h3>
+<table><thead><tr><th>Поле</th><th>Значение</th></tr></thead>
+<tbody>{% for key,value in preview.proposed_data.items() if key in preview.current_data or key in ['sku','name','price','currency','availability_normalized','description_text','brand'] %}<tr><th>{{key}}</th><td>{{value if value not in [None,''] else '—'}}</td></tr>{% endfor %}</tbody></table>
+</article>
+</section>
+<article class="panel"><h3>Различия</h3>
+<table><thead><tr><th>Поле</th><th>Сейчас</th><th>Поставщик</th></tr></thead>
+<tbody>{% for key,value in preview.diff.items() %}<tr><th>{{key}}</th><td>{{value.current if value.current not in [None,''] else '—'}}</td><td>{{value.proposed if value.proposed not in [None,''] else '—'}}</td></tr>{% else %}<tr><td colspan="3">Различий нет</td></tr>{% endfor %}</tbody></table>
+</article>
+<form method="post" action="/reparse/{{preview.id}}/persist"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><label><input type="checkbox" name="confirm" value="true" required> Подтверждаю сохранение только этого товара во внутренней PostgreSQL</label><button>Сохранить новые данные в нашу БД</button></form>
+{% endif %}
+{% endblock %}

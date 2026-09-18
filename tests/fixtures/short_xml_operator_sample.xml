@@ -1,0 +1,1199 @@
+<?xml version='1.0' encoding='utf-8'?>
+<yml_catalog date="2026-09-08 09:23">
+  <shop>
+    <name>Стербруст</name>
+    <company>Стербруст</company>
+    <url>https://sterbrust.com/</url>
+    <currencies>
+      <currency id="RUB" rate="1" />
+    </currencies>
+    <categories>
+      <category id="3889">Универсальные заточные станки</category>
+      <category id="3901">Станки для заточки сверл</category>
+      <category id="3908">Станки для заточки  дисковых пил</category>
+      <category id="3919">Станки для заточки  фрез</category>
+      <category id="3949">Прочие</category>
+      <category id="3985">Кромкорезные станки</category>
+      <category id="4405">Фаскосниматели</category>
+      <category id="4469">Плоскошлифовальные станки</category>
+      <category id="4835">Расходные материалы и оснастка</category>
+      <category id="5004">Расходные материалы</category>
+      <category id="5005">Для станков</category>
+      <category id="5017">Цанговые патроны</category>
+      <category id="5024">Тиски</category>
+      <category id="5030">Устройства подачи СОЖ</category>
+      <category id="5033">Оснастка для заточных станков</category>
+      <category id="5040">Приспособления для заточки</category>
+      <category id="5127">Столы делительные и поворотные</category>
+      <category id="5202">Диски по металлу</category>
+      <category id="5292">Диски для резчиков швов</category>
+      <category id="5754">Станки для заточки  метчиков</category>
+      <category id="5758">Станки для заточки  токарных резцов</category>
+      <category id="5766">Круглошлифовальные станки</category>
+      <category id="5977">Делительные головки</category>
+      <category id="6325">Плиты монтажные</category>
+      <category id="6446">Диск пильный</category>
+      <category id="6556">Резьбонарезные патроны</category>
+      <category id="6589">Резьбонарезные манипуляторы</category>
+      <category id="6820">Наборы сверл</category>
+    </categories>
+    <offers>
+      <offer id="40454" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-zatochnykh-stankov/partner-pp-38s/</url>
+        <price>95404</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5033</categoryId>
+        <name>Промышленная вытяжка Partner PP-38S</name>
+        <vendor>Partner</vendor>
+        <vendorCode>578415</vendorCode>
+        <param name="quantity">14</param>
+      </offer>
+      <offer id="40466" available="true">
+        <url>https://sterbrust.com/catalog/prisposobleniya-dlya-zatochki/motorizirovannaya-golovka-partner-50s/</url>
+        <price>126026</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5040</categoryId>
+        <name>Моторизированная головка Partner 50S</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506055</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="40478" available="false">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-zatochnykh-stankov/elektronno-chislovoy-displey-partner/</url>
+        <price>24000</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5033</categoryId>
+        <name>Электронно-числовой дисплей Partner</name>
+        <vendor>Partner</vendor>
+        <vendorCode>578412</vendorCode>
+      </offer>
+      <offer id="40501" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/stanok-dlya-zatochki-sverl-ot-12-do-26-mm-partner-pp-26/</url>
+        <price>89670</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Станок для заточки сверл от 12 до 26 мм Partner PP-26</name>
+        <vendor>Partner</vendor>
+        <vendorCode>102601</vendorCode>
+        <param name="quantity">6</param>
+      </offer>
+      <offer id="40529" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/stanok-dlya-zatochki-sverl-ot-2-do-13-mm-partner-pp-13c/</url>
+        <price>36844</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Станок для заточки сверл от 2 до 13 мм Partner PP-13C</name>
+        <vendor>Partner</vendor>
+        <vendorCode>101302</vendorCode>
+        <param name="quantity">8</param>
+      </offer>
+      <offer id="40571" available="true">
+        <url>https://sterbrust.com/catalog/universalnye-zatochnye-stanki/universalnyy-zatochnoy-stanok-partner-pp-600f/</url>
+        <price>232000</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3889</categoryId>
+        <name>Универсальный заточной станок Partner PP-600F</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506001</vendorCode>
+        <oldprice>257786</oldprice>
+        <param name="quantity">7</param>
+      </offer>
+      <offer id="40586" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/stanok-dlya-zatochki-sverl-ot-2-do-30-mm-partner-pp-30/</url>
+        <price>134200</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Станок для заточки сверл от 2 до 30 мм Partner PP-30</name>
+        <vendor>Partner</vendor>
+        <vendorCode>103001</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="40589" available="true">
+        <url>https://sterbrust.com/catalog/krugloshlifovalnye-stanki/krugloshlifovalnyy-stanok-dlya-naruzhnoy-shlifovki-partner-gd-m5020a/</url>
+        <price>2813710</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5766</categoryId>
+        <name>Круглошлифовальный станок для наружной шлифовки Partner M3080A</name>
+        <vendor>Partner</vendor>
+        <vendorCode>503080</vendorCode>
+      </offer>
+      <offer id="40597" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/stanok-dlya-zatochki-koronchatykh-sverl-partner-erm-2/</url>
+        <price>154818</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Станок для заточки корончатых сверл Partner ERM-2</name>
+        <vendor>Partner</vendor>
+        <vendorCode>581020</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="40637" available="true">
+        <url>https://sterbrust.com/catalog/prisposobleniya-dlya-zatochki/partner-50e-golovka-dlya-zatochki-sfericheskikh-i-koncevykh-frez-po-torcu-i-spirali/</url>
+        <price>88694</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5040</categoryId>
+        <name>Partner 50E Головка для заточки сферических и концевых фрез по торцу и спирали</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506030</vendorCode>
+        <param name="quantity">6</param>
+      </offer>
+      <offer id="40638" available="true">
+        <url>https://sterbrust.com/catalog/universalnye-zatochnye-stanki/universalnyy-zatochnoy-stanok-partner-pp-u3/</url>
+        <price>106083</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3889</categoryId>
+        <name>Универсальный заточной станок Partner PP-U3</name>
+        <vendor>Partner</vendor>
+        <vendorCode>502502</vendorCode>
+        <oldprice>117870</oldprice>
+        <param name="quantity">18</param>
+      </offer>
+      <offer id="60583" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/manipulyator-rezbonareznoj-vertikalnyj-m3-m16-partner-ds16u-/</url>
+        <price>82545</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Манипулятор резьбонарезной вертикальный М3-М16 Partner DS16U</name>
+        <vendor>Partner</vendor>
+        <vendorCode>860160</vendorCode>
+        <oldprice>97112</oldprice>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="60585" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/manipulyator-rezbonareznoj-vertikalnyj-m6-m30-partner-ds30u/</url>
+        <price>104920</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Манипулятор резьбонарезной вертикальный М6-М30 Partner DS30U</name>
+        <vendor>Partner</vendor>
+        <vendorCode>860300</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="61421" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-frez/stanok-dlya-zatochki-frez-po-torcu-i-spirali-ot-4-do-20-mm-partner-lx20-new/</url>
+        <price>244488</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3919</categoryId>
+        <name>Станок для заточки фрез по торцу и спирали от 4 до 20 мм Partner LX20 NEW</name>
+        <vendor>Partner</vendor>
+        <vendorCode>212004</vendorCode>
+        <param name="quantity">9</param>
+      </offer>
+      <offer id="61422" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-frez/stanok-dlya-zatochki-frez-po-torcu--ot-4-do-20-mm-partner-x420-/</url>
+        <price>117730</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3919</categoryId>
+        <name>Станок для заточки фрез по торцу  от 4 до 20 мм Partner X420</name>
+        <vendor>Partner</vendor>
+        <vendorCode>214201</vendorCode>
+        <param name="quantity">6</param>
+      </offer>
+      <offer id="61429" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/partner-pp-30-new-stanok-dlya-zatochki-spiralnykh-sverl-ot-2-do-30-mm/</url>
+        <price>146143</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Partner PP-30 NEW Станок для заточки спиральных сверл от 2 до 30 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>103401</vendorCode>
+        <oldprice>162382</oldprice>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="61431" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/partner-pp-60a-stanok-dlya-zatochki-sverl-ot-3-do-60-mm/</url>
+        <price>330986</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Partner PP-60A Станок для заточки сверл от 3 до 60 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>136063</vendorCode>
+      </offer>
+      <offer id="61477" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/partner-pp-80a-specializirovanny-j-stanok-dlya-zatochki-sverl-ot-3-do-80-mm/</url>
+        <price>583680</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Partner PP-80A Специализированный станок для заточки сверл от 3 до 80 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>138083</vendorCode>
+      </offer>
+      <offer id="61482" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/partner-pp-6a-stanok-dlya-zatochki-spiralnykh-sverl-ot-08-mm-do-6-mm/</url>
+        <price>310612</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Partner PP-6A Станок для заточки спиральных сверл от 0,8 мм до 6 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>110601</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="61484" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-prochie/partner-pp-13w-stanok-dlya-zatochki-volframovykh-ehlektrodov-3-14-mm/</url>
+        <price>84912</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3949</categoryId>
+        <name>Partner PP-13W Станок для заточки вольфрамовых электродов 3-14 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>101369</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="61487" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/partner-pp-13e-zatochnoj-stanok-dlya-perovykh-sverl-ot-4-do-13-mm/</url>
+        <price>88938</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Partner PP-13E Заточной станок для перовых сверл от 4 до 13 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>101303</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="61545" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-diskovykh-pil/partner-pp-q12-stanok-dlya-zatochki-diskovykh-pil-diametrom-25-150-mm/</url>
+        <price>258030</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3908</categoryId>
+        <name>Partner PP-Q12 Станок для заточки дисковых пил диаметром 25-150 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>602512</vendorCode>
+      </offer>
+      <offer id="61547" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-diskovykh-pil/partner-pp-q10-stanok-dlya-zatochki-diskovykh-pil-diametrom-60-400-mm/</url>
+        <price>178974</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3908</categoryId>
+        <name>Partner PP-Q10 Станок для заточки дисковых пил диаметром 60-400 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>602510</vendorCode>
+      </offer>
+      <offer id="61550" available="true">
+        <url>https://sterbrust.com/catalog/dlya-zatochki-tokarnykh-reztsov/partner-rr-3-stanok-dlya-zatochki-tokarnykh-rezcov/</url>
+        <price>72468</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5758</categoryId>
+        <name>Partner РР-3 Станок для заточки токарных резцов</name>
+        <vendor>Partner</vendor>
+        <vendorCode>503174</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="61551" available="true">
+        <url>https://sterbrust.com/catalog/dlya-zatochki-tokarnykh-reztsov/partner-rr-m3-stanok-dlya-zatochki-tokarnykh-rezcov/</url>
+        <price>144606</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5758</categoryId>
+        <name>Partner РР-М3 Станок для заточки токарных резцов</name>
+        <vendor>Partner</vendor>
+        <vendorCode>503149</vendorCode>
+        <oldprice>160674</oldprice>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="61562" available="true">
+        <url>https://sterbrust.com/catalog/dlya-zatochki-metchikov/partner-pp-y3s-stanok-dlya-zatochki-metchikov-ot-m5-do-m20/</url>
+        <price>113582</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5754</categoryId>
+        <name>Partner PP-Y3С Станок для заточки метчиков от М5 до М20</name>
+        <vendor>Partner</vendor>
+        <vendorCode>301325</vendorCode>
+        <param name="quantity">4</param>
+      </offer>
+      <offer id="61564" available="true">
+        <url>https://sterbrust.com/catalog/dlya-zatochki-metchikov/partner-pp-y5c-stanok-dlya-zatochki-metchikov-ot-m16-do-m42/</url>
+        <price>165066</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5754</categoryId>
+        <name>Partner PP-Y5C Станок для заточки метчиков от М16 до М42</name>
+        <vendor>Partner</vendor>
+        <vendorCode>314201</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="61565" available="true">
+        <url>https://sterbrust.com/catalog/dlya-zatochki-metchikov/partner-pp-y6v-stanok-dlya-zatochki-pryamykh-i-spiralnykh-metchikov-diapazon-ot-m5-do-m20/</url>
+        <price>190076</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5754</categoryId>
+        <name>Partner PP-Y6В Станок для заточки прямых и спиральных метчиков диапазон от М5 до М20</name>
+        <vendor>Partner</vendor>
+        <vendorCode>312010</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="61570" available="true">
+        <url>https://sterbrust.com/catalog/faskosnimateli/partner-r200-portativnoe-ustrojstvo-dlya-snyatiya-pryamolinejnoj-faski-15-45-gr-razmer-faski-0-9-mm/</url>
+        <price>70394</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4405</categoryId>
+        <name>Partner R200 Портативное устройство для снятия прямолинейной фаски 15-45 гр, размер фаски 0-9 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>800200</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="61572" available="true">
+        <url>https://sterbrust.com/catalog/kromkoreznye-stanki/partner-r300-stanok-dlya-snyatiya-pryamolinejnoj-faski-15-45-gr-razmer-faski-0-3-mm/</url>
+        <price>93269</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3985</categoryId>
+        <name>Partner R300 Станок для снятия прямолинейной фаски 15-45 гр, размер фаски 0-3 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>800300</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="61574" available="true">
+        <url>https://sterbrust.com/catalog/kromkoreznye-stanki/partner-700b-stanok-dlya-snyatiya-pryamolinejnoj-faski-s-uglom-15-45-gr-razmer-faski-0-3-mm/</url>
+        <price>168824</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3985</categoryId>
+        <name>Partner 700B Станок для снятия прямолинейной фаски с углом 15-45 гр размер фаски 0-3 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>800500</vendorCode>
+      </offer>
+      <offer id="61579" available="true">
+        <url>https://sterbrust.com/catalog/kromkoreznye-stanki/partner-r700-stanok-dlya-snyatiya-krivolinejnoj-faski-0-25-mm/</url>
+        <price>146010</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3985</categoryId>
+        <name>Partner R700 Станок для снятия криволинейной фаски 0-2,5 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>800700</vendorCode>
+      </offer>
+      <offer id="61713" available="true">
+        <url>https://sterbrust.com/catalog/kromkoreznye-stanki/partner-800br-stanok-dlya-snyatiya-pryamolinejnoj-(0-3-mm)-i-krivolinejnoj-(0-25-mm)-faski/</url>
+        <price>165334</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3985</categoryId>
+        <name>Partner 800BR Станок для снятия прямолинейной (0-3 мм) и криволинейной (0-2,5 мм) фаски</name>
+        <vendor>Partner</vendor>
+        <vendorCode>800800</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="61725" available="true">
+        <url>https://sterbrust.com/catalog/ustroystva-podachi-sozh/partner-pp-27l-sistema-okhlazhdeniya/</url>
+        <price>63440</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5030</categoryId>
+        <name>Partner PP-27L Система охлаждения</name>
+        <vendor>Partner</vendor>
+        <vendorCode>578414</vendorCode>
+        <param name="quantity">4</param>
+      </offer>
+      <offer id="61726" available="true">
+        <url>https://sterbrust.com/catalog/prisposobleniya-dlya-zatochki/partner-100m-nastolnyj-mikroskopom-s-uvelicheniem-v-100-raz/</url>
+        <price>126636</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5040</categoryId>
+        <name>Partner 100M Настольный микроскопом с увеличением в 100 раз</name>
+        <vendor>Partner</vendor>
+        <vendorCode>578424</vendorCode>
+      </offer>
+      <offer id="61730" available="true">
+        <url>https://sterbrust.com/catalog/prisposobleniya-dlya-zatochki/partner-50x-zadnyaya-upornaya-babka-dlya-universalnogo-zatochnogo-stanka/</url>
+        <price>35234</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5040</categoryId>
+        <name>Partner 50X Задняя упорная бабка для универсального заточного станка</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506058</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="61789" available="true">
+        <url>https://sterbrust.com/catalog/prisposobleniya-dlya-zatochki/nabor-dopolnitelnykh-tsang-er20-dlya-stanka-pp-20-5-sht-2-2-5-3-5-4-5-5-5-mm/</url>
+        <price>8662</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5040</categoryId>
+        <name>Набор дополнительных цанг ER20 для станка PP-20, 5 шт (2, 2.5, 3.5, 4.5, 5.5 мм)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>992050</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="61791" available="true">
+        <url>https://sterbrust.com/catalog/prisposobleniya-dlya-zatochki/nabor-dopolnitelnykh-tsang-er40-dlya-stanka-pp-26-11-sht-8-9-10-11-12-27-28-29-30-31-32/</url>
+        <price>21875</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5040</categoryId>
+        <name>Набор дополнительных цанг ER40 для станка PP-26, 11 шт (8, 9, 10, 11, 12, 27, 28, 29, 30, 31, 32)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>992612</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="82011" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-frez/partner-lx13-new/</url>
+        <price>180291</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3919</categoryId>
+        <name>Станок для заточки фрез по торцу и спирали от 4 до 14 мм Partner LX13 NEW</name>
+        <vendor>Partner</vendor>
+        <vendorCode>211306</vendorCode>
+        <oldprice>200324</oldprice>
+        <param name="quantity">8</param>
+      </offer>
+      <offer id="82013" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-frez/stanok-dlya-zatochki-sfericheskikh-frez-6-20-mm-partner-mr-x8/</url>
+        <price>250344</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3919</categoryId>
+        <name>Станок для заточки сферических фрез 6-20 мм Partner MR-X8</name>
+        <vendor>Partner</vendor>
+        <vendorCode>212001</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="88407" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-frez/stanok-dlya-zatochki-frez-po-torcu-i-spirali-ot-12-do-30-mm-partner-lx30-new/</url>
+        <price>249612</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3919</categoryId>
+        <name>Станок для заточки фрез по торцу и спирали от 12 до 30 мм Partner LX30 NEW</name>
+        <vendor>Partner</vendor>
+        <vendorCode>213007</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="88408" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-frez/stanok-vysokotochnyj-dlya-zatochki-frez-po-torcu-i-spirali--ot-3-do-28-mm-partner-gd-66/</url>
+        <price>278562</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3919</categoryId>
+        <name>Станок высокоточный для заточки фрез по торцу и спирали  от 3 до 28 мм Partner GD-66</name>
+        <vendor>Partner</vendor>
+        <vendorCode>206628</vendorCode>
+        <oldprice>309514</oldprice>
+        <param name="quantity">9</param>
+      </offer>
+      <offer id="88409" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-frez/stanok-dlya-zatochki-kontsevykh-frez-12-30-mm-partner-mr-x5/</url>
+        <price>165676</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3919</categoryId>
+        <name>Станок для заточки концевых фрез 12-30 мм Partner MR-X5</name>
+        <vendor>Partner</vendor>
+        <vendorCode>213001</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="88536" available="true">
+        <url>https://sterbrust.com/catalog/faskosnimateli/faskosnimatel-dlya-trub-partner-isy-80t/</url>
+        <price>140715</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4405</categoryId>
+        <name>Фаскосниматель для труб Partner ISY-80T</name>
+        <vendor>Partner</vendor>
+        <vendorCode>810080</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="88537" available="true">
+        <url>https://sterbrust.com/catalog/faskosnimateli/faskosnimatel-dlya-trub-partner-isy-150/</url>
+        <price>146400</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4405</categoryId>
+        <name>Фаскосниматель для труб Partner ISY-150</name>
+        <vendor>Partner</vendor>
+        <vendorCode>810150</vendorCode>
+      </offer>
+      <offer id="88538" available="true">
+        <url>https://sterbrust.com/catalog/faskosnimateli/faskosnimatel-dlya-trub-partner-isy-250/</url>
+        <price>316578</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4405</categoryId>
+        <name>Фаскосниматель для труб Partner ISY-250</name>
+        <vendor>Partner</vendor>
+        <vendorCode>810250</vendorCode>
+      </offer>
+      <offer id="88585" available="true">
+        <url>https://sterbrust.com/catalog/universalnye-zatochnye-stanki/universalnyy-zatochnoy-stanok-partner-pp-800f/</url>
+        <price>339940</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3889</categoryId>
+        <name>Универсальный заточной станок Partner PP-800F</name>
+        <vendor>Partner</vendor>
+        <vendorCode>508002</vendorCode>
+        <oldprice>377712</oldprice>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="88586" available="true">
+        <url>https://sterbrust.com/catalog/universalnye-zatochnye-stanki/universalnyy-zatochnoy-stanok-partner-pp-6025w-/</url>
+        <price>409224</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3889</categoryId>
+        <name>Универсальный заточной станок Partner PP-6025W</name>
+        <vendor>Partner</vendor>
+        <vendorCode>560251</vendorCode>
+        <oldprice>454694</oldprice>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="88588" available="true">
+        <url>https://sterbrust.com/catalog/universalnye-zatochnye-stanki/universalno-tochilnyy-stanok-dlya-instrumenta-partner-mq6025a/</url>
+        <price>1759118</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3889</categoryId>
+        <name>Универсально-точильный станок для инструмента Partner MQ6025A</name>
+        <vendor>Partner</vendor>
+        <vendorCode>560255</vendorCode>
+      </offer>
+      <offer id="88589" available="true">
+        <url>https://sterbrust.com/catalog/universalnye-zatochnye-stanki/partner-mq6025ya/</url>
+        <price>3246176</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3889</categoryId>
+        <name>Гидравлический универсальный точильный станок для инструментов Partner MQ6025YA</name>
+        <vendor>Partner</vendor>
+        <vendorCode>560254</vendorCode>
+      </offer>
+      <offer id="88590" available="true">
+        <url>https://sterbrust.com/catalog/krugloshlifovalnye-stanki/partner-m3080b/</url>
+        <price>3059894</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5766</categoryId>
+        <name>Круглошлифовальный станок для внутренней и наружной шлифовки Partner M3080B</name>
+        <vendor>Partner</vendor>
+        <vendorCode>503081</vendorCode>
+      </offer>
+      <offer id="88591" available="true">
+        <url>https://sterbrust.com/catalog/krugloshlifovalnye-stanki/partner-m5020a/</url>
+        <price>6154949</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5766</categoryId>
+        <name>Круглошлифовальный станок для наружной шлифовки Partner M5020А</name>
+        <vendor>Partner</vendor>
+        <vendorCode>505020</vendorCode>
+      </offer>
+      <offer id="88594" available="true">
+        <url>https://sterbrust.com/catalog/ploskoshlifovalnye-stanki/ruchnoy-ploskoshlifovalnyy-stanok-partner-pp-618d/</url>
+        <price>1406892</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4469</categoryId>
+        <name>Ручной плоскошлифовальный станок Partner PP-618D</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506183</vendorCode>
+      </offer>
+      <offer id="88595" available="true">
+        <url>https://sterbrust.com/catalog/ploskoshlifovalnye-stanki/ruchnoy-ploskoshlifovalnyy-stanok-partner-pp-820d/</url>
+        <price>1670656</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4469</categoryId>
+        <name>Ручной плоскошлифовальный станок Partner PP-820D</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506184</vendorCode>
+      </offer>
+      <offer id="88596" available="true">
+        <url>https://sterbrust.com/catalog/krugloshlifovalnye-stanki/partner-pp-01/</url>
+        <price>1582755</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5766</categoryId>
+        <name>Станок для шлифовки пуансонов с высокоточным наружным диаметром Partner PP-01</name>
+        <vendor>Partner</vendor>
+        <vendorCode>507701</vendorCode>
+      </offer>
+      <offer id="88597" available="true">
+        <url>https://sterbrust.com/catalog/krugloshlifovalnye-stanki/partner-pp-02/</url>
+        <price>1934432</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5766</categoryId>
+        <name>Станок для шлифовки пуансонов с высокоточным наружным диаметром Partner PP-02</name>
+        <vendor>Partner</vendor>
+        <vendorCode>507702</vendorCode>
+      </offer>
+      <offer id="96890" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/elektricheskiy-rezbonareznoy-manipulyator-m6-m36-partner-etm-36u/</url>
+        <price>168970</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Резьбонарезной манипулятор M6-M36 Partner ETM-36U</name>
+        <vendor>Partner</vendor>
+        <vendorCode>880360</vendorCode>
+      </offer>
+      <offer id="96891" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/elektricheskiy-rezbonareznoy-manipulyator-m6-m48-partner-etm-48u/</url>
+        <price>481656</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Электрический резьбонарезной манипулятор M6-M48 Partner ETM-48U</name>
+        <vendor>Partner</vendor>
+        <vendorCode>880480</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="96892" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/elektricheskiy-rezbonareznoy-manipulyator-m3-m16-partner-etm-16d/</url>
+        <price>126270</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Электрический резьбонарезной манипулятор M3-M16 Partner ETM-16D</name>
+        <vendor>Partner</vendor>
+        <vendorCode>880165</vendorCode>
+        <oldprice>140300</oldprice>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="96893" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/elektricheskiy-rezbonareznoy-manipulyator-m6-m30-partner-etm-30d/</url>
+        <price>191418</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Электрический резьбонарезной манипулятор M6-M30 Partner ETM-30D</name>
+        <vendor>Partner</vendor>
+        <vendorCode>880305</vendorCode>
+        <param name="quantity">7</param>
+      </offer>
+      <offer id="96895" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/ekstraktor-elektroerozionnyy-portativnyy-partner-s1-/</url>
+        <price>113338</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Экстрактор электроэрозионный портативный Partner S1</name>
+        <vendor>Partner</vendor>
+        <vendorCode>880301</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="96896" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/pnevmaticheskiy-rezbonareznoy-manipulyator-m3-m12-partner-ptm-12u/</url>
+        <price>74420</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Пневматический резьбонарезной манипулятор M3-M12 Partner PTM-12U</name>
+        <vendor>Partner</vendor>
+        <vendorCode>830120</vendorCode>
+        <param name="quantity">6</param>
+      </offer>
+      <offer id="96897" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/pnevmaticheskiy-rezbonareznoy-manipulyator-m3-m16-partner-ptm-16u/</url>
+        <price>129320</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Пневматический резьбонарезной манипулятор M3-M16 Partner PTM-16U</name>
+        <vendor>Partner</vendor>
+        <vendorCode>830160</vendorCode>
+        <param name="quantity">5</param>
+      </offer>
+      <offer id="96898" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/pnevmaticheskiy-rezbonareznoy-manipulyator-m6-m24-partner-ptm-24u/</url>
+        <price>191662</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Пневматический резьбонарезной манипулятор M6-M24 Partner PTM-24U</name>
+        <vendor>Partner</vendor>
+        <vendorCode>830240</vendorCode>
+        <param name="quantity">10</param>
+      </offer>
+      <offer id="97961" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/elektricheskiy-rezbonareznoy-manipulyator-m6-m30-partner-etm-30-pro/</url>
+        <price>183244</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Электрический резьбонарезной манипулятор M6-M30 Partner ETM-30 Pro</name>
+        <vendor>Partner</vendor>
+        <vendorCode>870300</vendorCode>
+        <param name="quantity">8</param>
+      </offer>
+      <offer id="97963" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-manipulyatory/elektricheskiy-rezbonareznoy-manipulyator-m3-m16-partner-etm-16-pro/</url>
+        <price>123085</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6589</categoryId>
+        <name>Электрический резьбонарезной манипулятор M3-M16 Partner ETM-16 Pro</name>
+        <vendor>Partner</vendor>
+        <vendorCode>870160</vendorCode>
+        <oldprice>136762</oldprice>
+        <param name="quantity">18</param>
+      </offer>
+      <offer id="100441" available="true">
+        <url>https://sterbrust.com/catalog/diski-dlya-rezchikov-shvov/almaznaya-shlifovalnaya-chasha-100kh50kh20-mm-pp-u2-u3/</url>
+        <price>5490</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5292</categoryId>
+        <name>Алмазная шлифовальная чаша Partner 100х50х20 мм (PP-U2/U3)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>931720</vendorCode>
+        <param name="quantity">14</param>
+      </offer>
+      <offer id="100442" available="true">
+        <url>https://sterbrust.com/catalog/diski-dlya-rezchikov-shvov/chasha-korundovaya-partner-100kh50kh20-mm-pp-u3-u2/</url>
+        <price>1830</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5292</categoryId>
+        <name>Чаша корундовая Partner 100х50х20 мм (PP-U3/U2)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>931610</vendorCode>
+        <param name="quantity">22</param>
+      </offer>
+      <offer id="100443" available="true">
+        <url>https://sterbrust.com/catalog/tsangovye-patrony/nabor-dopolnitelnykh-tsang-tip-partner-s5-dlya-stankov-partner-pp-u3-u2-razmery-14-16-18-20-22-24-25/</url>
+        <price>28853</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5017</categoryId>
+        <name>Набор дополнительных цанг тип Partner С5 для станков Partner PP-U3/U2 размеры 14,16,18,20,22,24,25 мм (7 шт.)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>991500</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="100445" available="true">
+        <url>https://sterbrust.com/catalog/raskhodnye-materialy-i-osnastka/partner-pp-87l-tumba-stanochnaya-gabaritnye-razmery-440-kh-472-kh-870-mm-d-kh-sh-kh-v-gruzopodemnost/</url>
+        <price>42212</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4835</categoryId>
+        <name>Partner PP-87L Тумба станочная, габаритные размеры 440 х 472 х 870 мм (Д х Ш х В), грузоподъемность 300 кг.</name>
+        <vendor>Partner</vendor>
+        <vendorCode>578438</vendorCode>
+        <param name="quantity">14</param>
+      </offer>
+      <offer id="100446" available="true">
+        <url>https://sterbrust.com/catalog/osnastka/partner-50k-golovka-dlya-zatochki-sverl-metchikov-zenkerov-frez-po-tortsu-diapazonom-3-32/</url>
+        <price>88328</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5004</categoryId>
+        <name>Partner 50K Головка для заточки сверл, метчиков, зенкеров, фрез по торцу диапазоном 3-32</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506040</vendorCode>
+        <param name="quantity">8</param>
+      </offer>
+      <offer id="100448" available="true">
+        <url>https://sterbrust.com/catalog/osnastka/partner-qz36-prisposoblenie-dlya-zatochki-ruzheynykh-sverl/</url>
+        <price>87840</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5004</categoryId>
+        <name>Partner QZ36 Приспособление для заточки ружейных сверл</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506090</vendorCode>
+      </offer>
+      <offer id="100449" available="true">
+        <url>https://sterbrust.com/catalog/tiski/partner-chm80-pretsizionnye-universalnye-tiski-shirina-gubok-80-mm-rastvor-0-80-mm/</url>
+        <price>124184</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5024</categoryId>
+        <name>Прецизионные универсальные тиски Partner CHM80</name>
+        <vendor>Partner</vendor>
+        <vendorCode>515580</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="100450" available="true">
+        <url>https://sterbrust.com/catalog/diski-po-metallu/disk-almaznyy-tarelchatyy-partner-150kh32kh16mm-pp-600-pp-600f-pp-6025-pp-6025w-mw-30/</url>
+        <price>5490</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5202</categoryId>
+        <name>Диск алмазный тарельчатый Partner 150х32х16мм (PP-600, PP-600F, PP-6025, PP-6025W, MW-30)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>932012</vendorCode>
+        <param name="quantity">16</param>
+      </offer>
+      <offer id="100451" available="true">
+        <url>https://sterbrust.com/catalog/diski-po-metallu/disk-korundovyy-tarelchatyy-partner-150kh32kh16mm-pp-600-pp-600f-pp-6025-pp-6025w-mw-30/</url>
+        <price>1220</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5202</categoryId>
+        <name>Диск корундовый тарельчатый Partner 150х32х16мм (PP-600, PP-600F, PP-6025, PP-6025W, MW-30)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>932015</vendorCode>
+        <param name="quantity">23</param>
+      </offer>
+      <offer id="100452" available="true">
+        <url>https://sterbrust.com/catalog/osnastka/partner-50d-golovka-dlya-zatochki-kontsevykh-frez-po-tortsu-i-spirali/</url>
+        <price>48556</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5004</categoryId>
+        <name>Partner 50D Головка для заточки концевых фрез по торцу и спирали</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506010</vendorCode>
+        <param name="quantity">7</param>
+      </offer>
+      <offer id="100453" available="true">
+        <url>https://sterbrust.com/catalog/delitelnye-golovki/partner-50hc-delitelnaya-golovka-s-opravkami-dlya-nasadnykh-frez-i-prisposobleniem-dlya-zatochki-rez/</url>
+        <price>45872</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5977</categoryId>
+        <name>Partner 50HC - делительная головка с оправками для насадных фрез и приспособлением для заточки резцов</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506091</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="100454" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-cbn230-dlya-zatochki-frez-iz-bystrorezhushchey-stali-mr-x3-x-420-lx13-new-lx20-new-zx13/</url>
+        <price>8906</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner CBN230 для заточки фрез из быстрорежущей стали (MR-X3,X-420, LX13 NEW, LX20 NEW ZX13 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>721410</vendorCode>
+        <param name="quantity">33</param>
+      </offer>
+      <offer id="100455" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-cbn300-dlya-zatochki-frez-po-spirali-iz-bystrorezhushchey-stali-lx13-new/</url>
+        <price>12200</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner CBN300 для заточки фрез по спирали из быстрорежущей стали (LX13 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>720689</vendorCode>
+        <param name="quantity">6</param>
+      </offer>
+      <offer id="100456" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-sdc230-dlya-zatochki-frez-iz-tverdogo-splava-mr-x3-x-420-lx13-new-lx20-new-zx13-new/</url>
+        <price>8906</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner SDC230 для заточки фрез из твердого сплава (MR-X3,X-420, LX13 NEW, LX20 NEW ZX13 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>721420</vendorCode>
+        <param name="quantity">22</param>
+      </offer>
+      <offer id="100457" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-sdc300-dlya-zatochki-frez-po-spirali-iz-tverdogo-splava-lx13-new/</url>
+        <price>12566</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner SDC300 для заточки фрез по спирали из твердого сплава (LX13 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>720679</vendorCode>
+        <param name="quantity">19</param>
+      </offer>
+      <offer id="100458" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-sdc150-dlya-zatochki-frez-iz-tverdogo-splava-x-420-lx20-new/</url>
+        <price>8906</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner SDC150 для заточки фрез из твердого сплава (X-420, LX20 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>724220</vendorCode>
+        <param name="quantity">34</param>
+      </offer>
+      <offer id="100459" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-cbn150-dlya-zatochki-frez-iz-bystrorezhushchey-stali-x-420-lx20-new/</url>
+        <price>8906</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner CBN150 для заточки фрез из быстрорежущей стали (X-420, LX20 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>724210</vendorCode>
+        <param name="quantity">5</param>
+      </offer>
+      <offer id="100460" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-cbn100-dlya-zatochki-frez-iz-bystrorezhushchey-stali-mr-x5-lx30-new-zx30-new/</url>
+        <price>16470</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner CBN100 для заточки фрез из быстрорежущей стали (MR-X5, LX30 NEW, ZX30 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>723017</vendorCode>
+        <param name="quantity">5</param>
+      </offer>
+      <offer id="100461" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-sdc100-dlya-zatochki-frez-iz-tverdogo-splava-mr-x5-lx30-new-zx30-new/</url>
+        <price>16470</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner SDC100 для заточки фрез из твердого сплава (MR-X5, LX30 NEW, ZX30 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>723027</vendorCode>
+        <param name="quantity">13</param>
+      </offer>
+      <offer id="100462" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-cbn230-dlya-zatochki-sverl-iz-bystrorezhushchey-stali-pp-13d/</url>
+        <price>6710</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner CBN230 для заточки сверл из быстрорежущей стали (PP-13D)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>711310</vendorCode>
+        <param name="quantity">16</param>
+      </offer>
+      <offer id="100463" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-sdc230-dlya-zatochki-sverl-iz-tverdogo-splava-pp-13c-d-zx-13-zs13/</url>
+        <price>6710</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner SDC230 для заточки сверл из твердого сплава (PP-13C/D, ZX-13, ZS13)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>711320</vendorCode>
+        <param name="quantity">46</param>
+      </offer>
+      <offer id="100464" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-sdc200-dlya-zatochki-sverl-iz-tverdogo-splava-pp-26-pp-30-new-zx30-new/</url>
+        <price>17080</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner SDC200 для заточки сверл из твердого сплава (PP-26, PP-30 NEW, ZX30 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>712512</vendorCode>
+        <param name="quantity">6</param>
+      </offer>
+      <offer id="100465" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-cbn200-dlya-zatochki-sverl-iz-bystrorezhushchey-stali-pp-26-pp-30-new-zx30-new/</url>
+        <price>17080</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner CBN200 для заточки сверл из быстрорежущей стали (PP-26, PP-30 NEW, ZX30 NEW)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>712511</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="100466" available="true">
+        <url>https://sterbrust.com/catalog/osnastka/partner-66e-prisposoblenie-dlya-zatochki-radiusnykh-frez-3-28-mm-bez-nabora-tsang-s5/</url>
+        <price>82106</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5004</categoryId>
+        <name>Partner 66E Приспособление для заточки радиусных фрез 3-28 мм (без набора цанг С5)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>506074</vendorCode>
+        <param name="quantity">5</param>
+      </offer>
+      <offer id="100468" available="true">
+        <url>https://sterbrust.com/catalog/zatochnye-stanki-dlya-sverl/partner-seriya-s-nabor-sverl-hss-m2-25sht-1-0-13x0-5mm/</url>
+        <price>20862</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3901</categoryId>
+        <name>Partner серия S набор сверл HSS M2, 25шт, 1.0-13X0.5мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>304025</vendorCode>
+        <param name="quantity">10</param>
+      </offer>
+      <offer id="100469" available="true">
+        <url>https://sterbrust.com/catalog/nabory-sverl-po-metallu2235235/partner-seriya-l-nabor-sverl-hss-m2-50sht-1-0-5-9x0-1mm/</url>
+        <price>16348</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6820</categoryId>
+        <name>Partner серия L набор сверл HSS M2, 50шт, 1.0-5,9X0.1мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>304050</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="100470" available="false">
+        <url>https://sterbrust.com/catalog/nabory-sverl-po-metallu2235235/partner-seriya-xxl-nabor-sverl-hss-m2-121sht-1-0-13-0x0-1mm/</url>
+        <price>85400</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6820</categoryId>
+        <name>Partner серия XXL, набор сверл HSS M2, 121шт, 1.0-13,0X0.1мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>304121</vendorCode>
+      </offer>
+      <offer id="100471" available="true">
+        <url>https://sterbrust.com/catalog/disk-pilnyy/disk-partner-cbn-125kh32kh32-mm-dlya-zatochki-sverl-dlya-stanka-pp-6a-/</url>
+        <price>15616</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6446</categoryId>
+        <name>Диск Partner CBN 125х32х32 мм для заточки сверл ( для станка PP-6A )</name>
+        <vendor>Partner</vendor>
+        <vendorCode>941274</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="100472" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-patrony/nabor-rezbonareznykh-vstavok-partner-jis-gt12-9sht-m3-m4-m5-m6-m8-m10-m12-m14-m16-s-predokhranitelno/</url>
+        <price>20618</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6556</categoryId>
+        <name>Набор резьбонарезных вставок Partner JIS-GT12, 9шт (М3,М4,М5,М6,М8,М10,М12,М14,М16) с предохранительной муфтой для машинных метчиков</name>
+        <vendor>Partner</vendor>
+        <vendorCode>891300</vendorCode>
+        <param name="quantity">5</param>
+      </offer>
+      <offer id="100473" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-patrony/nabor-rezbonareznykh-vstavok-partner-iso-gt12-8sht-m3-m4-m5-m6-8-m10-m12-m14-m16-s-predokhranitelnoy/</url>
+        <price>17324</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6556</categoryId>
+        <name>Набор резьбонарезных вставок Partner ISO-GT12, 8шт (М3, М4, М5, М6-8, М10, М12, М14, М16) с предохранительной муфтой для машинных метчиков</name>
+        <vendor>Partner</vendor>
+        <vendorCode>891200</vendorCode>
+        <param name="quantity">10</param>
+      </offer>
+      <offer id="100474" available="true">
+        <url>https://sterbrust.com/catalog/stoly-delitelnye-dlya-frezernyh-stankov-po-metallu/partner-wb-5080-rabochiy-stol-dlya-rezbonareznogo-manipulyatora-partner-500kh800mm/</url>
+        <price>63806</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5127</categoryId>
+        <name>Partner WB-5080 Рабочий стол для резьбонарезного манипулятора Partner 500х800мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>895080</vendorCode>
+        <param name="quantity">11</param>
+      </offer>
+      <offer id="100475" available="true">
+        <url>https://sterbrust.com/catalog/plity-montazhnye/partner-wb-5080t-plita-k-verstaku-dlya-rezbonareznykh-manipulyatorov/</url>
+        <price>36112</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6325</categoryId>
+        <name>Partner WB-5080T Плита к верстаку для резьбонарезных манипуляторов</name>
+        <vendor>Partner</vendor>
+        <vendorCode>895800</vendorCode>
+        <param name="quantity">4</param>
+      </offer>
+      <offer id="100476" available="true">
+        <url>https://sterbrust.com/catalog/raskhodnye-materialy-i-osnastka/partner-m12-nabor-prizhimov-paz-14mm/</url>
+        <price>10248</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4835</categoryId>
+        <name>Partner M12 набор прижимов (паз 14мм)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>890012</vendorCode>
+        <param name="quantity">7</param>
+      </offer>
+      <offer id="100477" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-zatochnykh-stankov/partner-pml-300-magnitnoe-osnovanie-dlya-rezbonareznogo-manipulyatora-maksimalnaya-nagruzka-300kg/</url>
+        <price>32574</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5033</categoryId>
+        <name>Partner PML-300 Магнитное основание для резьбонарезного манипулятора, максимальная нагрузка 300кг</name>
+        <vendor>Partner</vendor>
+        <vendorCode>890300</vendorCode>
+        <param name="quantity">15</param>
+      </offer>
+      <offer id="100478" available="true">
+        <url>https://sterbrust.com/catalog/osnastka/partner-qgg-80-pretsizionnye-tiski-shirina-gubok-80-mm-rastvor-0-100-mm/</url>
+        <price>21679</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5004</categoryId>
+        <name>Partner QGG-80 Прецизионные тиски, ширина губок 80 мм, раствор 0-100 мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>513780</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+      <offer id="100479" available="true">
+        <url>https://sterbrust.com/catalog/raskhodnye-materialy-i-osnastka/partner-m3-14-gt12-nabor-derzhateley-plashek-4sht-m3-6-m8-m10-m12-14/</url>
+        <price>11224</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4835</categoryId>
+        <name>Partner M3-14-GT12 набор держателей плашек, 4шт M3-6, М8, М10, М12-14</name>
+        <vendor>Partner</vendor>
+        <vendorCode>891600</vendorCode>
+        <param name="quantity">5</param>
+      </offer>
+      <offer id="100481" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-zatochnykh-stankov/partner-dp-gt12-ustroystva-dlya-pozitsionirovaniya/</url>
+        <price>7784</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5033</categoryId>
+        <name>Partner DP-GT12 Устройства для позиционирования</name>
+        <vendor>Partner</vendor>
+        <vendorCode>890112</vendorCode>
+        <param name="quantity">4</param>
+      </offer>
+      <offer id="100482" available="true">
+        <url>https://sterbrust.com/catalog/nabory-sverl-po-metallu2235235/partner-nabor-sverl-tsentrovochnykh-8sht-hss-co8-tin-d-4-5-6-8-10-12-16mm-seriya-321/</url>
+        <price>20740</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6820</categoryId>
+        <name>Partner Набор сверл центровочных, 8шт, HSS Co8, TiN, d=4,5,6,8,10,12,16мм (Серия 321)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>321907</vendorCode>
+      </offer>
+      <offer id="100483" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-stankov/nabor-metchikov-m3-m16-partner-hsse-spiralnaya-kanavka-40-h6-tin-seriya-315/</url>
+        <price>24156</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5005</categoryId>
+        <name>Набор метчиков М3-М16, Partner, HSSE спиральная канавка 40°, H6, TiN (Серия 315)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>315909</vendorCode>
+        <param name="quantity">33</param>
+      </offer>
+      <offer id="100484" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-stankov/nabor-metchikov-m3-m16-partner-hsse-spiralnaya-kanavka-40-h6-tin-seriya-316/</url>
+        <price>23058</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5005</categoryId>
+        <name>Набор метчиков М3-М16, Partner, HSSE спиральная канавка 40°, H6, TiN (Серия 316)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>316909</vendorCode>
+        <param name="quantity">2</param>
+      </offer>
+      <offer id="100485" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-zatochnykh-stankov/partner-din371-gt12-m2-2-8kh2-1-bystrosmennaya-rezbonareznaya-vstavka-s-predokhranitelnoy-muftoy-dlya/</url>
+        <price>2440</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5033</categoryId>
+        <name>Partner DIN371-GT12-M2 2,8х2,1 быстросменная резьбонарезная вставка с предохранительной муфтой для машинных метчиков М2</name>
+        <vendor>Partner</vendor>
+        <vendorCode>891402</vendorCode>
+        <param name="quantity">10</param>
+      </offer>
+      <offer id="100486" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-zatochnykh-stankov/partner-tc820-gt12-adapter-tc820-s-na-gt12/</url>
+        <price>7320</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5033</categoryId>
+        <name>Partner TC820-GT12 адаптер TC820 с на GT12</name>
+        <vendor>Partner</vendor>
+        <vendorCode>893712</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="100488" available="true">
+        <url>https://sterbrust.com/catalog/tiski/partner-qgg-125-pretsizionnye-tiski-shirina-gubok-125-mm-rastvor-0-160-mm/</url>
+        <price>53448</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5024</categoryId>
+        <name>Прецизионные тиски Partner QGG-125</name>
+        <vendor>Partner</vendor>
+        <vendorCode>513712</vendorCode>
+        <param name="quantity">3</param>
+      </offer>
+      <offer id="100489" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-zatochnykh-stankov/partner-pml-600-magnitnoe-osnovanie-dlya-rezbonareznogo-manipulyatora-maksimalnaya-nagruzka-600kg/</url>
+        <price>48068</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5033</categoryId>
+        <name>Partner PML-600 Магнитное основание для резьбонарезного манипулятора, максимальная нагрузка 600кг</name>
+        <vendor>Partner</vendor>
+        <vendorCode>890600</vendorCode>
+        <param name="quantity">11</param>
+      </offer>
+      <offer id="100490" available="true">
+        <url>https://sterbrust.com/catalog/plity-montazhnye/partner-wb-6090t-plita-k-verstaku-dlya-rezbonareznykh-manipulyatorov/</url>
+        <price>47824</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6325</categoryId>
+        <name>Partner WB-6090T Плита к верстаку для резьбонарезных манипуляторов</name>
+        <vendor>Partner</vendor>
+        <vendorCode>896900</vendorCode>
+        <param name="quantity">5</param>
+      </offer>
+      <offer id="100491" available="true">
+        <url>https://sterbrust.com/catalog/stoly-delitelnye-dlya-frezernyh-stankov-po-metallu/partner-wb-6090-rabochiy-stol-dlya-rezbonareznogo-manipulyatora-partner-600kh900mm/</url>
+        <price>81862</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5127</categoryId>
+        <name>Partner WB-6090 Рабочий стол для резьбонарезного манипулятора Partner 600х900мм</name>
+        <vendor>Partner</vendor>
+        <vendorCode>896090</vendorCode>
+        <param name="quantity">7</param>
+      </offer>
+      <offer id="100492" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-patrony/nabor-rezbonareznykh-vstavok-partner-iso-tc820-10sht-m6-8-m10-m12-m14-m16-m18-20-m22-m24-m27-30/</url>
+        <price>29036</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6556</categoryId>
+        <name>Набор резьбонарезных вставок Partner ISO-TC820, 10шт (M6-8, M10, M12, M14, M16, M18-20, M22, M24, M27-30)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>898200</vendorCode>
+        <param name="quantity">9</param>
+      </offer>
+      <offer id="100493" available="true">
+        <url>https://sterbrust.com/catalog/rezbonareznye-patrony/nabor-rezbonareznykh-vstavok-partner-jis-tc820-12sht-m6-m8-m10-m12-m14-m16-m18-m20-m22-m24-m27-m30/</url>
+        <price>37942</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>6556</categoryId>
+        <name>Набор резьбонарезных вставок Partner JIS-TC820, 12шт (M6, М8, M10, M12, M14, M16, M18, М20, M22, M24, M27, М30)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>892500</vendorCode>
+        <param name="quantity">7</param>
+      </offer>
+      <offer id="100494" available="true">
+        <url>https://sterbrust.com/catalog/osnastka-dlya-stankov/nabor-metchikov-m6-m30-partner-hsse-spiralnaya-kanavka-38-h6-tialn-seriya-ts01/</url>
+        <price>54778</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5005</categoryId>
+        <name>Набор метчиков М6-М30, Partner, HSSE спиральная канавка 38°, H6, TiAlN (Серия TS01)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>317360</vendorCode>
+      </offer>
+      <offer id="100495" available="true">
+        <url>https://sterbrust.com/catalog/dlya-zatochki-metchikov/nabor-metchikov-m6-m30-partner-hsse-pryamaya-kanavka-s-spiralnoy-podtochkoy-h6-tialn-seriya-ts02/</url>
+        <price>56486</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>5754</categoryId>
+        <name>Набор метчиков М6-М30, Partner, HSSE прямая канавка с спиральной подточкой, H6, TiAlN (Серия TS02)</name>
+        <vendor>Partner</vendor>
+        <vendorCode>319360</vendorCode>
+      </offer>
+      <offer id="117191" available="true">
+        <url>https://sterbrust.com/catalog/raskhodnye-materialy-i-osnastka/partner-tm-9060-tumba-metallicheskaya-900kh600kh700-mm-shkhgkhv-1-polka-poroshkovaya-pokraska-gruzop/</url>
+        <price>47580</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>4835</categoryId>
+        <name>Partner TM-9060, тумба металлическая, 900х600х700 мм (ШхГхВ), 1 полка, порошковая покраска, грузоподъемность 300кг.</name>
+        <vendor>Partner</vendor>
+        <vendorCode>578540</vendorCode>
+        <param name="quantity">1</param>
+      </offer>
+    </offers>
+  </shop>
+</yml_catalog>

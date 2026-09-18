@@ -1,0 +1,16 @@
+.env
+.git
+.pytest_cache
+__pycache__
+*.py[cod]
+.venv
+venv
+backups
+preview-backup
+tmp
+*.dump
+*.backup
+*.sql.gz
+reports/*.dump
+reports/*.backup
+UNIVERSAL_SUPPLIER_STAGE3D_DOCKER_POSTGRES_RUNTIME.zip

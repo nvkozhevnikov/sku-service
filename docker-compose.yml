@@ -1,0 +1,104 @@
+name: universal-supplier
+
+services:
+  postgres:
+    image: postgres:17.11
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --auth-host=scram-sha-256
+      APP_DB_NAME: ${DB_NAME}
+      APP_DB_USER: ${DB_USER}
+      APP_DB_PASSWORD: ${DB_PASSWORD}
+    command: ["postgres", "-c", "password_encryption=scram-sha-256"]
+    volumes:
+      - universal_supplier_pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d postgres && pg_isready -U $$APP_DB_USER -d $$APP_DB_NAME"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    networks:
+      - universal_supplier_internal
+
+  application:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["tools"]
+    working_dir: /app
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SSLMODE: disable
+      STAGE3D_DB_CONFIRM: "YES"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    networks:
+      - universal_supplier_internal
+      - universal_supplier_egress
+    entrypoint: ["python"]
+    command: ["-m", "pytest", "-q"]
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment: &app_environment
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SSLMODE: disable
+      MAX_PARALLEL_SUPPLIER_JOBS: ${MAX_PARALLEL_SUPPLIER_JOBS:-2}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-YES}
+      SESSION_SIGNING_SECRET: ${SESSION_SIGNING_SECRET}
+      HTTPS_ENABLED: ${HTTPS_ENABLED:-NO}
+      CONTROL_PLANE_ALLOWED_HOSTS: ${CONTROL_PLANE_ALLOWED_HOSTS:-127.0.0.1,localhost}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "-c", "python scripts/docker_postgres_migrate.py && python scripts/ensure_real_suppliers.py && python scripts/generate_review_cases.py && exec python -m uvicorn universal_supplier.control_plane.web:app --host 0.0.0.0 --port 8080"]
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8080}:8080"
+    networks:
+      - universal_supplier_internal
+      - universal_supplier_egress
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment: *app_environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "-c", "python scripts/docker_postgres_migrate.py && exec python -m universal_supplier.control_plane.scheduler_main"]
+    networks:
+      - universal_supplier_internal
+      - universal_supplier_egress
+
+volumes:
+  universal_supplier_pgdata:
+    name: universal_supplier_pgdata
+
+networks:
+  universal_supplier_internal:
+    internal: true
+  universal_supplier_egress:

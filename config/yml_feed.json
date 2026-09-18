@@ -1,0 +1,38 @@
+{
+  "version": "yml-feed-v1",
+  "feed_type": "yml",
+  "shop": {
+    "name": "Стербруст",
+    "company": "Стербруст",
+    "url": "https://sterbrust.com/",
+    "metadata_source": "https://sterbrust.com/ and the trusted Sterbrust registry snapshot; no legal entity suffix is asserted"
+  },
+  "currencies": {
+    "RUB": "1"
+  },
+  "availability_mapping": {
+    "in_stock": true,
+    "out_of_stock": false,
+    "preorder": true,
+    "incoming": false,
+    "backorder": true,
+    "unknown": false,
+    "discontinued": false
+  },
+  "availability_rationale": {
+    "in_stock": "Supplier states that the item is in stock and orderable.",
+    "out_of_stock": "Trusted selected offer is retained, but it is not currently available.",
+    "preorder": "Partner-ST Schema.org PreOrder explicitly represents an orderable preorder.",
+    "incoming": "Arrival alone does not prove that an order can currently be accepted.",
+    "backorder": "Optimum on-request and supplier backorder states represent an orderable offer.",
+    "unknown": "Fail-safe mapping: unknown supplier state is not advertised as available.",
+    "discontinued": "Not orderable and forbidden in selected state by Stage 4 policy."
+  },
+  "include_quantity_param": true,
+  "quantity_param_name": "quantity",
+  "external_offer_id_source": "sterbrust_product_id",
+  "snapshot_timestamp_source": "persisted selection evaluated_at; then completed Stage 5 combined feed run; then selected offer/source timestamps; never wall clock",
+  "category_hierarchy": "flat_referenced_categories",
+  "unsupported_currency_behavior": "fail_closed",
+  "invalid_selected_row_behavior": "fail_closed"
+}

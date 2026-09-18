@@ -1,0 +1,54 @@
+name: universal-supplier-admin-preview
+
+services:
+  postgres:
+    image: postgres:17.11
+    environment:
+      POSTGRES_USER: preview
+      POSTGRES_PASSWORD: preview-only-not-a-secret
+      POSTGRES_DB: preview
+    volumes:
+      - universal_supplier_admin_preview_pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${PREVIEW_POSTGRES_PORT:-55445}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U preview -d preview"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - preview_internal
+
+  web:
+    image: universal-supplier-stage6e1-tests
+    working_dir: /app
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: preview
+      DB_USER: preview
+      DB_PASSWORD: preview-only-not-a-secret
+      DB_SSLMODE: disable
+      SESSION_SIGNING_SECRET: preview-session-secret-at-least-32-bytes
+      CONTROL_PLANE_ALLOWED_HOSTS: 127.0.0.1,localhost
+      SCHEDULER_ENABLED: "NO"
+      HTTPS_ENABLED: "NO"
+      CONTROL_PLANE_DEMO_SNAPSHOT: ${CONTROL_PLANE_DEMO_SNAPSHOT:-NO}
+    volumes:
+      - ./:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "universal_supplier.control_plane.web:app", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "127.0.0.1:${PREVIEW_WEB_PORT:-58096}:8080"
+    networks:
+      - preview_internal
+
+volumes:
+  universal_supplier_admin_preview_pgdata:
+    name: universal_supplier_admin_preview_pgdata
+
+networks:
+  preview_internal:
+    internal: false
