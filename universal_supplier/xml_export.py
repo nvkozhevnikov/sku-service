@@ -46,7 +46,14 @@ SHORT_XML_REASON_PREFIXES = {
         "NO_CURRENT_ACCEPTED_MATCH", "MATCH_CATALOG_PRODUCT_MISMATCH",
         "MISSING_STERBRUST_PRODUCT_ID",
     ),
+    "backorder_unknown_quantity": ("BACKORDER_UNKNOWN_QUANTITY",),
+    "unsupported_price_type": ("UNSUPPORTED_PRICE_TYPE",),
+    "stale_confirmed_identity": ("STALE_CONFIRMED_IDENTITY",),
 }
+STALE_SELECTION_RU = (
+    "Короткий XML остановлен: выбранный оффер ссылается на ID Sterbrust, "
+    "который не является текущим подтверждённым соответствием."
+)
 
 
 def _now() -> datetime:
@@ -137,6 +144,9 @@ def prepare_canonical_snapshot(
         "without_category": 0,
         "blocked_by_identity": 0,
         "invalid_selected_data": 0,
+        "backorder_unknown_quantity": 0,
+        "unsupported_price_type": 0,
+        "stale_confirmed_identity": 0,
     }
     result.update(counts)
     return prepared, result
@@ -144,6 +154,14 @@ def prepare_canonical_snapshot(
 
 def generate_canonical_xml(snapshot: FeedSnapshot, policy: FeedPolicy | None = None) -> FeedArtifact:
     policy = policy or FeedPolicy.load(POLICY_PATH)
+    stale = [
+        violation
+        for row in snapshot.selected_rows
+        for violation in selected_row_violations((row,), policy, 1)
+        if violation.startswith("STALE_CONFIRMED_IDENTITY:")
+    ]
+    if stale:
+        raise FeedGenerationError([STALE_SELECTION_RU, *stale])
     prepared, exclusion_counts = prepare_canonical_snapshot(snapshot, policy)
     artifact = build_yml(prepared, policy)
     artifact.manifest["selected_rows_total"] = len(snapshot.selected_rows)
@@ -193,7 +211,8 @@ def _product_element(row: Mapping[str, Any], details: Mapping[str, list[dict[str
         _append(identity, "stb_1c_bitrix_id", row.get("confirmed_sterbrust_id"))
     matching = ET.SubElement(product, "matching")
     _append(matching, "decision", row.get("decision"))
-    if row.get("proposed_sterbrust_id") and not row.get("confirmed_sterbrust_id"):
+    if (str(row.get("decision") or "") == "REVIEW_EXISTING"
+            and row.get("proposed_sterbrust_id") and not row.get("confirmed_sterbrust_id")):
         _append(matching, "proposed_sterbrust_id", row.get("proposed_sterbrust_id"))
     _append(matching, "reason", row.get("decision_reason"))
     _append(matching, "rule_version", row.get("rule_version"))

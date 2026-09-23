@@ -18,6 +18,44 @@ REVIEW_AUTOMATIC_DECISIONS = {
     "SAFE_NEW_PRODUCT_CANDIDATE", "ACCESSORY_OR_COMPATIBILITY_ITEM",
 }
 FINAL_MANUAL_DECISIONS = {"MANUAL_CONFIRMED", "MANUAL_CONFIRMED_NEW", "MANUAL_ACCESSORY", "MARKED_REVIEWED"}
+CONFIRMED_IDENTITY_DECISIONS = {"EXACT_EXISTING", "HIGH_CONFIDENCE_EXISTING"}
+SYNCED_EXISTING_IDENTITY = "SYNCED_EXISTING_IDENTITY"
+
+
+def review_proposal_id(decision: object, best_id: object) -> str | None:
+    """A proposed Sterbrust ID is a review recommendation, not a blocked candidate."""
+    if str(decision or "") == "REVIEW_EXISTING" and str(best_id or "").strip():
+        return str(best_id).strip()
+    return None
+
+
+def plan_review_sync(
+    *, lifecycle: str | None, current_proposed: object, decision: object,
+    best_id: object, fingerprint_changed: bool,
+    human_decision_class: str | None = None, human_sterbrust_id: str | None = None,
+) -> str:
+    """Idempotent queue action. Never inserts a second manual confirmation."""
+    proposal = review_proposal_id(decision, best_id)
+    current = str(current_proposed).strip() if current_proposed else None
+    confirmed = str(decision or "") in CONFIRMED_IDENTITY_DECISIONS
+    human = str(human_decision_class or "")
+    if human in FINAL_MANUAL_DECISIONS or human == "MANUAL_REJECTED":
+        same_manual_target = (
+            human == "MANUAL_CONFIRMED" and confirmed
+            and str(best_id or "") == str(human_sterbrust_id or "")
+        )
+        if same_manual_target and lifecycle != "RESOLVED":
+            return "restore_manual"
+        return "unchanged"
+    if lifecycle is None:
+        return "insert" if str(decision or "") in REVIEW_AUTOMATIC_DECISIONS else "skip"
+    if confirmed:
+        return "unchanged" if lifecycle == "RESOLVED" else "sync_confirmed"
+    if lifecycle == "RESOLVED":
+        return "reopen" if fingerprint_changed else "unchanged"
+    if not fingerprint_changed and current == proposal:
+        return "unchanged"
+    return "refresh_open"
 
 
 def canonical_fingerprint(snapshot: dict[str, Any]) -> str:
@@ -65,6 +103,10 @@ def explanation_for(row: dict[str, Any]) -> dict[str, Any]:
         "identity_evidence": evidence,
         "rule_version": row.get("rule_version"),
         "technical_reason": row.get("decision_reason") or "",
+        "proposal_policy": (
+            "Предложенный ID показывается только для REVIEW_EXISTING. "
+            "Совпадение артикула в заголовке само по себе не является подтверждением."
+        ),
     }
 
 
@@ -156,44 +198,104 @@ class PostgresAdminStore:
                          LEFT JOIN app_users u ON u.id=a.user_id ORDER BY a.created_at DESC,a.id DESC LIMIT %s""", (limit,))
             return list(q.fetchall())
 
-    def generate_review_cases(self) -> dict[str, int]:
-        inserted = unchanged = reopened = 0
+    def generate_review_cases(self, supplier_code: str | None = None) -> dict[str, int]:
+        inserted = unchanged = reopened = synced = restored = 0
+        where = "WHERE sp.active"
+        params: tuple[Any, ...] = ()
+        if supplier_code:
+            where += " AND s.code=%s"
+            params = (supplier_code,)
         with self._connect() as c, c.transaction(), c.cursor() as q:
-            q.execute("""SELECT sp.id AS source_product_id,s.code AS supplier,sp.external_id,sp.sku,sp.brand_raw,
+            q.execute(f"""SELECT sp.id AS source_product_id,s.code AS supplier,sp.external_id,sp.sku,sp.brand_raw,
                                  pid.decision,pid.own_model,pid.reference_model,pid.product_kind,pid.best_sterbrust_id,
                                  pid.decision_reason,pid.conflicts,pid.identity_characteristics,pid.rule_version
                          FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
                          JOIN product_identity_decisions pid ON pid.source_product_id=sp.id
-                         WHERE sp.active ORDER BY sp.id""")
+                         {where} ORDER BY sp.id""", params)
             for row in q.fetchall():
                 row = dict(row)
                 snapshot = identity_snapshot(row)
                 fingerprint = canonical_fingerprint(snapshot)
                 priority, reason = priority_for(row["decision"])
                 explanation = explanation_for(row)
-                q.execute("SELECT id,lifecycle_status,source_identity_fingerprint,source_identity_snapshot FROM review_cases WHERE source_product_id=%s FOR UPDATE", (row["source_product_id"],))
+                proposal = review_proposal_id(row["decision"], row.get("best_sterbrust_id"))
+                q.execute("SELECT id,lifecycle_status,source_identity_fingerprint,proposed_sterbrust_id,resolved_decision_class FROM review_cases WHERE source_product_id=%s FOR UPDATE", (row["source_product_id"],))
                 current = q.fetchone()
-                review_worthy = row["decision"] in REVIEW_AUTOMATIC_DECISIONS
-                if current is None and review_worthy:
+                human_class = human_id = None
+                if current is not None:
+                    q.execute("""SELECT decision_class, sterbrust_product_id FROM review_decisions
+                                 WHERE review_case_id=%s AND decision_class = ANY(%s)
+                                 ORDER BY created_at DESC, id DESC LIMIT 1""",
+                              (current["id"], sorted(FINAL_MANUAL_DECISIONS | {"MANUAL_REJECTED"})))
+                    human = q.fetchone()
+                    if human:
+                        human_class = human["decision_class"]
+                        human_id = human["sterbrust_product_id"]
+                action = plan_review_sync(
+                    lifecycle=None if current is None else current["lifecycle_status"],
+                    current_proposed=None if current is None else current.get("proposed_sterbrust_id"),
+                    decision=row["decision"], best_id=row.get("best_sterbrust_id"),
+                    fingerprint_changed=current is not None and current["source_identity_fingerprint"] != fingerprint,
+                    human_decision_class=human_class, human_sterbrust_id=None if human_id is None else str(human_id),
+                )
+                if action == "skip":
+                    continue
+                if action == "unchanged":
+                    unchanged += 1
+                    continue
+                stale = None
+                if current is not None and current.get("proposed_sterbrust_id") and str(current.get("proposed_sterbrust_id")) != str(proposal or ""):
+                    stale = str(current.get("proposed_sterbrust_id"))
+                    explanation = dict(explanation)
+                    explanation["stale_proposed_sterbrust_id"] = stale
+                    explanation["stale_proposal_note"] = "Прежний предложенный ID больше не является актуальной рекомендацией и не предлагается к подтверждению."
+                payload = json.dumps(explanation, ensure_ascii=False, default=str)
+                snapshot_json = json.dumps(snapshot, ensure_ascii=False, default=str)
+                if action == "insert":
                     q.execute("""INSERT INTO review_cases(source_product_id,priority_rank,priority_reason,automatic_decision,proposed_sterbrust_id,explanation,source_identity_fingerprint,source_identity_snapshot)
                                  VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s,%s::jsonb)""",
-                              (row["source_product_id"], priority, reason, row["decision"], row.get("best_sterbrust_id"), json.dumps(explanation, ensure_ascii=False, default=str), fingerprint, json.dumps(snapshot, ensure_ascii=False, default=str)))
+                              (row["source_product_id"], priority, reason, row["decision"], proposal, payload, fingerprint, snapshot_json))
                     inserted += 1
-                elif current is None:
                     continue
-                elif current["source_identity_fingerprint"] == fingerprint:
-                    unchanged += 1
-                else:
-                    before = dict(current)
-                    q.execute("""UPDATE review_cases SET lifecycle_status='REOPENED_SOURCE_CHANGED',priority_rank=%s,priority_reason=%s,
-                                 automatic_decision=%s,proposed_sterbrust_id=%s,explanation=%s::jsonb,
-                                 source_identity_fingerprint=%s,source_identity_snapshot=%s::jsonb,resolved_decision_class=NULL,
-                                 resolved_at=NULL,updated_at=now() WHERE id=%s""",
-                              (priority, reason, row["decision"], row.get("best_sterbrust_id"), json.dumps(explanation, ensure_ascii=False, default=str), fingerprint, json.dumps(snapshot, ensure_ascii=False, default=str), current["id"]))
+                before = dict(current)
+                if action == "sync_confirmed":
+                    q.execute("""UPDATE review_cases SET lifecycle_status='RESOLVED',resolved_decision_class=%s,resolved_at=now(),
+                                 priority_rank=%s,priority_reason=%s,automatic_decision=%s,proposed_sterbrust_id=NULL,
+                                 explanation=%s::jsonb,source_identity_fingerprint=%s,source_identity_snapshot=%s::jsonb,updated_at=now()
+                                 WHERE id=%s""",
+                              (SYNCED_EXISTING_IDENTITY, priority, reason, row["decision"], payload, fingerprint, snapshot_json, current["id"]))
+                    self._audit(q, None, "REVIEW_SYNCED_EXISTING_IDENTITY", "review_case", current["id"], before,
+                                {"lifecycle_status": "RESOLVED", "resolved_decision_class": SYNCED_EXISTING_IDENTITY, "automatic_decision": row["decision"]},
+                                "Очередь синхронизирована с уже подтверждённой identity. Повторное ручное подтверждение не создавалось.")
+                    synced += 1
+                    continue
+                if action == "restore_manual":
+                    q.execute("""UPDATE review_cases SET lifecycle_status='RESOLVED',resolved_decision_class=%s,
+                                 resolved_at=coalesce(resolved_at, now()),priority_rank=%s,priority_reason=%s,
+                                 automatic_decision=%s,proposed_sterbrust_id=NULL,explanation=%s::jsonb,
+                                 source_identity_fingerprint=%s,source_identity_snapshot=%s::jsonb,updated_at=now()
+                                 WHERE id=%s""",
+                              (human_class, priority, reason, row["decision"], payload, fingerprint, snapshot_json, current["id"]))
+                    self._audit(q, None, "REVIEW_MANUAL_DECISION_PRESERVED", "review_case", current["id"], before,
+                                {"lifecycle_status": "RESOLVED", "resolved_decision_class": human_class},
+                                "Указатель очереди возвращён к существующему ручному решению. Повторное подтверждение не создавалось.")
+                    restored += 1
+                    continue
+                lifecycle = "REOPENED_SOURCE_CHANGED" if action == "reopen" else current["lifecycle_status"]
+                q.execute("""UPDATE review_cases SET lifecycle_status=%s,priority_rank=%s,priority_reason=%s,
+                             automatic_decision=%s,proposed_sterbrust_id=%s,explanation=%s::jsonb,
+                             source_identity_fingerprint=%s,source_identity_snapshot=%s::jsonb,
+                             resolved_decision_class=NULL,resolved_at=NULL,updated_at=now() WHERE id=%s""",
+                          (lifecycle, priority, reason, row["decision"], proposal, payload, fingerprint, snapshot_json, current["id"]))
+                if action == "reopen":
                     self._audit(q, None, "REVIEW_REQUIRED_SOURCE_CHANGED", "review_case", current["id"], before,
-                                {"source_identity_fingerprint": fingerprint, "source_identity_snapshot": snapshot, "lifecycle_status": "REOPENED_SOURCE_CHANGED"}, "Материально изменились идентификационные признаки")
+                                {"source_identity_fingerprint": fingerprint, "lifecycle_status": lifecycle},
+                                "Материально изменились идентификационные признаки")
                     reopened += 1
-        return {"inserted": inserted, "unchanged": unchanged, "reopened": reopened}
+                else:
+                    unchanged += 1
+        return {"inserted": inserted, "unchanged": unchanged, "reopened": reopened,
+                "synced_existing_identity": synced, "manual_decisions_preserved": restored}
 
     def review_counts(self) -> dict[str, int]:
         with self._connect() as c, c.cursor() as q:

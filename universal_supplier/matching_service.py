@@ -8,7 +8,8 @@ from difflib import SequenceMatcher
 
 from sterbrust_matching.matching import Product, match_product
 from sterbrust_matching.normalization import (
-    model_identity_evidence, normalize_brand, normalize_model, normalized_name,
+    brand_evidenced_by_name, model_identity_evidence, normalize_brand, normalize_model,
+    normalized_name,
 )
 from sterbrust_matching.product_identity import classify_model_role
 
@@ -98,9 +99,10 @@ def _candidate(row: dict) -> Product:
 def _source(card: ProductCard) -> Product:
     category = " / ".join(node.name for node in card.categories if node.name)
     role = classify_model_role(card.name, category)
-    brand = card.brand or ("Optimum" if card.supplier_code == "optimum" else "")
+    # supplier_code is not a brand, and a compatibility model is not own_model.
+    brand = (card.brand or "").strip() or brand_evidenced_by_name(card.name)
     return Product(key=card.external_id, name=card.name, brand=brand,
-                   model=role.own_model or role.reference_model, supplier_article=card.sku,
+                   model=role.own_model, supplier_article=card.sku,
                    supplier_code=card.supplier_code,
                    category=category, properties={item.name: item.value for item in card.properties})
 
@@ -143,9 +145,19 @@ def match_cards(cards: list[ProductCard] | tuple[ProductCard, ...], registry: Re
         existing = _candidate(registry.products[existing_key]) if existing_key in registry.products else None
         origin = str(existing_value.get("origin_match_method") or "") if isinstance(existing_value, dict) else ""
         manual = bool(existing_value.get("manual_or_human_confirmed")) if isinstance(existing_value, dict) else False
-        result = match_product(source, [_candidate(row) for row in _candidates(source, registry)],
+        candidates = [_candidate(row) for row in _candidates(source, registry)]
+        result = match_product(source, candidates,
                                existing_link=existing, existing_link_origin=origin,
                                existing_link_manual=manual)
+        if (isinstance(existing_value, dict)
+                and bool(existing_value.get("current_auto_accepted"))
+                and not result.auto_accepted
+                and result.status in {"CONFLICT", "REVIEW", "NEW_CANDIDATE"}):
+            # Persist the stable post-quarantine decision in the same reconcile.
+            # Otherwise clearing source_products.catalog_product_id makes the next
+            # identical run rematch without existing_link and append a technical
+            # second event with a different method/fingerprint.
+            result = match_product(source, candidates)
         flags = result.evidence.get("data_quality_flags", [])
         rows.append({
             "source_external_id": card.external_id, "SKU": card.sku, "name": card.name,

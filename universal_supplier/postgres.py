@@ -866,7 +866,16 @@ class PostgresRepository:
                      )
                      SELECT sp.external_id,sb.sterbrust_product_id,
                             coalesce(current_match.auto_accepted,false),coalesce(origin.match_method,''),
-                            current_match.id IS NULL OR NOT coalesce(current_match.auto_accepted,false)
+                            (
+                              current_match.id IS NULL OR NOT coalesce(current_match.auto_accepted,false)
+                              OR EXISTS (
+                                SELECT 1 FROM review_cases rc
+                                JOIN review_decisions rd ON rd.review_case_id=rc.id
+                                WHERE rc.source_product_id=sp.id
+                                  AND rd.decision_class='MANUAL_CONFIRMED'
+                                  AND rd.sterbrust_product_id=sb.sterbrust_product_id
+                              )
+                            )
                      FROM source_products sp
                      JOIN suppliers s ON s.id=sp.supplier_id
                      JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id

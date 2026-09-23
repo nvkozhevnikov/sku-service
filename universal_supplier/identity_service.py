@@ -11,7 +11,9 @@ import json
 from typing import Any, Iterable
 
 from sterbrust_matching.matching import Product, match_product
-from sterbrust_matching.normalization import model_identity_evidence, normalize_brand, normalize_model
+from sterbrust_matching.normalization import (
+    brand_evidenced_by_name, model_identity_evidence, normalize_brand, normalize_model,
+)
 from sterbrust_matching.product_identity import (
     ACCESSORY_FAMILIES,
     REFERENCE_MODEL,
@@ -28,7 +30,7 @@ from .models import CategoryNode, ProductCard, PropertyValue
 from .postgres import PostgresConfig, PostgresRepository
 
 
-IDENTITY_RULE_VERSION = "stage6b-identity-1.0"
+IDENTITY_RULE_VERSION = "stage6b-identity-1.1"
 IDENTITY_DECISIONS = (
     "EXACT_EXISTING", "HIGH_CONFIDENCE_EXISTING", "REVIEW_EXISTING", "CONFLICT",
     "SAFE_NEW_PRODUCT_CANDIDATE", "ACCESSORY_OR_COMPATIBILITY_ITEM", "INSUFFICIENT_IDENTITY",
@@ -73,7 +75,8 @@ def source_product(card: dict) -> Product:
     role = classify_model_role(card.get("name", ""), path)
     return Product(
         key=str(card.get("external_id") or ""), name=str(card.get("name") or ""),
-        brand=str(card.get("brand") or ""), model=role.own_model or role.reference_model,
+        brand=str(card.get("brand") or "") or brand_evidenced_by_name(card.get("name", "")),
+        model=role.own_model,
         supplier_article=str(card.get("sku") or ""), category=path,
         properties=source_properties(card), supplier_code=str(card.get("supplier_code") or ""),
     )
@@ -349,10 +352,19 @@ class RuntimeIdentityService:
                                audit["reference_model"] or None, audit["product_kind"], best,
                                audit["decision_reason"], audit["conflicts"], audit["identity_characteristics"],
                                IDENTITY_RULE_VERSION))
-            review = PostgresAdminStore(self.config).generate_review_cases()
+            review = PostgresAdminStore(self.config).generate_review_cases(supplier_code)
+            from pathlib import Path
+            from .offer_selection import OfferSelectionPolicy, PostgresOfferSelectionStore
+            selection_policy = OfferSelectionPolicy.load(
+                Path(__file__).resolve().parents[1] / "config" / "offer_selection.json"
+            )
+            selection = PostgresOfferSelectionStore(repository.connection).apply(
+                PostgresOfferSelectionStore(repository.connection).evaluate_all(selection_policy)
+            )
             return {
                 "source_products": len(cards), "identity_decisions": dict(match_counts),
                 "match_persistence": dict(persistence), "review_sync": review,
+                "offer_selection": selection,
             }
         finally:
             repository.close()

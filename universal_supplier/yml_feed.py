@@ -156,6 +156,11 @@ class FeedRow:
     current_match_status: str | None
     current_match_catalog_product_id: int | None
     sterbrust_article: str | None = None
+    price_type: str | None = None
+    confirmed_identity_id: str | None = None
+
+
+SUPPORTED_PRICE_TYPES = frozenset({"RRP", "retail", "wholesale", "dealer", "promo"})
 
 
 @dataclass(frozen=True)
@@ -291,6 +296,15 @@ def selected_row_violations(rows: Iterable[FeedRow], policy: FeedPolicy,
             violations.append(f"DISCONTINUED_SELECTED_OFFER:{ref}")
         if not str(row.selection_rule_version or "").strip():
             violations.append(f"MISSING_SELECTION_POLICY_VERSION:{ref}")
+        if row.availability_normalized == "backorder" and row.quantity is None:
+            violations.append(f"BACKORDER_UNKNOWN_QUANTITY:{ref}")
+        if row.price_type is not None and str(row.price_type).strip() not in SUPPORTED_PRICE_TYPES:
+            violations.append(f"UNSUPPORTED_PRICE_TYPE:{ref}:{row.price_type}")
+        if row.confirmed_identity_id is not None:
+            confirmed = str(row.confirmed_identity_id).strip()
+            current = str(row.sterbrust_product_id or "").strip()
+            if not confirmed or confirmed != current:
+                violations.append(f"STALE_CONFIRMED_IDENTITY:{ref}:{current or 'нет'}->{confirmed or 'нет'}")
     return violations
 
 
@@ -757,13 +771,21 @@ class PostgresFeedStore:
                           sb.active AS sterbrust_active,
                           nullif(btrim(sb.article_raw), '') AS sterbrust_article,
                           pm.status AS current_match_status,
-                          pm.catalog_product_id AS current_match_catalog_product_id
+                          pm.catalog_product_id AS current_match_catalog_product_id,
+                          o.price_type,
+                          CASE
+                            WHEN pid.source_product_id IS NULL THEN NULL
+                            WHEN pid.decision IN ('EXACT_EXISTING','HIGH_CONFIDENCE_EXISTING')
+                              THEN nullif(btrim(pid.best_sterbrust_id), '')
+                            ELSE ''
+                          END AS confirmed_identity_id
                    FROM catalog_offer_selection cs
                    LEFT JOIN offers o ON o.id=cs.selected_offer_id
                    LEFT JOIN source_products sp ON sp.id=o.source_product_id
                    LEFT JOIN suppliers s ON s.id=o.supplier_id
                    LEFT JOIN sterbrust_products sb ON sb.catalog_product_id=cs.catalog_product_id
                    LEFT JOIN product_matches pm ON pm.source_product_id=sp.id AND pm.is_current
+                   LEFT JOIN product_identity_decisions pid ON pid.source_product_id=sp.id
                    WHERE cs.selection_status='selected'
                    ORDER BY cs.catalog_product_id,o.id,sb.sterbrust_product_id"""
             )

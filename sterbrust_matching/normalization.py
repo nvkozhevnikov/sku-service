@@ -33,9 +33,22 @@ MODEL_SUFFIX_STOP_TOKENS = frozenset({
 
 ACCESSORY_HEAD_TOKENS = frozenset({
     "адаптер", "блок", "вставка", "губка", "губки", "держатель", "контроллер",
-    "кронштейн", "насадка", "опора", "патрон", "переходник", "подставка",
+    "кронштейн", "кулачки", "кулачок", "ловитель", "люнет", "насадка", "опора",
+    "оснастка", "патрон", "педаль", "переходник", "планшайба", "подставка",
     "приспособление", "пульт", "ручка", "стол", "цанга", "цанги",
 })
+
+# A supplier code is not a brand. Optimum is evidenced only by an explicit
+# Optimum / OPTI* token in the sold-product name or by a filled source field.
+_NAME_BRAND_OPTIMUM = re.compile(
+    r"\boptimum\b|\bopti(?:turn|drill|mill|saw|grind|sand|press|polish)"
+)
+
+
+def brand_evidenced_by_name(name: object) -> str:
+    if _NAME_BRAND_OPTIMUM.search(normalize_text(name)):
+        return "Optimum"
+    return ""
 
 
 def normalize_text(value: object) -> str:

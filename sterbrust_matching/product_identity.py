@@ -39,6 +39,13 @@ class Taxon:
 # Ordered from specific components to broader equipment.  Each taxon remains
 # independently extensible; this is intentionally not a monolithic if/else.
 PRODUCT_TAXONOMY: tuple[Taxon, ...] = (
+    Taxon("steady_rest", (r"\bлюнет\w*\b",), "accessory"),
+    Taxon("foot_switch", (r"\bпедал\w*\b",), "accessory"),
+    Taxon("parts_catcher", (r"\bловител\w*\b",), "accessory"),
+    Taxon("faceplate", (r"\bпланшайб\w*\b",), "tooling"),
+    # "кулачки" is the sold jaw set. "четырехкулачковый патрон" stays a chuck:
+    # the adjective has no word boundary before "кулачк".
+    Taxon("chuck_jaw", (r"\bкулачк\w*\b",), "tooling"),
     Taxon("jaw", (r"\bгубк\w*\b", r"\bjaws?\b"), "accessory"),
     Taxon("handle", (r"\bручк\w*\b", r"\bрукоят\w*\b", r"\bhandles?\b"), "accessory"),
     Taxon("controller", (r"\bконтроллер\w*\b", r"\bпульт\w*\b", r"\bблок\s+управлен\w*\b"), "accessory"),
@@ -101,13 +108,77 @@ def _first_taxon(text: str) -> tuple[Taxon | None, str]:
     return None, ""
 
 
+_MAINS_VOLTAGE = re.compile(r"(?<!\d)(220|230|380|400)\s*(?:v|в)\b", re.I)
+_MM_SIZE = re.compile(r"\b(\d{2,4})\s*мм\b", re.I)
+_EXECUTION_WORD = re.compile(r"\b(vario|premium|cnc|чпу)\b", re.I)
+SIZE_CRITICAL_KINDS = frozenset({"faceplate", "chuck", "chuck_jaw", "disk", "steady_rest"})
+
+
+def mains_voltage_band(text: object) -> str:
+    """Map 220~230 and 380~400 only. Other pairs, including 220 vs 380, stay apart."""
+    found: list[str] = []
+    for raw in _MAINS_VOLTAGE.findall(normalize_text(text)):
+        value = int(raw)
+        band = "220" if value in {220, 230} else "380" if value in {380, 400} else str(value)
+        if band not in found:
+            found.append(band)
+    if len(found) == 1:
+        return found[0]
+    if len(found) > 1:
+        return "mixed"
+    return ""
+
+
+def primary_millimeters(text: object) -> str:
+    found = list(dict.fromkeys(_MM_SIZE.findall(normalize_text(text))))
+    return found[0] if len(found) == 1 else ""
+
+
+def execution_words(text: object) -> frozenset[str]:
+    words = set()
+    for word in _EXECUTION_WORD.findall(normalize_text(text)):
+        words.add("cnc" if word == "чпу" else word)
+    return frozenset(words)
+
+
+_OPTIMUM_TITLE_BRAND = re.compile(
+    r"\boptimum\b|\bopti(?:turn|drill|mill|saw|grind|sand|press|polish)"
+)
+_TITLE_ARTICLE = re.compile(r"(?<!\d)(\d{5,10})(?!\d)")
+
+
+def optimum_title_articles(name: object) -> frozenset[str]:
+    """Article tokens printed on an Optimum card. Not a confirmation by themselves."""
+    if not _OPTIMUM_TITLE_BRAND.search(normalize_text(name)):
+        return frozenset()
+    return frozenset(
+        token for token in (normalize_model(raw) for raw in _TITLE_ARTICLE.findall(str(name or ""))) if token
+    )
+
+
+def execution_class_marks(text: object) -> frozenset[str]:
+    """Precision and universal are different executions, not spelling variants."""
+    normalized = normalize_text(text)
+    marks: set[str] = set()
+    if re.search(r"\bпрецизион\w*", normalized):
+        marks.add("precision")
+    if re.search(r"\bуниверсальн\w*", normalized):
+        marks.add("universal")
+    return frozenset(marks)
+
+
 def classify_product_kind(name: object, category: object = "") -> ProductKindEvidence:
     title = normalize_text(name)
     category_text = normalize_text(category)
     relation = compatibility_relation(title)
     head = title[: relation[0]] if relation else title
+    # Markers such as "цанга для" start at the product noun, so the head before
+    # the marker is empty. The sold span includes that noun and stops before
+    # the parent name.
+    sold = title[: relation[1]] if relation else title
     # A title whose sold-product head is explicitly a machine must not become
     # a disk/tool merely because it describes what that machine processes.
+    # Words after a compatibility marker are the parent, not the sold product.
     if re.search(r"\bстан(?:ок|ки|ка|ком|ке)\b", head):
         for preferred in ("lathe", "milling_machine", "drill_press", "grinder", "beveling_machine", "machine"):
             taxon = TAXON_BY_KIND[preferred]
@@ -118,23 +189,32 @@ def classify_product_kind(name: object, category: object = "") -> ProductKindEvi
     taxon, alias = _first_taxon(head)
     if taxon:
         return ProductKindEvidence(taxon.kind, alias, "name_head", "HIGH")
-    taxon, alias = _first_taxon(title)
-    if taxon:
-        return ProductKindEvidence(taxon.kind, alias, "name", "HIGH")
+    if relation:
+        taxon, alias = _first_taxon(sold)
+        if taxon:
+            return ProductKindEvidence(taxon.kind, alias, "name_sold_span", "HIGH")
+    else:
+        taxon, alias = _first_taxon(title)
+        if taxon:
+            return ProductKindEvidence(taxon.kind, alias, "name", "HIGH")
     taxon, alias = _first_taxon(category_text)
     if taxon:
         return ProductKindEvidence(taxon.kind, alias, "category", "MEDIUM")
     return ProductKindEvidence("unknown", "", "none", "UNKNOWN")
 
 
-def compatibility_relation(text: object) -> tuple[int, int, str] | None:
-    normalized = normalize_text(text)
+def _marker_span(text: object) -> tuple[int, int, str] | None:
+    raw = "" if text is None else str(text)
     matches = []
     for marker in COMPATIBILITY_MARKERS:
-        match = re.search(marker, normalized, re.I)
+        match = re.search(marker, raw, re.I)
         if match:
             matches.append((match.start(), match.end(), match.group(0)))
     return min(matches, default=None, key=lambda item: item[0])
+
+
+def compatibility_relation(text: object) -> tuple[int, int, str] | None:
+    return _marker_span(normalize_text(text))
 
 
 def _is_measurement_or_thread_range(model: str) -> bool:
@@ -159,20 +239,38 @@ def classify_model_role(name: object, category: object = "", explicit_model: obj
 
     if relation:
         tail = text[relation[1]:]
-        tail_models = tuple(model for model in model_tokens(tail) if not _is_measurement_or_thread_range(model))
-        parent_kind = classify_product_kind(tail, "").product_kind
+        raw_relation = _marker_span(name)
+        raw_tail = str(name or "")[raw_relation[1]:] if raw_relation else tail
+        tail_models = tuple(model for model in model_tokens(raw_tail) if not _is_measurement_or_thread_range(model))
+        extracted_tail = normalize_model(extract_model(raw_tail))
+        if (extracted_tail and not _is_measurement_or_thread_range(extracted_tail)
+                and extracted_tail not in tail_models):
+            tail_models = tail_models + (extracted_tail,)
+        parent_kind = classify_product_kind(raw_tail, "").product_kind
         family = TAXON_BY_KIND.get(kind.product_kind, Taxon("unknown", (), "unknown")).family
         # A bare functional phrase such as "manipulator for threading" is not
         # compatibility unless it names a parent kind or the product itself is
         # an accessory/tooling/consumable.
         parent_family = TAXON_BY_KIND.get(parent_kind, Taxon("unknown", (), "unknown")).family
-        is_reference = bool(tail_models and (
-            family in ACCESSORY_FAMILIES
-            or (parent_family in {"equipment", "machine"} and parent_kind != kind.product_kind)
-        ))
+        parent_is_other_equipment = (
+            parent_family in {"equipment", "machine"} and parent_kind != kind.product_kind
+        )
+        is_reference = bool(
+            (family in ACCESSORY_FAMILIES and (tail_models or parent_is_other_equipment))
+            or (tail_models and parent_is_other_equipment)
+        )
         if is_reference:
-            reference = tail_models[-1]
-            own_candidates = tuple(model for model in models if model != reference)
+            reference = tail_models[-1] if tail_models else ""
+            blocked = set(tail_models)
+            if reference:
+                blocked.add(reference)
+            noun = normalize_model(kind.matched_alias)
+            own_candidates = tuple(
+                model for model in models
+                if model not in blocked and not (
+                    noun and model.startswith(noun) and model[len(noun):].isdigit()
+                )
+            )
             own = own_candidates[0] if own_candidates else ""
             return ModelRoleEvidence(
                 REFERENCE_MODEL, own, reference, parent_kind, relation[2],

@@ -185,7 +185,7 @@ class PostgresControlPlaneStore:
               sp.first_seen_at,sp.last_seen_at,sp.last_success_at,sp.last_changed_at,sp.last_http_status,
               pid.own_model,pid.reference_model,pid.product_kind,coalesce(pid.decision,accepted.match_status) AS decision,
               coalesce(pid.decision_reason,accepted.match_method) AS decision_reason,
-              pid.best_sterbrust_id AS proposed_sterbrust_id,
+              CASE WHEN pid.decision = 'REVIEW_EXISTING' THEN pid.best_sterbrust_id END AS proposed_sterbrust_id,
               coalesce(manual.sterbrust_product_id,accepted.sterbrust_product_id) AS confirmed_sterbrust_id,
               CASE WHEN manual.sterbrust_product_id IS NOT NULL THEN 'MANUAL_CONFIRMED'
                    WHEN accepted.sterbrust_product_id IS NOT NULL THEN 'AUTO_ACCEPTED' END AS confirmed_link_source,
@@ -370,7 +370,7 @@ class PostgresControlPlaneStore:
             counts["documents"] += int(row.get("document_count") or 0)
             counts["relations"] += int(row.get("relation_count") or 0)
             counts["options"] += int(row.get("option_count") or 0)
-            counts["matched" if row.get("best_sterbrust_id") else "unmatched"] += 1
+            counts["matched" if row.get("confirmed_sterbrust_id") else "unmatched"] += 1
         return counts
 
     def xml_canonical_summary(self, supplier: str = "") -> dict[str, int]:
@@ -497,7 +497,9 @@ class SnapshotControlPlaneStore:
                     row["name"] = row["source_name"]
                     row["brand_raw"] = row["brand"]
                     row["best_sterbrust_id"] = row["best_candidate"]
-                    row["proposed_sterbrust_id"] = row["best_candidate"] or None
+                    row["proposed_sterbrust_id"] = (
+                        row["best_candidate"] or None if row.get("decision") == "REVIEW_EXISTING" else None
+                    )
                     row["confirmed_sterbrust_id"] = (
                         row["best_candidate"] if row["decision"] in {"EXACT_EXISTING", "HIGH_CONFIDENCE_EXISTING"}
                         and row.get("auto_accepted") == "TRUE" else None

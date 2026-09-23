@@ -11,6 +11,7 @@ from universal_supplier.control_plane.rate_control import (
     DomainRatePolicy,
     MaxRunDurationExceeded,
 )
+from sterbrust_matching.normalization import brand_evidenced_by_name
 from universal_supplier.models import (
     CategoryNode, MediaItem, OptionValue, ProductCard, ProductOption, PropertyValue,
 )
@@ -35,13 +36,14 @@ def _decimal(value: str | None) -> Decimal | None:
 
 
 def _brand_from_source(name: str, raw_brand: str | None) -> str:
-    if raw_brand:
-        return raw_brand
-    # optimum.su is a supplier-specific adapter. Most product cards omit an
-    # explicit brand field even for Optimum machines, which previously left
-    # brand_raw empty and prevented otherwise safe brand+model candidate checks.
-    # Preserve any explicit site brand, otherwise use the supplier brand.
-    return "Optimum"
+    """Keep an explicit source brand. Do not stamp Optimum from supplier_code.
+
+    OPTI* / Optimum in the sold-product name is evidence. A mixed OEM accessory
+    whose name does not carry that brand stays empty.
+    """
+    if raw_brand and str(raw_brand).strip():
+        return str(raw_brand).strip()
+    return brand_evidenced_by_name(name)
 
 
 def _availability_for_database(value: str | None) -> str:
@@ -85,6 +87,9 @@ def to_product_card(product, *, final_url: str, aliases: tuple[str, ...] = ()) -
         "sellable_model": "one_card_one_default_offer",
         "supplier_article_namespace": "ARTIKUL_OPTIMUM",
         "source_kind": "supplier_html",
+        "source_sku": identity.sku or "",
+        "source_external_id": str(identity.external_id),
+        "source_url": identity.source_url or identity.canonical_url,
     })
     return ProductCard(
         supplier_code="optimum",

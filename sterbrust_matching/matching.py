@@ -15,10 +15,18 @@ from .property_normalization import (
 from .product_identity import (
     OWN_MODEL,
     REFERENCE_MODEL,
+    SIZE_CRITICAL_KINDS,
+    TAXON_BY_KIND,
+    Taxon,
     classify_model_role,
     classify_product_kind,
     compare_category_identity,
+    execution_class_marks,
+    execution_words,
     kinds_equivalent,
+    mains_voltage_band,
+    optimum_title_articles,
+    primary_millimeters,
 )
 
 
@@ -94,9 +102,16 @@ def _identity_conflicts(source: Product, candidate: Product) -> dict[str, Any]:
         }
     source_role = classify_model_role(source.name, source.category, source.model)
     candidate_role = classify_model_role(candidate.name, candidate.category, candidate.model)
+    candidate_family = TAXON_BY_KIND.get(
+        effective_candidate_kind, Taxon("unknown", (), "unknown")
+    ).family
+    # Same accessory kind may cite the parent model on both cards. The block is
+    # for matching that reference onto the parent machine or a different kind.
     if (source_role.role == REFERENCE_MODEL and candidate_role.role == OWN_MODEL
             and source_role.reference_model
-            and source_role.reference_model == candidate_role.own_model):
+            and source_role.reference_model == candidate_role.own_model
+            and (effective_source_kind != effective_candidate_kind
+                 or candidate_family in {"machine", "equipment"})):
         conflicts["model_role"] = {
             "source": source_role.role, "candidate": candidate_role.role,
             "reference_model": source_role.reference_model,
@@ -108,6 +123,51 @@ def _identity_conflicts(source: Product, candidate: Product) -> dict[str, Any]:
         effective_source_kind, source.properties, candidate.properties,
     )
     conflicts.update(category_conflicts)
+    source_voltage_text = source.name + " " + " ".join(
+        f"{key} {value}" for key, value in sorted(source.properties.items())
+    )
+    candidate_voltage_text = candidate.name + " " + " ".join(
+        f"{key} {value}" for key, value in sorted(candidate.properties.items())
+    )
+    source_band = mains_voltage_band(source_voltage_text)
+    candidate_band = mains_voltage_band(candidate_voltage_text)
+    if source_band and candidate_band and source_band != candidate_band:
+        conflicts["voltage_execution"] = {
+            "source": source_band, "candidate": candidate_band,
+            "rule": "VOLTAGE_BAND_MISMATCH",
+        }
+    source_execution = execution_words(source.name)
+    candidate_execution = execution_words(candidate.name)
+    if source_execution != candidate_execution:
+        conflicts["execution_word"] = {
+            "source": sorted(source_execution), "candidate": sorted(candidate_execution),
+            "rule": "EXECUTION_WORD_MISMATCH",
+        }
+    if source.supplier_code == "optimum" and source.supplier_article:
+        printed = optimum_title_articles(candidate.name)
+        source_article = normalize_model(source.supplier_article)
+        if printed and source_article and source_article not in printed:
+            conflicts["card_article"] = {
+                "source_sku": source_article,
+                "card_articles": sorted(printed),
+                "rule": "CARD_PRINTS_DIFFERENT_SUPPLIER_ARTICLE",
+            }
+    source_class = execution_class_marks(source.name)
+    candidate_class = execution_class_marks(candidate.name)
+    if source_class and candidate_class and source_class.isdisjoint(candidate_class):
+        conflicts["execution_class"] = {
+            "source": sorted(source_class),
+            "candidate": sorted(candidate_class),
+            "rule": "PRECISION_VERSUS_UNIVERSAL",
+        }
+    if effective_source_kind in SIZE_CRITICAL_KINDS or effective_candidate_kind in SIZE_CRITICAL_KINDS:
+        source_mm = primary_millimeters(source.name)
+        candidate_mm = primary_millimeters(candidate.name)
+        if source_mm and candidate_mm and source_mm != candidate_mm:
+            conflicts["physical_size"] = {
+                "source_mm": source_mm, "candidate_mm": candidate_mm,
+                "rule": "TITLE_SIZE_MISMATCH",
+            }
     return conflicts
 
 

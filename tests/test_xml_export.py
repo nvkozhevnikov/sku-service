@@ -64,6 +64,9 @@ def test_short_xml_excludes_bad_selected_rows_and_reports_reasons():
         "excluded_total": 2, "without_price": 1, "without_url": 1,
         "without_category": 1, "blocked_by_identity": 0,
         "invalid_selected_data": 0,
+        "backorder_unknown_quantity": 0,
+        "unsupported_price_type": 0,
+        "stale_confirmed_identity": 0,
     }
 
 
