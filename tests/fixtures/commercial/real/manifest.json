@@ -1,0 +1,58 @@
+{
+  "date_supplied": "2026-09-23",
+  "http_status": null,
+  "http_response_headers": null,
+  "warning": "Files do not prove HTTP status. Sanitized copies are not byte-identical to original responses; Intervesp BMS-230DG was reconstructed from Chrome view-source wrapper. Price figures apply only to captured source, not live current prices.",
+  "files": [
+    {
+      "filename": "intervesp_bms_230dg_reconstructed_sanitized.html",
+      "source_uploaded_name": "intervesp_bms_230dg_source_reconstructed_sanitized.html",
+      "site": "intervesp.ru",
+      "url": "https://intervesp.ru/catalog/lentochnopilnye-ruchnye-metall/gorizontalnyy-otreznoy-lentochnopilnyy-ruchnoy-beka-mak-bms-230dg/",
+      "captured_date": "2026-09-23",
+      "capture_method": "Reconstructed from browser view-source wrapper; original raw HTTP bytes unavailable",
+      "http_status": null,
+      "content_type_assertion": "text/html; charset=utf-8 (declared in document; response header not verified)",
+      "sha256_of_packaged_file": "2f4a7beed1f390b37de2c32dc2345b87112735fbb18d674763bd9351faa67b80",
+      "sanitized": true
+    },
+    {
+      "filename": "bekamak_bms_230dg_sanitized.html",
+      "source_uploaded_name": "bekamak_bms_230dg_source_sanitized.html",
+      "site": "beka-mak.su",
+      "url": "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/",
+      "captured_date": "2026-09-23",
+      "capture_method": "Browser view-source pasted HTML; sanitized",
+      "http_status": null,
+      "content_type_assertion": "text/html; charset=utf-8 (declared in document; response header not verified)",
+      "sha256_of_packaged_file": "c0cea1f024b3077b7254f55fef2cd2f283bfd51fd5cc1e258b52a22fc4d014cc",
+      "sanitized": true
+    },
+    {
+      "filename": "intervesp_bmsy_440dgh_wp2_sanitized.html",
+      "source_uploaded_name": "12.html",
+      "site": "intervesp.ru",
+      "url": "https://intervesp.ru/catalog/konsolnye-poluavtomaticheskie-lentochnopilnye-stanki/gorizontalnyy-otreznoy-lentochnopilnyy-poluavtomaticheskiy-beka-mak-bmsy-440dgh-wp2/",
+      "captured_date": "2026-09-23",
+      "capture_method": "Browser view-source pasted HTML; sanitized",
+      "http_status": null,
+      "content_type_assertion": "text/html; charset=utf-8 (declared in document; response header not verified)",
+      "source_package_sha256": "547b46664a99635aafc756cd955a67d31bb4c2ff6e23a17d925047a0bebdbb2b",
+      "sha256_of_repository_fixture": "1f5146e7e31b38aefbf177ee050dbee3c9fdfed437ab81667fbcc388dd6df7bd",
+      "repository_sanitization_note": "Two residual hidden sessid values were redacted after receipt; repository fixture is intentionally not byte-identical to the supplied package.",
+      "sanitized": true
+    },
+    {
+      "filename": "bekamak_bmsy_440dgh_sanitized.html",
+      "source_uploaded_name": "13.html",
+      "site": "beka-mak.su",
+      "url": "https://beka-mak.su/product/poluavtomaticheskiy_lentochnopilnyy_stanok_beka_mak_bmsy_440dgh/",
+      "captured_date": "2026-09-23",
+      "capture_method": "Browser view-source pasted HTML; sanitized",
+      "http_status": null,
+      "content_type_assertion": "text/html; charset=utf-8 (declared in document; response header not verified)",
+      "sha256_of_packaged_file": "35f9c761104ee981b4668f400c985b484f5247545a88956f44cb6c5b41778f2a",
+      "sanitized": true
+    }
+  ]
+}

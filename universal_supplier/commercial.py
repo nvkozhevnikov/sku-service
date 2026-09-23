@@ -50,6 +50,25 @@ class PriceExtraction:
 
 
 @dataclass(frozen=True)
+class ReadOnlySupplierProduct:
+    """Source-derived product facts, deliberately separate from identity matching.
+
+    ``site_internal_id`` is an identifier assigned by a supplier's site.  It is
+    never promoted to a manufacturer article by this read-only boundary.
+    """
+
+    supplier: str
+    source_url: str | None
+    name: str
+    supplier_model: str | None
+    manufacturer_article: str | None
+    site_internal_id: str | None
+    availability: str | None
+    price: PriceExtraction
+    diagnostics: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class _Candidate:
     value: Decimal | None
     currency: str | None
