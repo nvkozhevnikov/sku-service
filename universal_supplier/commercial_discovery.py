@@ -44,7 +44,18 @@ class CatalogDiscoveryPage:
     page_url: str
     products: tuple[DiscoveredCommercialProduct, ...]
     pagination_urls: tuple[str, ...]
+    review_candidates: tuple["ReviewCandidate", ...] = ()
     diagnostics: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReviewCandidate:
+    """A local source contradiction that is unsafe to persist commercially."""
+
+    site: str
+    product_url: str
+    model_signals: tuple[tuple[str, str], ...]
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -177,13 +188,33 @@ def _is_product_path(url: str, site: str) -> bool:
     return path.startswith("/catalog/") and path.count("/") >= 3
 
 
+def _model_signals(*, text: str, title: str, url: str) -> list[tuple[str, str]]:
+    signals: list[tuple[str, str]] = []
+    for origin, value in (("visible_name", text), ("title", title), ("url", urlparse(url).path)):
+        # Product slugs use underscores; they are only a separator, unlike a
+        # model suffix, so normalize them before looking for a model token.
+        model_match = _MODEL_RE.search(value.replace("_", "-"))
+        if model_match:
+            signals.append((origin, model_and_execution(model_match.group(1))[0]))
+    return signals
+
+
+def _model_base(model: str) -> str:
+    return re.sub(r"-WP\d+[A-Z0-9]*$", "", model)
+
+
+def _signals_are_compatible(signals: list[tuple[str, str]]) -> bool:
+    return len({_model_base(model) for _, model in signals}) == 1
+
+
 def discover_catalog_page(site: str, page_url: str, html: str) -> CatalogDiscoveryPage:
     """Extract only model-proven detail links and safe next-page candidates."""
     current = validate_catalog_url(page_url, site=site)
     parser = _AnchorParser()
     parser.feed(html)
     parser.close()
-    products: dict[str, DiscoveredCommercialProduct] = {}
+    entries: list[tuple[_Anchor, str, str, list[tuple[str, str]], str]] = []
+    signals_by_slug: dict[str, list[tuple[str, str]]] = {}
     pages: set[str] = set()
     for anchor in parser.anchors:
         if not anchor.href:
@@ -192,10 +223,23 @@ def discover_catalog_page(site: str, page_url: str, html: str) -> CatalogDiscove
         if not _same_site(absolute, site):
             continue
         text = " ".join(anchor.text).strip()
-        # Do not concatenate URL and label: a trailing model token can absorb
-        # the URL scheme as another suffix (for example ``WP2 HTTPS``).
-        model_match = _MODEL_RE.search(text) or _MODEL_RE.search(urlparse(absolute).path)
-        if _is_product_path(absolute, site) and model_match:
+        signals = _model_signals(text=text, title=anchor.attrs.get("title", ""), url=absolute)
+        slug = urlparse(absolute).path.rstrip("/").rsplit("/", 1)[-1].lower()
+        if slug and signals:
+            signals_by_slug.setdefault(slug, []).extend(signals)
+        entries.append((anchor, absolute, text, signals, slug))
+        try:
+            candidate = validate_catalog_url(absolute, site=site)
+        except ValueError:
+            continue
+        if urlparse(candidate).query and candidate != current:
+            pages.add(candidate)
+
+    products: dict[str, DiscoveredCommercialProduct] = {}
+    reviews: dict[str, ReviewCandidate] = {}
+    for anchor, absolute, text, own_signals, slug in entries:
+        signal_values = own_signals + signals_by_slug.get(slug, [])
+        if _is_product_path(absolute, site) and signal_values:
             try:
                 detail = validate_catalog_url(absolute, site=site)
             except ValueError:
@@ -203,13 +247,13 @@ def discover_catalog_page(site: str, page_url: str, html: str) -> CatalogDiscove
             # Detail pages are query-free; a pagination link is never a card.
             if urlparse(detail).query:
                 continue
-            model, execution = model_and_execution(model_match.group(1))
+            if not _signals_are_compatible(signal_values):
+                reviews.setdefault(detail, ReviewCandidate(
+                    site, detail, tuple(signal_values), "conflicting_url_title_or_visible_model",
+                ))
+                continue
+            model = max((model for _, model in signal_values), key=len)
+            _, execution = model_and_execution(model)
             products.setdefault(detail, DiscoveredCommercialProduct(site, detail, model, execution, text))
-            continue
-        try:
-            candidate = validate_catalog_url(absolute, site=site)
-        except ValueError:
-            continue
-        if urlparse(candidate).query and candidate != current:
-            pages.add(candidate)
-    return CatalogDiscoveryPage(site, current, tuple(products.values()), tuple(sorted(pages)))
+    return CatalogDiscoveryPage(site, current, tuple(products.values()), tuple(sorted(pages)),
+                                tuple(reviews.values()))

@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from universal_supplier.commercial_collection import (
     CandidateManifest, discover_commercial_candidates, run_commercial_collection,
-    write_candidate_manifest, write_collection_report,
+    write_candidate_manifest, write_collection_report, write_review_report,
 )
 from universal_supplier.postgres import PostgresConfig, PostgresRepository
 
@@ -27,6 +27,8 @@ def main() -> None:
                         help="Fetch only bounded category pages and write a candidate manifest")
     parser.add_argument("--candidate-manifest-out", type=Path,
                         help="Required with --discovery-only; receives URLs and SHA-256 checksums")
+    parser.add_argument("--review-report-out", type=Path,
+                        help="Optional JSON destination for locally excluded REVIEW candidates")
     parser.add_argument("--expected-candidate-manifest", type=Path,
                         help="Require an identical manifest before any product capture")
     parser.add_argument("--pause-seconds", type=float, default=20.0, help="Minimum public pause is 20 seconds")
@@ -51,6 +53,8 @@ def main() -> None:
         write_candidate_manifest(manifest, args.candidate_manifest_out)
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(__import__("json").dumps({"rows": [row.__dict__ for row in rows]}, ensure_ascii=False, indent=2), encoding="utf-8")
+        if args.review_report_out:
+            write_review_report(rows, args.review_report_out)
         print(args.candidate_manifest_out)
         return
     repository = None
@@ -69,6 +73,8 @@ def main() -> None:
                                            evidence_dir=args.evidence_dir, dry_run=args.dry_run, repository=repository,
                                            candidate_offset=args.offset, expected_manifest=expected_manifest)
         write_collection_report(result, args.report)
+        if args.review_report_out:
+            write_review_report(result.rows, args.review_report_out)
         print(args.report)
     finally:
         if repository:

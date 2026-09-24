@@ -41,6 +41,17 @@ class CommercialDiscoveryTests(unittest.TestCase):
         result = discover_catalog_page("beka_mak", "https://beka-mak.su/catalog/ruchnye/", page)
         self.assertEqual([item.expected_model for item in result.products], ["BMS-230DG", "BMSY-440DGH"])
 
+    def test_conflicting_url_title_and_visible_model_becomes_review(self):
+        page = """<a href='/product/poluavtomaticheskiy_bmsy_320dgh/' title='BMSY-320DGH'>
+        <span>Полуавтоматический станок BMSY-325DGH</span></a>"""
+        result = discover_catalog_page("beka_mak", "https://beka-mak.su/catalog/ruchnye/", page)
+        self.assertEqual(result.products, ())
+        self.assertEqual(len(result.review_candidates), 1)
+        review = result.review_candidates[0]
+        self.assertEqual(review.reason, "conflicting_url_title_or_visible_model")
+        self.assertEqual(dict(review.model_signals)["title"], "BMSY-320DGH")
+        self.assertEqual(dict(review.model_signals)["visible_name"], "BMSY-325DGH")
+
     def test_rejects_tokens_and_non_pagination_queries(self):
         with self.assertRaises(ValueError):
             validate_catalog_url("https://intervesp.ru/catalog/x/?sessid=test", site="intervesp")

@@ -14,7 +14,7 @@ from .adapters.bekamak import parse_bekamak_detail
 from .adapters.intervesp import parse_intervesp_detail
 from .commercial import ReadOnlySupplierProduct
 from .commercial_discovery import (
-    CatalogDiscoveryPage, DiscoveredCommercialProduct, discover_catalog_page,
+    CatalogDiscoveryPage, DiscoveredCommercialProduct, ReviewCandidate, discover_catalog_page,
     fetch_catalog_page, normalise_model,
 )
 from .http_capture import CaptureStatus, EvidenceStore, PublicHttpClient, capture_public_html
@@ -53,6 +53,7 @@ class CollectionRow:
     observation_created: bool | None = None
     exact_noop: bool | None = None
     diagnostics: tuple[str, ...] = ()
+    evidence_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class SiteCollectionResult:
     numeric_prices: int
     prices_on_request: int
     errors: int
+    reviews: int
     blocked: bool
     observations_created: int
     exact_repeats: int
@@ -177,6 +179,10 @@ def _site_discovery(site: str, *, evidence_dir: Path, client: PublicHttpClient |
         discovery: CatalogDiscoveryPage = discover_catalog_page(site, fetched.final_url, fetched.body)
         for item in discovery.products:
             candidates.setdefault(item.product_url, item)
+        for review in discovery.review_candidates:
+            rows.append(CollectionRow(site, review.product_url, None, None, "review", "REVIEW", fetched.http_status,
+                                      diagnostics=tuple(f"{origin}:{model}" for origin, model in review.model_signals) + (review.reason,),
+                                      evidence_ref=fetched.evidence_ref))
         queue.extend(page for page in discovery.pagination_urls if page not in seen and page not in queue)
         rows.append(CollectionRow(site, fetched.final_url, None, None, "discovery", "SUCCESS", fetched.http_status,
                                   diagnostics=(f"discovered_cards:{len(discovery.products)}", f"pagination:{len(discovery.pagination_urls)}")))
@@ -245,7 +251,7 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
             current_sha = CandidateManifest({site: current}).as_jsonable()["sites"][site]["sha256"]
             if expected_sha != current_sha:
                 raise CandidateManifestMismatch(f"candidate manifest changed for {site}; no product capture was started")
-        fetched_cards = numeric = on_request = errors = created = repeats = 0
+        fetched_cards = numeric = on_request = errors = reviews = created = repeats = 0
         selected_candidates = candidates[candidate_offset:candidate_offset + limit]
         for position, candidate in enumerate(selected_candidates):
             if blocked:
@@ -267,15 +273,15 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
             diagnostics = list(product.diagnostics + product.price.diagnostics)
             if product.site_internal_id is None:
                 rows.append(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
-                                          "product", "AMBIGUOUS", captured.http_status, parsed_model=parsed_model,
-                                          diagnostics=tuple(diagnostics + ["site_internal_id_not_found"])))
-                errors += 1
+                                          "product", "REVIEW", captured.http_status, parsed_model=parsed_model,
+                                          diagnostics=tuple(diagnostics + ["site_internal_id_not_found"]), evidence_ref=captured.evidence_ref))
+                reviews += 1
                 continue
             if parsed_model and parsed_model != candidate.expected_model:
                 rows.append(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
-                                          "product", "AMBIGUOUS", captured.http_status, product.site_internal_id, parsed_model,
-                                          diagnostics=tuple(diagnostics + ["discovery_model_adapter_model_mismatch"])))
-                errors += 1
+                                          "product", "REVIEW", captured.http_status, product.site_internal_id, parsed_model,
+                                          diagnostics=tuple(diagnostics + ["discovery_model_adapter_model_mismatch"]), evidence_ref=captured.evidence_ref))
+                reviews += 1
                 continue
             persisted = None if dry_run else repository.persist_commercial_observation(product, captured.capture)
             fetched_cards += 1
@@ -289,10 +295,10 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
                                       None if product.price.current_price is None else str(product.price.current_price),
                                       product.price.currency, product.availability,
                                       None if persisted is None else persisted["observation_created"],
-                                      None if persisted is None else persisted["exact_noop"], tuple(diagnostics)))
+                                      None if persisted is None else persisted["exact_noop"], tuple(diagnostics), captured.evidence_ref))
         results.append(SiteCollectionResult(site, len(candidates), page_count, candidate_offset, len(selected_candidates),
                                             len(selected_candidates), fetched_cards,
-                                            numeric, on_request, errors, blocked, created, repeats))
+                                            numeric, on_request, errors, reviews, blocked, created, repeats))
     return CommercialCollectionResult(started, datetime.now(timezone.utc).isoformat(), dry_run, tuple(results), tuple(rows))
 
 
@@ -304,3 +310,9 @@ def write_collection_report(result: CommercialCollectionResult, path: Path) -> N
 def write_candidate_manifest(manifest: CandidateManifest, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest.as_jsonable(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_review_report(rows: Iterable[CollectionRow], path: Path) -> None:
+    reviews = [asdict(row) for row in rows if row.result == "REVIEW"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"reviews": reviews}, ensure_ascii=False, indent=2), encoding="utf-8")
