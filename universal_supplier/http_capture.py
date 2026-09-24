@@ -273,6 +273,20 @@ def capture_public_html(
             return CaptureResult(CaptureStatus.NON_HTML, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, ("non_html_content_type",))
         page_status, page_diagnostics = inspect_html_page(response.body, expected_model=expected_model)
         if page_status is not CaptureStatus.SUCCESS:
+            # An ambiguous 200 HTML response is not persistable commercial
+            # data, but its sanitised evidence is required for local REVIEW.
+            # Blocked/non-HTML/status responses remain evidence-free.
+            if page_status is CaptureStatus.AMBIGUOUS:
+                response_sha256 = hashlib.sha256(response.body).hexdigest()
+                evidence = sanitise_html(response.body)
+                evidence_sha256 = hashlib.sha256(evidence).hexdigest()
+                evidence_ref = evidence_store.save(
+                    evidence_dir=evidence_dir, final_url=response.final_url,
+                    evidence_sha256=evidence_sha256, body=evidence,
+                )
+                return CaptureResult(page_status, url, response.final_url, response.status_code, response.content_type,
+                                     observed_at, response.redirects, response_sha256, evidence_sha256, evidence_ref,
+                                     page_diagnostics, evidence_body=evidence)
             return CaptureResult(page_status, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, page_diagnostics)
         response_sha256 = hashlib.sha256(response.body).hexdigest()
         evidence = sanitise_html(response.body)

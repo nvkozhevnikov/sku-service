@@ -261,9 +261,14 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
                                             timeout_seconds=15, max_attempts=2, retry_delay_seconds=pause_seconds,
                                             expected_model=candidate.expected_model, evidence_store=evidence_store)
             if captured.status is not CaptureStatus.SUCCESS or captured.capture is None or captured.final_url is None or captured.evidence_sha256 is None:
+                is_review = captured.status is CaptureStatus.AMBIGUOUS
                 rows.append(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
-                                          "product", captured.status.value, captured.http_status, diagnostics=captured.diagnostics))
-                errors += 1
+                                          "product", "REVIEW" if is_review else captured.status.value, captured.http_status,
+                                          diagnostics=captured.diagnostics, evidence_ref=captured.evidence_ref))
+                if is_review:
+                    reviews += 1
+                else:
+                    errors += 1
                 blocked = captured.status is CaptureStatus.BLOCKED
                 continue
             if captured.evidence_body is None:

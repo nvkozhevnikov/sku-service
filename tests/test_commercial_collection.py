@@ -98,6 +98,25 @@ class CommercialCollectionTests(unittest.TestCase):
                                       evidence_store=MemoryEvidenceStore(), expected_manifest=different)
         self.assertFalse(any(kind == "product" for kind, _ in client.calls))
 
+    def test_ambiguous_product_is_review_with_evidence_and_no_persistence(self):
+        first, second = SITE_SEEDS["beka_mak"]
+        product_url = "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/"
+        client = FakeCollectionClient({
+            first: HttpResponse(first, 200, "text/html", f"<a href='{product_url}'>BMS 230 DG</a>".encode()),
+            second: HttpResponse(second, 200, "text/html", b""),
+            product_url: HttpResponse(product_url, 200, "text/html", b"<h1>BMS 270 DG</h1><div id='elPrice'>1 RUB</div>"),
+        })
+        repository = RecordingRepository()
+        evidence = MemoryEvidenceStore()
+        result = run_commercial_collection(sites=("beka_mak",), limit=1, pause_seconds=0,
+                                           evidence_dir=Path.cwd(), dry_run=False, repository=repository,
+                                           client=client, sleep=lambda _: None, evidence_store=evidence)
+        site = result.site_results[0]
+        self.assertEqual((site.fetched_cards, site.errors, site.reviews), (0, 0, 1))
+        self.assertEqual(repository.calls, [])
+        review = next(row for row in result.rows if row.result == "REVIEW")
+        self.assertIsNotNone(review.evidence_ref)
+
     def test_discovery_manifest_has_stable_checksum_and_global_pacing(self):
         first, second = SITE_SEEDS["beka_mak"]
         product_url = "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/"

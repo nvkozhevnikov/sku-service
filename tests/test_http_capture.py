@@ -109,11 +109,14 @@ class HttpCaptureTests(unittest.TestCase):
     def test_captcha_marker_without_product_card_is_ambiguous(self):
         result = self.capture(FakeClient(HttpResponse(self.URL, 200, "text/html", b"<script src='recaptcha.js'></script><h1>Welcome</h1>")))
         self.assertEqual(result.status, CaptureStatus.AMBIGUOUS)
-        self.assertEqual(self.evidence.saved, [])
+        self.assertEqual(len(self.evidence.saved), 1)
+        self.assertIsNone(result.capture)
+        self.assertIsNotNone(result.evidence_ref)
 
     def test_wrong_model_is_ambiguous_and_not_persistable(self):
         body = b'<h1>BMSY-440DGH WP2</h1><div id="elPrice">1 RUB</div>'
         self.evidence = RecordingEvidenceStore()
         result = capture_public_html(self.URL, evidence_dir=ROOT, client=FakeClient(HttpResponse(self.URL, 200, "text/html", body)), evidence_store=self.evidence, expected_model="BMSY-440DGH")
         self.assertEqual(result.status, CaptureStatus.AMBIGUOUS)
-        self.assertEqual(self.evidence.saved, [])
+        self.assertEqual(len(self.evidence.saved), 1)
+        self.assertIsNone(result.capture)
