@@ -24,11 +24,29 @@ from .commercial_persistence import HttpCapture
 
 _SECRET_NAME_RE = re.compile(r"(?:sessid|bitrix_sessid|cookie|authorization|access_token|api[_-]?key|token)", re.I)
 _CAPTCHA_RE = re.compile(r"(?:captcha|recaptcha|hcaptcha|cf-chl|challenge-platform)", re.I)
+_SCRIPT_STYLE_RE = re.compile(r"<(?:script|style)\b[^>]*>.*?</(?:script|style)\s*>", re.I | re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
+_BLOCKING_INTERSTITIAL_RE = re.compile(
+    r"(?:checking (?:your|the) browser|verify (?:you are|that you are) human|attention required|unusual traffic|security check)",
+    re.I,
+)
+_PRODUCT_MARKER_RE = re.compile(
+    r"(?:\bid=[\"']elPrice[\"']|\bclass=[\"'][^\"']*prices_block|itemprop=[\"'](?:price|availability|additionalProperty)[\"']|\belTabProp\b)",
+    re.I,
+)
 _SENSITIVE_INPUT_RE = re.compile(
     r"(<input\b[^>]*\bname\s*=\s*['\"]?[^'\"\s>]*(?:sessid|token|cookie)[^'\"\s>]*[^>]*\bvalue\s*=\s*)(['\"])[^'\"]*\2",
     re.I,
 )
-_QUERY_SECRET_RE = re.compile(r"([?&](?:sessid|bitrix_sessid|access_token|api[_-]?key|token)=)[^&#\"'\s<]+", re.I)
+_SENSITIVE_INPUT_VALUE_FIRST_RE = re.compile(
+    r"(<input\b[^>]*\bvalue\s*=\s*)(['\"])[^'\"]*\2(?=[^>]*\bname\s*=\s*['\"]?[^'\"\s>]*(?:sessid|token|cookie)[^'\"\s>]*[^>]*>)",
+    re.I,
+)
+_JS_SECRET_RE = re.compile(
+    r"((?:['\"](?:sessid|bitrix_sessid|access_token|api[_-]?key|token|cookie)['\"]|(?:sessid|bitrix_sessid|access_token|api[_-]?key|token|cookie))\s*[:=]\s*['\"])[^'\"]*(['\"])",
+    re.I,
+)
+_QUERY_SECRET_RE = re.compile(r"([?&](?:sessid|bitrix_sessid|access_token|api[_-]?key|token|cookie)=)[^&#\"'\s<]+", re.I)
 
 
 class CaptureStatus(StrEnum):
@@ -38,6 +56,7 @@ class CaptureStatus(StrEnum):
     BLOCKED = "BLOCKED"
     NETWORK_ERROR = "NETWORK_ERROR"
     UNSAFE_URL = "UNSAFE_URL"
+    AMBIGUOUS = "AMBIGUOUS"
 
 
 @dataclass(frozen=True)
@@ -128,8 +147,41 @@ def sanitise_html(body: bytes) -> bytes:
     """Redact known session-bearing input/query values without retaining raw bytes."""
     text = body.decode("utf-8", errors="replace")
     text = _SENSITIVE_INPUT_RE.sub(r"\1\2[REDACTED]\2", text)
+    text = _SENSITIVE_INPUT_VALUE_FIRST_RE.sub(r"\1\2[REDACTED]\2", text)
+    text = _JS_SECRET_RE.sub(r"\1[REDACTED]\2", text)
     text = _QUERY_SECRET_RE.sub(r"\1[REDACTED]", text)
     return text.encode("utf-8")
+
+
+def inspect_html_page(body: bytes, *, expected_model: str | None = None) -> tuple[CaptureStatus, tuple[str, ...]]:
+    """Classify a page by visible interstitial and product-card evidence.
+
+    CAPTCHA scripts and UI dictionary keys are normal on product pages.  They
+    become blocking evidence only when the document lacks a product card and
+    exposes an interstitial message to the user.
+    """
+    html = body.decode("utf-8", errors="ignore")
+    visible = _TAG_RE.sub(" ", _SCRIPT_STYLE_RE.sub(" ", html))
+    has_h1 = bool(re.search(r"<h1\b[^>]*>.*?</h1\s*>", html, re.I | re.S))
+    has_product_markers = bool(_PRODUCT_MARKER_RE.search(html))
+    has_product_card = has_h1 and has_product_markers
+    if has_product_card and expected_model:
+        normalised_expected = re.sub(r"[\s-]+", "", expected_model).upper()
+        title = re.search(r"<h1\b[^>]*>(.*?)</h1\s*>", html, re.I | re.S)
+        title_text = _TAG_RE.sub(" ", title.group(1) if title else "")
+        title_models = {
+            re.sub(r"[\s-]+", "", candidate).upper()
+            for candidate in re.findall(r"\bBMSY?[-\s]?\d+(?:[-\s]?[A-Z0-9]+)+\b", title_text, re.I)
+        }
+        if normalised_expected not in title_models:
+            return CaptureStatus.AMBIGUOUS, ("expected_model_not_in_primary_product_title",)
+    if has_product_card:
+        return CaptureStatus.SUCCESS, ()
+    if _BLOCKING_INTERSTITIAL_RE.search(visible):
+        return CaptureStatus.BLOCKED, ("blocking_interstitial_detected",)
+    if _CAPTCHA_RE.search(html):
+        return CaptureStatus.AMBIGUOUS, ("captcha_marker_without_confirmed_product_card",)
+    return CaptureStatus.AMBIGUOUS, ("product_card_not_confirmed",)
 
 
 @dataclass(frozen=True)
@@ -157,6 +209,7 @@ def capture_public_html(
     max_attempts: int = 2,
     retry_delay_seconds: float = 0.0,
     evidence_store: EvidenceStore | None = None,
+    expected_model: str | None = None,
 ) -> CaptureResult:
     """Capture one public detail page, retrying only transient network/5xx errors."""
     observed_at = datetime.now(timezone.utc)
@@ -186,9 +239,6 @@ def capture_public_html(
                 _validate_public_url(redirect)
         except ValueError as error:
             return CaptureResult(CaptureStatus.UNSAFE_URL, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, (str(error),))
-        lowered = response.body[:1_000_000].decode("utf-8", errors="ignore")
-        if _CAPTCHA_RE.search(lowered):
-            return CaptureResult(CaptureStatus.BLOCKED, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, ("captcha_or_challenge_detected",))
         if response.status_code in {403, 429}:
             return CaptureResult(CaptureStatus.BLOCKED, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, (f"http_{response.status_code}",))
         if response.status_code >= 500 and attempt + 1 < max_attempts:
@@ -200,6 +250,9 @@ def capture_public_html(
             return CaptureResult(CaptureStatus.HTTP_STATUS, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, tuple(errors + [f"http_{response.status_code}"]))
         if not response.content_type or not response.content_type.lower().startswith("text/html"):
             return CaptureResult(CaptureStatus.NON_HTML, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, ("non_html_content_type",))
+        page_status, page_diagnostics = inspect_html_page(response.body, expected_model=expected_model)
+        if page_status is not CaptureStatus.SUCCESS:
+            return CaptureResult(page_status, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, page_diagnostics)
         response_sha256 = hashlib.sha256(response.body).hexdigest()
         evidence = sanitise_html(response.body)
         evidence_sha256 = hashlib.sha256(evidence).hexdigest()

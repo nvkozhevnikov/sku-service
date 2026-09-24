@@ -17,21 +17,22 @@ from universal_supplier.http_capture import CaptureStatus, capture_public_html
 OUT = ROOT / "reports" / "INTERVESP_BEKAMAK_HTTP_PILOT_2026-09-24"
 EVIDENCE = OUT / "sanitized_evidence"
 TARGETS = (
-    ("intervesp", "8992", "https://intervesp.ru/catalog/lentochnopilnye-ruchnye-metall/gorizontalnyy-otreznoy-lentochnopilnyy-ruchnoy-beka-mak-bms-230dg/", parse_intervesp_detail),
-    ("beka_mak", "19240", "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/", parse_bekamak_detail),
-    ("intervesp", "9028", "https://intervesp.ru/catalog/konsolnye-poluavtomaticheskie-lentochnopilnye-stanki/gorizontalnyy-otreznoy-lentochnopilnyy-poluavtomaticheskiy-beka-mak-bmsy-440dgh-wp2/", parse_intervesp_detail),
-    ("beka_mak", "19224", "https://beka-mak.su/product/poluavtomaticheskiy_lentochnopilnyy_stanok_beka_mak_bmsy_440dgh/", parse_bekamak_detail),
+    ("intervesp", "8992", "BMS-230DG", "https://intervesp.ru/catalog/lentochnopilnye-ruchnye-metall/gorizontalnyy-otreznoy-lentochnopilnyy-ruchnoy-beka-mak-bms-230dg/", parse_intervesp_detail),
+    ("beka_mak", "19240", "BMS-230DG", "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/", parse_bekamak_detail),
+    ("intervesp", "9028", "BMSY-440DGH-WP2", "https://intervesp.ru/catalog/konsolnye-poluavtomaticheskie-lentochnopilnye-stanki/gorizontalnyy-otreznoy-lentochnopilnyy-poluavtomaticheskiy-beka-mak-bmsy-440dgh-wp2/", parse_intervesp_detail),
+    ("beka_mak", "19224", "BMSY-440DGH", "https://beka-mak.su/product/poluavtomaticheskiy_lentochnopilnyy_stanok_beka_mak_bmsy_440dgh/", parse_bekamak_detail),
 )
 
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     rows = []
-    for site, external_id, url, parser in TARGETS:
-        result = capture_public_html(url, evidence_dir=EVIDENCE, timeout_seconds=15, max_attempts=2)
+    for site, external_id, expected_model, url, parser in TARGETS:
+        result = capture_public_html(url, evidence_dir=EVIDENCE, timeout_seconds=15, max_attempts=2, expected_model=expected_model)
         row = {
             "site": site,
             "expected_external_id": external_id,
+            "expected_model": expected_model,
             "requested_url": url,
             "capture_status": result.status.value,
             "final_url": result.final_url,
