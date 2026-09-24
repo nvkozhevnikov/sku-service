@@ -1,0 +1,8 @@
+{
+  "sources": ["intervesp", "beka_mak"],
+  "card_limit_per_site": 20,
+  "pause_seconds": 20,
+  "catalog_page_limit_per_site": 2,
+  "scheduler_enabled": false,
+  "note": "Template only. Run scripts/run_commercial_catalog_collection.py manually with explicit DB settings."
+}

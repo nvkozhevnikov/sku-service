@@ -14,7 +14,7 @@ import hashlib
 from pathlib import Path
 import re
 import time
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, HTTPHandler, ProxyHandler, Request, build_opener
@@ -91,14 +91,15 @@ class FilesystemEvidenceStore:
 class _BoundedRedirectHandler(HTTPRedirectHandler):
     max_redirections = 3
 
-    def __init__(self) -> None:
+    def __init__(self, validator: Callable[[str], None] | None = None) -> None:
         super().__init__()
         self.redirects: list[str] = []
+        self.validator = validator or _validate_public_url
 
     def redirect_request(self, request, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         if len(self.redirects) >= self.max_redirections:
             raise URLError("redirect limit exceeded")
-        _validate_public_url(newurl)
+        self.validator(newurl)
         self.redirects.append(newurl)
         return super().redirect_request(request, fp, code, msg, headers, newurl)
 
@@ -106,9 +107,9 @@ class _BoundedRedirectHandler(HTTPRedirectHandler):
 class UrllibPublicHttpClient:
     """No cookie jar, no proxy environment and no authentication headers."""
 
-    def get(self, url: str, *, timeout_seconds: float) -> HttpResponse:
-        _validate_public_url(url)
-        redirects = _BoundedRedirectHandler()
+    def _get(self, url: str, *, timeout_seconds: float, validator: Callable[[str], None]) -> HttpResponse:
+        validator(url)
+        redirects = _BoundedRedirectHandler(validator)
         opener = build_opener(ProxyHandler({}), redirects, HTTPHandler(), HTTPSHandler())
         request = Request(url, headers={
             "Accept": "text/html,application/xhtml+xml",
@@ -132,6 +133,18 @@ class UrllibPublicHttpClient:
                 redirects=tuple(redirects.redirects),
             )
 
+    def get(self, url: str, *, timeout_seconds: float) -> HttpResponse:
+        return self._get(url, timeout_seconds=timeout_seconds, validator=_validate_public_url)
+
+    def get_validated(self, url: str, *, timeout_seconds: float,
+                      validator: Callable[[str], None]) -> HttpResponse:
+        """Fetch a separately validated public page, e.g. a pagination URL.
+
+        Product captures still use :meth:`get` and remain query-free.  The
+        caller supplies the narrow URL policy for a non-product page.
+        """
+        return self._get(url, timeout_seconds=timeout_seconds, validator=validator)
+
 
 def _validate_public_url(url: str) -> None:
     parsed = urlparse(url)
@@ -151,6 +164,13 @@ def sanitise_html(body: bytes) -> bytes:
     text = _JS_SECRET_RE.sub(r"\1[REDACTED]\2", text)
     text = _QUERY_SECRET_RE.sub(r"\1[REDACTED]", text)
     return text.encode("utf-8")
+
+
+def has_blocking_interstitial(body: bytes) -> bool:
+    """Detect a visible challenge page without treating CAPTCHA scripts as one."""
+    html = body.decode("utf-8", errors="ignore")
+    visible = _TAG_RE.sub(" ", _SCRIPT_STYLE_RE.sub(" ", html))
+    return bool(_BLOCKING_INTERSTITIAL_RE.search(visible))
 
 
 def inspect_html_page(body: bytes, *, expected_model: str | None = None) -> tuple[CaptureStatus, tuple[str, ...]]:
@@ -198,6 +218,7 @@ class CaptureResult:
     evidence_ref: str | None
     diagnostics: tuple[str, ...]
     capture: HttpCapture | None = None
+    evidence_body: bytes | None = None
 
 
 def capture_public_html(
@@ -264,5 +285,5 @@ def capture_public_html(
             url, response.final_url, response.status_code, response.content_type, observed_at,
             response_sha256, evidence_sha256, evidence_ref, redirects=response.redirects,
         )
-        return CaptureResult(CaptureStatus.SUCCESS, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, response_sha256, evidence_sha256, evidence_ref, tuple(errors), capture)
+        return CaptureResult(CaptureStatus.SUCCESS, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, response_sha256, evidence_sha256, evidence_ref, tuple(errors), capture, evidence)
     raise AssertionError("unreachable")
