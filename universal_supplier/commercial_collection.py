@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
+import hashlib
 from pathlib import Path
 import time
 from typing import Callable, Iterable
@@ -89,12 +90,70 @@ class CommercialCollectionResult:
         }
 
 
+@dataclass(frozen=True)
+class CandidateManifest:
+    """Stable, evidence-free candidate list used to guard resumed batches."""
+
+    sites: dict[str, tuple[DiscoveredCommercialProduct, ...]]
+
+    def as_jsonable(self) -> dict:
+        site_data = {}
+        for site, candidates in self.sites.items():
+            items = [
+                {"url": item.product_url, "expected_model": item.expected_model, "execution": item.execution}
+                for item in candidates
+            ]
+            encoded = json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            site_data[site] = {"sha256": hashlib.sha256(encoded).hexdigest(), "candidates": items}
+        return {"format": "commercial-candidate-manifest-v1", "sites": site_data}
+
+    @classmethod
+    def from_jsonable(cls, data: dict) -> "CandidateManifest":
+        if data.get("format") != "commercial-candidate-manifest-v1" or not isinstance(data.get("sites"), dict):
+            raise ValueError("unsupported candidate manifest")
+        sites: dict[str, tuple[DiscoveredCommercialProduct, ...]] = {}
+        for site, payload in data["sites"].items():
+            items = payload.get("candidates") if isinstance(payload, dict) else None
+            if not isinstance(items, list):
+                raise ValueError("candidate manifest has no candidate list")
+            candidates = tuple(
+                DiscoveredCommercialProduct(site, item["url"], item["expected_model"], item.get("execution"), "")
+                for item in items
+                if isinstance(item, dict) and isinstance(item.get("url"), str) and isinstance(item.get("expected_model"), str)
+            )
+            if len(candidates) != len(items):
+                raise ValueError("candidate manifest has invalid candidate fields")
+            rebuilt = cls({site: candidates}).as_jsonable()["sites"][site]["sha256"]
+            if payload.get("sha256") != rebuilt:
+                raise ValueError("candidate manifest checksum mismatch")
+            sites[site] = candidates
+        return cls(sites)
+
+
+class CandidateManifestMismatch(RuntimeError):
+    pass
+
+
+class _RequestPacer:
+    """Applies one minimum pause to every public GET across all suppliers."""
+
+    def __init__(self, pause_seconds: float, sleep: Callable[[float], None]) -> None:
+        self.pause_seconds = pause_seconds
+        self.sleep = sleep
+        self.request_count = 0
+
+    def before_request(self) -> None:
+        if self.request_count:
+            self.sleep(self.pause_seconds)
+        self.request_count += 1
+
+
 def _parser(site: str) -> Callable[..., ReadOnlySupplierProduct]:
     return parse_intervesp_detail if site == "intervesp" else parse_bekamak_detail
 
 
 def _site_discovery(site: str, *, evidence_dir: Path, client: PublicHttpClient | None,
-                    pause_seconds: float, sleep: Callable[[float], None], evidence_store: EvidenceStore | None) -> tuple[list[DiscoveredCommercialProduct], list[CollectionRow], bool, int]:
+                    before_request: Callable[[], None], evidence_store: EvidenceStore | None) -> tuple[list[DiscoveredCommercialProduct], list[CollectionRow], bool, int]:
     """Discover at most two catalog pages and stop a site on access blocking."""
     queue = list(SITE_SEEDS[site])
     seen: set[str] = set()
@@ -106,8 +165,7 @@ def _site_discovery(site: str, *, evidence_dir: Path, client: PublicHttpClient |
         url = queue.pop(0)
         if url in seen:
             continue
-        if page_count:
-            sleep(pause_seconds)
+        before_request()
         seen.add(url)
         fetched = fetch_catalog_page(site, url, evidence_dir=evidence_dir, client=client, evidence_store=evidence_store)
         page_count += 1
@@ -127,11 +185,37 @@ def _site_discovery(site: str, *, evidence_dir: Path, client: PublicHttpClient |
     return sorted(candidates.values(), key=lambda item: (item.expected_model, item.product_url)), rows, blocked, page_count
 
 
+def discover_commercial_candidates(*, sites: Iterable[str], evidence_dir: Path,
+                                   pause_seconds: float, client: PublicHttpClient | None = None,
+                                   sleep: Callable[[float], None] = time.sleep,
+                                   evidence_store: EvidenceStore | None = None) -> tuple[CandidateManifest, tuple[CollectionRow, ...]]:
+    """Fetch only bounded category pages and return a stable candidate manifest."""
+    if pause_seconds < MIN_SITE_PAUSE_SECONDS and client is None:
+        raise ValueError(f"public discovery requires pause_seconds >= {MIN_SITE_PAUSE_SECONDS:g}")
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    pacer = _RequestPacer(pause_seconds, sleep)
+    result: dict[str, tuple[DiscoveredCommercialProduct, ...]] = {}
+    rows: list[CollectionRow] = []
+    for site in sites:
+        if site not in SITE_SEEDS:
+            raise ValueError(f"unsupported commercial site: {site}")
+        candidates, discovery_rows, blocked, _ = _site_discovery(
+            site, evidence_dir=evidence_dir / "catalog", client=client, before_request=pacer.before_request,
+            evidence_store=evidence_store,
+        )
+        rows.extend(discovery_rows)
+        if blocked:
+            raise CandidateManifestMismatch(f"candidate discovery blocked for {site}")
+        result[site] = tuple(candidates)
+    return CandidateManifest(result), tuple(rows)
+
+
 def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds: float,
                               evidence_dir: Path, dry_run: bool, repository: PostgresRepository | None = None,
                               client: PublicHttpClient | None = None, sleep: Callable[[float], None] = time.sleep,
                               evidence_store: EvidenceStore | None = None,
-                              candidate_offset: int = 0) -> CommercialCollectionResult:
+                              candidate_offset: int = 0,
+                              expected_manifest: CandidateManifest | None = None) -> CommercialCollectionResult:
     """Run the bounded collection without matching, selection, or scheduling."""
     if not 1 <= limit <= 30:
         raise ValueError("limit must be between 1 and 30")
@@ -145,21 +229,28 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
     rows: list[CollectionRow] = []
     results: list[SiteCollectionResult] = []
     evidence_dir.mkdir(parents=True, exist_ok=True)
+    pacer = _RequestPacer(pause_seconds, sleep)
     for site in sites:
         if site not in SITE_SEEDS:
             raise ValueError(f"unsupported commercial site: {site}")
         candidates, discovery_rows, blocked, page_count = _site_discovery(
-            site, evidence_dir=evidence_dir / "catalog", client=client, pause_seconds=pause_seconds, sleep=sleep,
+            site, evidence_dir=evidence_dir / "catalog", client=client, before_request=pacer.before_request,
             evidence_store=evidence_store,
         )
         rows.extend(discovery_rows)
+        if expected_manifest is not None:
+            expected = expected_manifest.sites.get(site)
+            current = tuple(candidates)
+            expected_sha = CandidateManifest({site: expected}).as_jsonable()["sites"][site]["sha256"] if expected is not None else None
+            current_sha = CandidateManifest({site: current}).as_jsonable()["sites"][site]["sha256"]
+            if expected_sha != current_sha:
+                raise CandidateManifestMismatch(f"candidate manifest changed for {site}; no product capture was started")
         fetched_cards = numeric = on_request = errors = created = repeats = 0
         selected_candidates = candidates[candidate_offset:candidate_offset + limit]
         for position, candidate in enumerate(selected_candidates):
             if blocked:
                 break
-            if page_count or position:
-                sleep(pause_seconds)
+            pacer.before_request()
             captured = capture_public_html(candidate.product_url, evidence_dir=evidence_dir / "products", client=client,
                                             timeout_seconds=15, max_attempts=2, retry_delay_seconds=pause_seconds,
                                             expected_model=candidate.expected_model, evidence_store=evidence_store)
@@ -208,3 +299,8 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
 def write_collection_report(result: CommercialCollectionResult, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result.as_jsonable(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_candidate_manifest(manifest: CandidateManifest, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest.as_jsonable(), ensure_ascii=False, indent=2), encoding="utf-8")

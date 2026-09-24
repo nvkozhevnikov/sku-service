@@ -1,7 +1,10 @@
 import unittest
 from pathlib import Path
 
-from universal_supplier.commercial_collection import SITE_SEEDS, run_commercial_collection
+from universal_supplier.commercial_collection import (
+    CandidateManifest, CandidateManifestMismatch, SITE_SEEDS, discover_commercial_candidates,
+    run_commercial_collection,
+)
 from universal_supplier.http_capture import HttpResponse
 
 
@@ -79,6 +82,37 @@ class CommercialCollectionTests(unittest.TestCase):
         self.assertEqual((site.discovered_urls, site.candidate_offset, site.candidates_selected, site.product_attempts),
                          (2, 1, 1, 1))
         self.assertEqual([url for kind, url in client.calls if kind == "product"], [bmsy_440])
+
+    def test_manifest_mismatch_stops_before_product_capture(self):
+        first, second = SITE_SEEDS["beka_mak"]
+        product_url = "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/"
+        client = FakeCollectionClient({
+            first: HttpResponse(first, 200, "text/html", f"<a href='{product_url}'>BMS 230 DG</a>".encode()),
+            second: HttpResponse(second, 200, "text/html", b""),
+            product_url: HttpResponse(product_url, 200, "text/html", b"unused"),
+        })
+        different = CandidateManifest({"beka_mak": ()})
+        with self.assertRaises(CandidateManifestMismatch):
+            run_commercial_collection(sites=("beka_mak",), limit=1, pause_seconds=0,
+                                      evidence_dir=Path.cwd(), dry_run=True, client=client, sleep=lambda _: None,
+                                      evidence_store=MemoryEvidenceStore(), expected_manifest=different)
+        self.assertFalse(any(kind == "product" for kind, _ in client.calls))
+
+    def test_discovery_manifest_has_stable_checksum_and_global_pacing(self):
+        first, second = SITE_SEEDS["beka_mak"]
+        product_url = "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/"
+        client = FakeCollectionClient({
+            first: HttpResponse(first, 200, "text/html", f"<a href='{product_url}'>BMS 230 DG</a>".encode()),
+            second: HttpResponse(second, 200, "text/html", b""),
+        })
+        pauses = []
+        manifest, _ = discover_commercial_candidates(sites=("beka_mak",), evidence_dir=Path.cwd(),
+                                                      pause_seconds=0, client=client, sleep=pauses.append,
+                                                      evidence_store=MemoryEvidenceStore())
+        serialized = manifest.as_jsonable()
+        self.assertEqual(len(serialized["sites"]["beka_mak"]["sha256"]), 64)
+        self.assertEqual(CandidateManifest.from_jsonable(serialized).as_jsonable(), serialized)
+        self.assertEqual(pauses, [0])
 
     def test_blocked_catalog_stops_site_without_product_request(self):
         first, second = SITE_SEEDS["intervesp"]
