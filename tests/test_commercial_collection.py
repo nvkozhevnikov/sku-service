@@ -45,7 +45,9 @@ class CommercialCollectionTests(unittest.TestCase):
         product_url = "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/"
         pages = {
             first: HttpResponse(first, 200, "text/html", f"<a href='{product_url}'>BMS 230 DG</a>".encode()),
-            second: HttpResponse(second, 200, "text/html", b"<p>no compatible card</p>"),
+            # A duplicate link in another category remains one candidate and
+            # is fetched only once in the same run.
+            second: HttpResponse(second, 200, "text/html", f"<a href='{product_url}'>BMS 230 DG</a>".encode()),
             product_url: HttpResponse(product_url, 200, "text/html; charset=UTF-8", fixture),
         }
         pauses = []
@@ -57,6 +59,26 @@ class CommercialCollectionTests(unittest.TestCase):
         self.assertEqual(site.observations_created, 0)
         self.assertTrue(any(row.result == "DRY_RUN" for row in result.rows))
         self.assertEqual(pauses, [0, 0])
+
+    def test_offset_is_stable_resume_boundary_and_skips_previous_candidate(self):
+        first, second = SITE_SEEDS["beka_mak"]
+        bms_230 = "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/"
+        bmsy_440 = "https://beka-mak.su/product/poluavtomaticheskiy_lentochnopilnyy_stanok_beka_mak_bmsy_440dgh/"
+        fixture_root = Path(__file__).with_name("fixtures") / "commercial" / "real"
+        pages = {
+            first: HttpResponse(first, 200, "text/html", f"<a href='{bms_230}'>BMS 230 DG</a>".encode()),
+            second: HttpResponse(second, 200, "text/html", f"<a href='{bmsy_440}'>BMSY 440 DGH</a>".encode()),
+            bms_230: HttpResponse(bms_230, 200, "text/html", (fixture_root / "bekamak_bms_230dg_sanitized.html").read_bytes()),
+            bmsy_440: HttpResponse(bmsy_440, 200, "text/html", (fixture_root / "bekamak_bmsy_440dgh_sanitized.html").read_bytes()),
+        }
+        client = FakeCollectionClient(pages)
+        result = run_commercial_collection(sites=("beka_mak",), limit=1, candidate_offset=1, pause_seconds=0,
+                                           evidence_dir=Path.cwd(), dry_run=True, client=client,
+                                           sleep=lambda _: None, evidence_store=MemoryEvidenceStore())
+        site = result.site_results[0]
+        self.assertEqual((site.discovered_urls, site.candidate_offset, site.candidates_selected, site.product_attempts),
+                         (2, 1, 1, 1))
+        self.assertEqual([url for kind, url in client.calls if kind == "product"], [bmsy_440])
 
     def test_blocked_catalog_stops_site_without_product_request(self):
         first, second = SITE_SEEDS["intervesp"]

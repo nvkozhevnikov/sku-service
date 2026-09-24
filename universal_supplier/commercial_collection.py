@@ -59,6 +59,8 @@ class SiteCollectionResult:
     site: str
     discovered_urls: int
     catalog_pages_fetched: int
+    candidate_offset: int
+    candidates_selected: int
     product_attempts: int
     fetched_cards: int
     numeric_prices: int
@@ -120,16 +122,21 @@ def _site_discovery(site: str, *, evidence_dir: Path, client: PublicHttpClient |
         queue.extend(page for page in discovery.pagination_urls if page not in seen and page not in queue)
         rows.append(CollectionRow(site, fetched.final_url, None, None, "discovery", "SUCCESS", fetched.http_status,
                                   diagnostics=(f"discovered_cards:{len(discovery.products)}", f"pagination:{len(discovery.pagination_urls)}")))
-    return list(candidates.values()), rows, blocked, page_count
+    # The resume offset is a public CLI contract, so candidate order must not
+    # depend on incidental HTML anchor order or category traversal order.
+    return sorted(candidates.values(), key=lambda item: (item.expected_model, item.product_url)), rows, blocked, page_count
 
 
 def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds: float,
                               evidence_dir: Path, dry_run: bool, repository: PostgresRepository | None = None,
                               client: PublicHttpClient | None = None, sleep: Callable[[float], None] = time.sleep,
-                              evidence_store: EvidenceStore | None = None) -> CommercialCollectionResult:
+                              evidence_store: EvidenceStore | None = None,
+                              candidate_offset: int = 0) -> CommercialCollectionResult:
     """Run the bounded collection without matching, selection, or scheduling."""
     if not 1 <= limit <= 30:
         raise ValueError("limit must be between 1 and 30")
+    if candidate_offset < 0:
+        raise ValueError("candidate_offset must not be negative")
     if pause_seconds < MIN_SITE_PAUSE_SECONDS and client is None:
         raise ValueError(f"public collection requires pause_seconds >= {MIN_SITE_PAUSE_SECONDS:g}")
     if not dry_run and repository is None:
@@ -147,7 +154,8 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
         )
         rows.extend(discovery_rows)
         fetched_cards = numeric = on_request = errors = created = repeats = 0
-        for position, candidate in enumerate(candidates[:limit]):
+        selected_candidates = candidates[candidate_offset:candidate_offset + limit]
+        for position, candidate in enumerate(selected_candidates):
             if blocked:
                 break
             if page_count or position:
@@ -191,7 +199,8 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
                                       product.price.currency, product.availability,
                                       None if persisted is None else persisted["observation_created"],
                                       None if persisted is None else persisted["exact_noop"], tuple(diagnostics)))
-        results.append(SiteCollectionResult(site, len(candidates), page_count, min(len(candidates), limit), fetched_cards,
+        results.append(SiteCollectionResult(site, len(candidates), page_count, candidate_offset, len(selected_candidates),
+                                            len(selected_candidates), fetched_cards,
                                             numeric, on_request, errors, blocked, created, repeats))
     return CommercialCollectionResult(started, datetime.now(timezone.utc).isoformat(), dry_run, tuple(results), tuple(rows))
 

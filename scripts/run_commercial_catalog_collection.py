@@ -18,6 +18,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Bounded read-only commercial collection; suppliers remain disabled.")
     parser.add_argument("--source", choices=("all", "intervesp", "beka_mak"), default="all")
     parser.add_argument("--limit", type=int, default=20, help="Maximum cards per site, 1..30")
+    parser.add_argument("--offset", type=int, default=0,
+                        help="Stable per-site candidate offset for a manual resumed batch")
     parser.add_argument("--pause-seconds", type=float, default=20.0, help="Minimum public pause is 20 seconds")
     parser.add_argument("--dry-run", action="store_true", help="Capture and parse only; do not connect or persist")
     parser.add_argument("--report", type=Path, required=True)
@@ -40,7 +42,8 @@ def main() -> None:
         repository = PostgresRepository(PostgresConfig(args.db_host, args.db_port, args.db_name, args.db_user, password, args.db_sslmode))
     try:
         result = run_commercial_collection(sites=sites, limit=args.limit, pause_seconds=args.pause_seconds,
-                                           evidence_dir=args.evidence_dir, dry_run=args.dry_run, repository=repository)
+                                           evidence_dir=args.evidence_dir, dry_run=args.dry_run, repository=repository,
+                                           candidate_offset=args.offset)
         write_collection_report(result, args.report)
         print(args.report)
     finally:
