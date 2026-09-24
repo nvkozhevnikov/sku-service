@@ -192,3 +192,5 @@ class CommercialPersistenceTests(unittest.TestCase):
         self.assertIn("price_state <> 'numeric_public' AND price IS NULL", migration)
         self.assertNotIn("CREATE TABLE product_matches", migration)
         self.assertNotIn("CREATE TABLE catalog_products", migration)
+        self.assertNotIn("ON DELETE CASCADE", migration)
+        self.assertGreaterEqual(migration.count("ON DELETE RESTRICT"), 8)

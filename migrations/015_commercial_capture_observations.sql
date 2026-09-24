@@ -22,7 +22,7 @@ CREATE TABLE supplier_http_captures (
     diagnostics jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT supplier_http_captures_product_supplier_fk FOREIGN KEY (source_product_id, supplier_id)
-        REFERENCES source_products(id, supplier_id) ON DELETE CASCADE,
+        REFERENCES source_products(id, supplier_id) ON DELETE RESTRICT,
     CONSTRAINT supplier_http_captures_urls_ck CHECK (requested_url ~ '^https?://' AND final_url ~ '^https?://'),
     CONSTRAINT supplier_http_captures_status_ck CHECK (http_status IS NULL OR http_status BETWEEN 100 AND 599),
     CONSTRAINT supplier_http_captures_fingerprint_ck CHECK (capture_fingerprint ~ '^[0-9a-f]{64}$'),
@@ -59,7 +59,7 @@ CREATE TABLE offer_commercial_observations (
     region_code text,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT offer_commercial_observations_product_supplier_fk FOREIGN KEY (source_product_id, supplier_id)
-        REFERENCES source_products(id, supplier_id) ON DELETE CASCADE,
+        REFERENCES source_products(id, supplier_id) ON DELETE RESTRICT,
     CONSTRAINT offer_commercial_observations_offer_product_fk FOREIGN KEY (offer_id, source_product_id)
         REFERENCES offers(id, source_product_id) ON DELETE RESTRICT,
     CONSTRAINT offer_commercial_observations_capture_product_fk FOREIGN KEY (capture_id, source_product_id)
