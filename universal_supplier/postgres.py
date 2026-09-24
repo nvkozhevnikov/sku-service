@@ -128,11 +128,18 @@ class PostgresRepository:
             """INSERT INTO suppliers (code, name, base_url, adapter_name, enabled, transport_mode,
                        deactivate_after_misses, created_at, updated_at)
                VALUES (%s,%s,%s,%s,false,'direct',3,now(),now())
-               ON CONFLICT (code) DO UPDATE SET enabled=false, updated_at=now()
+               ON CONFLICT (code) DO NOTHING
                RETURNING id""",
             (supplier_code, name, base_url, adapter_name),
         )
-        return cursor.fetchone()[0]
+        inserted = cursor.fetchone()
+        if inserted:
+            return inserted[0]
+        cursor.execute("SELECT id FROM suppliers WHERE code=%s FOR UPDATE", (supplier_code,))
+        existing = cursor.fetchone()
+        if existing is None:
+            raise RuntimeError("passive commercial supplier disappeared during creation")
+        return existing[0]
 
     def persist_commercial_observation(self, product: ReadOnlySupplierProduct, capture: HttpCapture) -> dict[str, Any]:
         """Persist one captured public-price observation after explicit DB authorisation.

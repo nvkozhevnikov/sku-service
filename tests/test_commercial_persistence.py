@@ -194,3 +194,12 @@ class CommercialPersistenceTests(unittest.TestCase):
         self.assertNotIn("CREATE TABLE catalog_products", migration)
         self.assertNotIn("ON DELETE CASCADE", migration)
         self.assertGreaterEqual(migration.count("ON DELETE RESTRICT"), 8)
+
+    def test_passive_supplier_upsert_does_not_mutate_an_existing_namespace(self):
+        source = (ROOT / "universal_supplier" / "postgres.py").read_text(encoding="utf-8")
+        start = source.index("def _ensure_passive_commercial_supplier")
+        end = source.index("def persist_commercial_observation", start)
+        helper = source[start:end]
+        self.assertIn("ON CONFLICT (code) DO NOTHING", helper)
+        self.assertIn("SELECT id FROM suppliers WHERE code=%s FOR UPDATE", helper)
+        self.assertNotIn("DO UPDATE SET enabled=false, updated_at=now()", helper)
