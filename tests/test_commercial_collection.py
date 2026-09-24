@@ -147,6 +147,33 @@ class CommercialCollectionTests(unittest.TestCase):
         self.assertEqual((site.catalog_pages_fetched, site.product_attempts, site.fetched_cards), (1, 0, 0))
         self.assertEqual(client.calls, [("catalog", first)])
 
+    def test_explicit_catalog_page_limit_bounds_pagination_before_product_capture(self):
+        first, second = SITE_SEEDS["beka_mak"]
+        page_two = f"{first}?PAGEN_1=2"
+        first_product = "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/"
+        second_product = "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_270dg/"
+        client = FakeCollectionClient({
+            first: HttpResponse(first, 200, "text/html", (
+                f"<a href='{first_product}'>BMS 230 DG</a><a href='?PAGEN_1=2'>2</a>"
+            ).encode()),
+            second: HttpResponse(second, 200, "text/html", b""),
+            page_two: HttpResponse(page_two, 200, "text/html", f"<a href='{second_product}'>BMS 270 DG</a>".encode()),
+            first_product: HttpResponse(first_product, 200, "text/html", b"<h1>BMS 230 DG</h1>"),
+        })
+        result = run_commercial_collection(sites=("beka_mak",), limit=1, pause_seconds=0,
+                                           evidence_dir=Path.cwd(), dry_run=True, client=client,
+                                           sleep=lambda _: None, evidence_store=MemoryEvidenceStore(),
+                                           catalog_page_limit=1)
+        site = result.site_results[0]
+        self.assertEqual((site.catalog_pages_fetched, site.discovered_urls), (1, 1))
+        self.assertNotIn(("catalog", page_two), client.calls)
+
+    def test_catalog_page_limit_rejects_unbounded_value(self):
+        with self.assertRaises(ValueError):
+            run_commercial_collection(sites=("beka_mak",), limit=1, pause_seconds=0,
+                                      evidence_dir=Path.cwd(), dry_run=True, client=FakeCollectionClient({}),
+                                      sleep=lambda _: None, catalog_page_limit=21)
+
     def test_persistence_is_opt_in_and_returns_observation_count(self):
         fixture = (Path(__file__).with_name("fixtures") / "commercial" / "real" / "bekamak_bms_230dg_sanitized.html").read_bytes()
         first, second = SITE_SEEDS["beka_mak"]

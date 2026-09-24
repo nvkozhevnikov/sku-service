@@ -103,11 +103,18 @@ class _AnchorParser(HTMLParser):
 
 def normalise_model(value: str) -> str:
     compact = re.sub(r"[\s-]+", "-", value.strip().upper()).strip("-")
-    match = re.fullmatch(r"(BMS(?:Y|O)?)-(\d+)-?([A-Z]+\d*)(?:-(WP\d+[A-Z0-9]*))?", compact)
+    # The Beka-Mak page title uses both ``BMSY-360DGH ECO`` and
+    # ``BMSY-360-DGH-ECO`` for the same model token.  A separator between the
+    # numeric series and its alphabetic suffix is typographical here; it is
+    # not an execution boundary.  Preserve every later suffix (notably WPn)
+    # verbatim so this never collapses configured machines into their base.
+    match = re.fullmatch(
+        r"(BMS(?:Y|O)?)-(\d+)-?([A-Z]+\d*)((?:-[A-Z0-9]+)*)", compact,
+    )
     if not match:
         return compact
-    family, number, suffix, execution = match.groups()
-    return f"{family}-{number}{suffix}" + (f"-{execution}" if execution else "")
+    family, number, suffix, trailing = match.groups()
+    return f"{family}-{number}{suffix}{trailing}"
 
 
 def model_and_execution(value: str) -> tuple[str, str | None]:

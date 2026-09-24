@@ -23,6 +23,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=20, help="Maximum cards per site, 1..30")
     parser.add_argument("--offset", type=int, default=0,
                         help="Stable per-site candidate offset for a manual resumed batch")
+    parser.add_argument("--catalog-page-limit", type=int, default=2,
+                        help="Explicit category/page cap per site, 1..20; default preserves Stage 5C scope")
     parser.add_argument("--discovery-only", action="store_true",
                         help="Fetch only bounded category pages and write a candidate manifest")
     parser.add_argument("--candidate-manifest-out", type=Path,
@@ -49,7 +51,8 @@ def main() -> None:
         if args.expected_candidate_manifest or not args.dry_run:
             parser.error("--discovery-only must not use DB options or an expected manifest")
         manifest, rows = discover_commercial_candidates(sites=sites, evidence_dir=args.evidence_dir,
-                                                         pause_seconds=args.pause_seconds)
+                                                         pause_seconds=args.pause_seconds,
+                                                         catalog_page_limit=args.catalog_page_limit)
         write_candidate_manifest(manifest, args.candidate_manifest_out)
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(__import__("json").dumps({"rows": [row.__dict__ for row in rows]}, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -71,7 +74,8 @@ def main() -> None:
     try:
         result = run_commercial_collection(sites=sites, limit=args.limit, pause_seconds=args.pause_seconds,
                                            evidence_dir=args.evidence_dir, dry_run=args.dry_run, repository=repository,
-                                           candidate_offset=args.offset, expected_manifest=expected_manifest)
+                                           candidate_offset=args.offset, expected_manifest=expected_manifest,
+                                           catalog_page_limit=args.catalog_page_limit)
         write_collection_report(result, args.report)
         if args.review_report_out:
             write_review_report(result.rows, args.review_report_out)

@@ -155,15 +155,18 @@ def _parser(site: str) -> Callable[..., ReadOnlySupplierProduct]:
 
 
 def _site_discovery(site: str, *, evidence_dir: Path, client: PublicHttpClient | None,
-                    before_request: Callable[[], None], evidence_store: EvidenceStore | None) -> tuple[list[DiscoveredCommercialProduct], list[CollectionRow], bool, int]:
-    """Discover at most two catalog pages and stop a site on access blocking."""
+                    before_request: Callable[[], None], evidence_store: EvidenceStore | None,
+                    catalog_page_limit: int = MAX_CATALOG_PAGES_PER_SITE) -> tuple[list[DiscoveredCommercialProduct], list[CollectionRow], bool, int]:
+    """Discover a caller-bounded number of catalog pages; stop on blocking."""
+    if not 1 <= catalog_page_limit <= 20:
+        raise ValueError("catalog_page_limit must be between 1 and 20")
     queue = list(SITE_SEEDS[site])
     seen: set[str] = set()
     candidates: dict[str, DiscoveredCommercialProduct] = {}
     rows: list[CollectionRow] = []
     blocked = False
     page_count = 0
-    while queue and page_count < MAX_CATALOG_PAGES_PER_SITE and not blocked:
+    while queue and page_count < catalog_page_limit and not blocked:
         url = queue.pop(0)
         if url in seen:
             continue
@@ -194,7 +197,8 @@ def _site_discovery(site: str, *, evidence_dir: Path, client: PublicHttpClient |
 def discover_commercial_candidates(*, sites: Iterable[str], evidence_dir: Path,
                                    pause_seconds: float, client: PublicHttpClient | None = None,
                                    sleep: Callable[[float], None] = time.sleep,
-                                   evidence_store: EvidenceStore | None = None) -> tuple[CandidateManifest, tuple[CollectionRow, ...]]:
+                                   evidence_store: EvidenceStore | None = None,
+                                   catalog_page_limit: int = MAX_CATALOG_PAGES_PER_SITE) -> tuple[CandidateManifest, tuple[CollectionRow, ...]]:
     """Fetch only bounded category pages and return a stable candidate manifest."""
     if pause_seconds < MIN_SITE_PAUSE_SECONDS and client is None:
         raise ValueError(f"public discovery requires pause_seconds >= {MIN_SITE_PAUSE_SECONDS:g}")
@@ -207,7 +211,7 @@ def discover_commercial_candidates(*, sites: Iterable[str], evidence_dir: Path,
             raise ValueError(f"unsupported commercial site: {site}")
         candidates, discovery_rows, blocked, _ = _site_discovery(
             site, evidence_dir=evidence_dir / "catalog", client=client, before_request=pacer.before_request,
-            evidence_store=evidence_store,
+            evidence_store=evidence_store, catalog_page_limit=catalog_page_limit,
         )
         rows.extend(discovery_rows)
         if blocked:
@@ -221,7 +225,8 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
                               client: PublicHttpClient | None = None, sleep: Callable[[float], None] = time.sleep,
                               evidence_store: EvidenceStore | None = None,
                               candidate_offset: int = 0,
-                              expected_manifest: CandidateManifest | None = None) -> CommercialCollectionResult:
+                              expected_manifest: CandidateManifest | None = None,
+                              catalog_page_limit: int = MAX_CATALOG_PAGES_PER_SITE) -> CommercialCollectionResult:
     """Run the bounded collection without matching, selection, or scheduling."""
     if not 1 <= limit <= 30:
         raise ValueError("limit must be between 1 and 30")
@@ -241,7 +246,7 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
             raise ValueError(f"unsupported commercial site: {site}")
         candidates, discovery_rows, blocked, page_count = _site_discovery(
             site, evidence_dir=evidence_dir / "catalog", client=client, before_request=pacer.before_request,
-            evidence_store=evidence_store,
+            evidence_store=evidence_store, catalog_page_limit=catalog_page_limit,
         )
         rows.extend(discovery_rows)
         if expected_manifest is not None:

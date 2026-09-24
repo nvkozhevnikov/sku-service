@@ -59,6 +59,15 @@ class CommercialDiscoveryTests(unittest.TestCase):
             validate_catalog_url("https://beka-mak.su/catalog/x/?filter=1", site="beka_mak")
         self.assertEqual(model_and_execution("BMSY-440DGH WP2"), ("BMSY-440DGH-WP2", "WP2"))
 
+    def test_bekamak_separator_variant_is_not_a_model_conflict(self):
+        # Evidence in Stage 5C has a Beka-Mak primary title
+        # ``BMSY-360DGH ECO`` while the adapter retains an article spelling
+        # ``BMSY-360-DGH-ECO``.  Only the separator after the numeric series
+        # is normalized; the ECO and WP suffixes remain explicit.
+        self.assertEqual(model_and_execution("BMSY-360-DGH-ECO"), ("BMSY-360DGH-ECO", None))
+        self.assertEqual(model_and_execution("BMSY-360DGH ECO"), ("BMSY-360DGH-ECO", None))
+        self.assertEqual(model_and_execution("BMSY-360-DGH-ECO-WP1"), ("BMSY-360DGH-ECO-WP1", "WP1"))
+
     def test_catalog_fetch_saves_only_sanitised_html_and_stops_challenge(self):
         evidence = RecordingEvidence()
         product_page = b"<html><script>BX.message({bitrix_sessid: 'test-value'})</script><a href='/product/bms_230_dg/'>BMS 230 DG</a></html>"
