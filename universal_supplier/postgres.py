@@ -12,6 +12,8 @@ from sterbrust_matching.product_identity import PROPERTY_POLICIES, canonical_pro
 from sterbrust_matching.property_normalization import DEFAULT_PROPERTY_POLICIES
 
 from .change_detection import card_group_values, card_hashes
+from .commercial import ReadOnlySupplierProduct
+from .commercial_persistence import HttpCapture, observation_from_snapshot, product_card_from_snapshot
 from .models import ProductCard
 from .repository import IngestCounts
 from .state import DiscoveryHealth
@@ -24,7 +26,12 @@ PARTNER_CODE = "partner_st"
 SUPPLIER_CONFIGS = {
     "partner_st": ("Partner-ST", "https://partner-st.ru/", "partner_st"),
     "optimum": ("Optimum", "https://optimum.su/", "optimum"),
+    # Configuration only.  No supplier is inserted until an explicitly
+    # authorised repository call invokes ensure_supplier().
+    "intervesp": ("Intervesp", "https://intervesp.ru/", "intervesp"),
+    "beka_mak": ("Beka-Mak", "https://beka-mak.su/", "beka_mak"),
 }
+PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak"})
 
 
 def should_quarantine_automatic_link(previous_auto_accepted: bool, new_status: str) -> bool:
@@ -95,10 +102,10 @@ class PostgresRepository:
             cursor.execute(
                 """INSERT INTO suppliers (code, name, base_url, adapter_name, enabled, transport_mode,
                            deactivate_after_misses, created_at, updated_at)
-                   VALUES (%s,%s,%s,%s,true,'direct',3,now(),now())
+                   VALUES (%s,%s,%s,%s,%s,'direct',3,now(),now())
                    ON CONFLICT (code) DO UPDATE SET updated_at = now()
                    RETURNING id""",
-                (supplier_code, name, base_url, adapter_name),
+                (supplier_code, name, base_url, adapter_name, supplier_code not in PASSIVE_COMMERCIAL_SUPPLIERS),
             )
             supplier_id = cursor.fetchone()[0]
             cursor.execute(
@@ -112,6 +119,142 @@ class PostgresRepository:
     def ensure_partner_supplier(self) -> int:
         """Backward-compatible Stage 3B helper."""
         return self.ensure_supplier(PARTNER_CODE)
+
+    @staticmethod
+    def _ensure_passive_commercial_supplier(cursor, supplier_code: str) -> int:
+        """Create only the isolated namespace; never touch Sterbrust identifiers."""
+        name, base_url, adapter_name = SUPPLIER_CONFIGS[supplier_code]
+        cursor.execute(
+            """INSERT INTO suppliers (code, name, base_url, adapter_name, enabled, transport_mode,
+                       deactivate_after_misses, created_at, updated_at)
+               VALUES (%s,%s,%s,%s,false,'direct',3,now(),now())
+               ON CONFLICT (code) DO UPDATE SET enabled=false, updated_at=now()
+               RETURNING id""",
+            (supplier_code, name, base_url, adapter_name),
+        )
+        return cursor.fetchone()[0]
+
+    def persist_commercial_observation(self, product: ReadOnlySupplierProduct, capture: HttpCapture) -> dict[str, Any]:
+        """Persist one captured public-price observation after explicit DB authorisation.
+
+        The method is intentionally inert until called by a future, separately
+        authorised isolated-DB workflow.  It does not invoke matching,
+        reconciliation, offer selection, a scheduler, or any external service.
+        """
+        card = product_card_from_snapshot(product, capture)
+        observation = observation_from_snapshot(product, capture)
+        observed_at = capture.observed_at.isoformat()
+        if card.supplier_code not in PASSIVE_COMMERCIAL_SUPPLIERS:
+            raise ValueError("commercial persistence is limited to passive suppliers")
+        region = capture.region_code or ""
+        counts = IngestCounts()
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            supplier_id = self._ensure_passive_commercial_supplier(cursor, card.supplier_code)
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                           (f"commercial:{supplier_id}:{card.external_id}",))
+            cursor.execute(
+                """SELECT id, catalog_product_id, last_success_at, raw_data
+                   FROM source_products WHERE supplier_id=%s AND external_id=%s AND external_id_is_stable
+                   FOR UPDATE""",
+                (supplier_id, card.external_id),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                source_product_id, catalog_product_id, last_success_at, raw_data = existing
+                cursor.execute("SELECT id FROM supplier_http_captures WHERE source_product_id=%s AND capture_fingerprint=%s",
+                               (source_product_id, capture.fingerprint))
+                exact_capture = cursor.fetchone()
+                if exact_capture:
+                    return {"ingest_counts": counts, "source_product_id": source_product_id,
+                            "capture_id": exact_capture[0], "observation_id": None,
+                            "observation_created": False, "projection_updated": False, "exact_noop": True}
+                if catalog_product_id is not None:
+                    raise RuntimeError("commercial persistence refuses a catalog-linked source product")
+                projection_region = str((raw_data or {}).get("_commercial_projection_region", ""))
+                projection_updated = projection_region == region and (last_success_at is None or capture.observed_at >= last_success_at)
+                if projection_updated:
+                    next_raw = dict(card.raw_data)
+                    next_raw["_commercial_projection_region"] = region
+                    cursor.execute(
+                        """UPDATE source_products SET sku=%s,name=%s,source_url=%s,canonical_url=%s,raw_data=%s::jsonb,
+                           last_seen_at=%s,last_success_at=%s,last_changed_at=%s,active=true,missed_crawls=0,
+                           last_http_status=%s,updated_at=now() WHERE id=%s""",
+                        (card.sku, card.name, card.requested_url, card.canonical_url,
+                         json.dumps(next_raw, ensure_ascii=False), observed_at, observed_at, observed_at,
+                         card.http_status, source_product_id),
+                    )
+                    counts.changed_products += 1
+            else:
+                projection_updated = True
+                next_raw = dict(card.raw_data)
+                next_raw["_commercial_projection_region"] = region
+                cursor.execute(
+                    """INSERT INTO source_products
+                       (supplier_id,external_id,external_id_is_stable,sku,name,source_url,canonical_url,raw_data,
+                        first_seen_at,last_seen_at,last_success_at,last_changed_at,active,missed_crawls,last_http_status)
+                       VALUES (%s,%s,true,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,true,0,%s) RETURNING id""",
+                    (supplier_id, card.external_id, card.sku, card.name, card.requested_url, card.canonical_url,
+                     json.dumps(next_raw, ensure_ascii=False), observed_at, observed_at, observed_at, observed_at,
+                     card.http_status),
+                )
+                source_product_id = cursor.fetchone()[0]
+                counts.new_products += 1
+            cursor.execute("SELECT id FROM offers WHERE source_product_id=%s AND offer_kind='default' FOR UPDATE", (source_product_id,))
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    """INSERT INTO offers
+                       (supplier_id,source_product_id,external_offer_id,external_id_is_stable,offer_kind,sku,title,
+                        price,old_price,currency,availability_raw,availability_normalized,quantity,raw_data,
+                        first_seen_at,last_seen_at,last_success_at,last_changed_at,active,missed_crawls)
+                       VALUES (%s,%s,%s,true,'default',%s,%s,%s,%s,%s,%s,%s,NULL,%s::jsonb,%s,%s,%s,%s,false,0)
+                       RETURNING id""",
+                    (supplier_id, source_product_id, card.external_id, card.sku, card.name, card.price, card.old_price,
+                     card.currency or None, card.availability_raw, card.availability_normalized,
+                     json.dumps(card.raw_data, ensure_ascii=False), observed_at, observed_at, observed_at, observed_at),
+                )
+                offer_id = cursor.fetchone()[0]
+                counts.new_offers += 1
+            else:
+                offer_id = row[0]
+                if projection_updated:
+                    cursor.execute(
+                        """UPDATE offers SET sku=%s,title=%s,price=%s,old_price=%s,currency=%s,
+                           availability_raw=%s,availability_normalized=%s,quantity=NULL,raw_data=%s::jsonb,
+                           last_seen_at=%s,last_success_at=%s,last_changed_at=%s,active=false,missed_crawls=0,updated_at=now()
+                           WHERE id=%s""",
+                        (card.sku, card.name, card.price, card.old_price, card.currency or None,
+                         card.availability_raw, card.availability_normalized, json.dumps(card.raw_data, ensure_ascii=False),
+                         observed_at, observed_at, observed_at, offer_id),
+                    )
+                    counts.changed_offers += 1
+            cursor.execute(
+                """INSERT INTO supplier_http_captures
+                   (supplier_id,source_product_id,requested_url,final_url,http_status,content_type,observed_at,
+                    capture_fingerprint,response_sha256,evidence_sha256,evidence_ref,redirect_urls,region_code,region_label,diagnostics)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb) RETURNING id""",
+                (supplier_id, source_product_id, capture.requested_url, capture.final_url, capture.http_status,
+                 capture.content_type, observed_at, capture.fingerprint, capture.response_sha256, capture.evidence_sha256,
+                 capture.evidence_ref, json.dumps(capture.redirects), region, capture.region_label,
+                 json.dumps({"codes": capture.diagnostics})),
+            )
+            capture_id = cursor.fetchone()[0]
+            cursor.execute(
+                """INSERT INTO offer_commercial_observations
+                   (supplier_id,source_product_id,offer_id,capture_id,observed_at,extraction_fingerprint,price_state,
+                    price,old_price,currency,availability_raw,availability_normalized,price_type,price_raw,price_source,
+                    extraction_evidence,unusable_price_reasons,region_code)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'unknown',%s,%s,%s::jsonb,%s::jsonb,%s) RETURNING id""",
+                (supplier_id, source_product_id, offer_id, capture_id, observed_at, observation.extraction_fingerprint,
+                 observation.price_state.value, observation.price, observation.old_price, observation.currency,
+                 observation.availability_raw, observation.availability_normalized, observation.price_raw,
+                 observation.price_source, json.dumps(observation.extraction_evidence, ensure_ascii=False),
+                 json.dumps(observation.unusable_price_reasons, ensure_ascii=False), region),
+            )
+            observation_id = cursor.fetchone()[0]
+        return {"ingest_counts": counts, "source_product_id": source_product_id, "offer_id": offer_id,
+                "capture_id": capture_id, "observation_id": observation_id, "observation_created": True,
+                "projection_updated": projection_updated, "exact_noop": False}
 
     def start_crawl_run(self, *, started_at: str, baseline_discovered_count: int | None,
                         metadata: dict[str, Any] | None = None,
