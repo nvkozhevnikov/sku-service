@@ -1,7 +1,18 @@
 # Separate RC database handoff
 
-Status: custom dump created/read-only inventory verified; **real restore rehearsal
-NOT EXECUTED**. No production or source database is a permissible restore target.
+Status: custom dump verified and **local disposable restore rehearsal PASS**.
+No production or source database is a permissible restore target.
+
+LIVE-VERIFIED 2026-10-02: PG17.11,127.0.0.1:55450,
+universal_supplier_restore_rehearsal,owner rehearsal_app,systemID7692081906172255244.
+New separate cluster,empty target0tables before restore; pg_restore --list and
+controlled single-transaction restore completed exit0/errors0.15 migration hashes,
+109validatedFKs/109anti-join checks/broken0,five namespaces and4407products/offers
+PASS. Authoritative accepted506/2FULL/3640/259,458uniqueIDs unchanged. Original RC
+and production unchanged. Disposable DB retained, not deleted. Evidence delivered
+separately in FINAL_LOCAL_VISUAL_QA_2026-10-02/RESTORE_VERIFICATION.json.
+Linux/server restore is not yet executed; procedures below remain approval-gated
+for any new target. No repeat of the completed local rehearsal is required.
 Required PostgreSQL17.x, source and pg_dump/pg_restore verified17.11. Use17.11 for
 the first rehearsal. Physical Windows data-directory is never the delivery.
 
@@ -80,7 +91,7 @@ Only then, with deployment authorization, start web. Verify `/health` and `/read
 login/create admin interactively only if needed; no password logging. Scheduler,
 worker, manual supplier writes and Sterbrust/ESOL write remain OFF. No XML import.
 
-## Exact rehearsal command prepared, not executed
+## Rehearsal command for a future separately approved target
 
 After an operator explicitly authorizes creation of **only** a fresh disposable
 `universal_supplier_rc_rehearsal_20261002` on a specified isolated PG17.11 target

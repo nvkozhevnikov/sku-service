@@ -1,5 +1,19 @@
 # FINAL RC authoritative contract — 2026-10-02
 
+## Final closure (supersedes original assembly-only permission below)
+
+OPERATOR-CONFIRMED: local disposable restore was authorized and completed; now
+freeze that verified evidence and defer visual work. LIVE-VERIFIED restore17.11/
+55450/dbuniversal_supplier_restore_rehearsal/systemID7692081906172255244/errors0;
+4407products/offers,5namespaces,15migrationSHAs,109FK anti-joins/broken0 PASS.
+Original RC/production untouched. Native panel startup/health/readiness PASS;
+VISUAL_BROWSER_QA=DEFERRED_BY_OPERATOR, not verified and not a package blocker.
+Browser smoke QA required after server deployment; redesign deferred separately.
+Runtime/application code remains exactly d2a0f0ce47667da35e5a1338b774f09035a70532;
+final handoff is documentation-only develop commit resolved by annotated tag
+universal-supplier-rc-2026-10-02. Literal final SHA is in external closure metadata.
+No deployment/crawl/matching/new DB mutation authorized by this closure.
+
 OPERATOR-CONFIRMED scope: freeze the accepted FULL checkpoint, assemble neutral
 exports/code/backup/handoff and push **develop only**. Production/deployment/
 ESOL/scheduler/restore-rehearsal are not authorized.

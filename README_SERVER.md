@@ -61,7 +61,12 @@ Stop without deleting volumes:
 `docker compose --env-file .env.server -f docker-compose.server.yml stop web postgres`.
 Never down -v on real runtime. Installed-server backup: scripts/server_backup.py.
 Final local backup: scripts/backup_final_rc.py, read-only with libpq passfile.
-Dumps/secrets never enter Git. Real restore rehearsal requires separate approval.
+Dumps/secrets never enter Git. Local disposable PG17.11 restore rehearsal on55450
+is VERIFIED (15migrationSHAs,109FK checks,broken0,five namespaces4407rows).
+Any new server restore/deployment still requires its own target approval.
+Use annotated tag universal-supplier-rc-2026-10-02; runtime base d2a0f0c is unchanged
+by final documentation closure. Browser QA=DEFERRED_BY_OPERATOR locally, not PASS;
+developer must perform browser smoke QA after authorized server deployment.
 
 `python scripts/assemble_final_rc.py --source <received-accepted-checkpoint> --output <new-final-directory>`
 verifies frozen input hashes/counts, emits neutral XML/CSV without HTTP/SQL/
