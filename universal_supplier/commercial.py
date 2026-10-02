@@ -66,6 +66,18 @@ class ReadOnlySupplierProduct:
     availability: str | None
     price: PriceExtraction
     diagnostics: tuple[str, ...] = ()
+    description_text: str = ""
+    technical_properties: tuple[tuple[str, str], ...] = ()
+    source_images: tuple[str, ...] = ()
+    source_category: str = ""
+    source_category_url: str | None = None
+    raw_supplier_model: str | None = None
+    # Optional supplier-scoped key; never pretend a URL digest is a site ID.
+    supplier_external_id: str | None = None
+    source_brand: str = ""
+    listing_evidence: dict | None = None
+    source_documents: tuple[tuple[str, str], ...] = ()
+    enrichment_evidence: dict | None = None
 
 
 @dataclass(frozen=True)

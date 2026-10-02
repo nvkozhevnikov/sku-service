@@ -1,0 +1,30 @@
+/* RC operator screen: long source evidence must never widen the viewport. */
+html, body { max-width: 100%; overflow-x: hidden; }
+main, main > *, .panel, .card, .tablewrap, .grid2 > *, .cards > * { min-width: 0; max-width: 100%; }
+.panel { overflow-wrap: anywhere; }
+.tablewrap { overflow-x: auto; overscroll-behavior-inline: contain; }
+.tablewrap table { min-width: 100%; width: max-content; max-width: none; }
+.tablewrap td { max-width: 30rem; overflow-wrap: anywhere; }
+.wrap-anywhere, code { overflow-wrap: anywhere; word-break: break-word; }
+[hidden] { display: none !important; }
+.status-badge { display: inline-block; padding: .22rem .55rem; border-radius: 999px; font-size: .76rem; font-weight: 800; letter-spacing: .02em; }
+.status-badge.existing { background: #dff3ed; color: #176657; }
+.status-badge.new { background: #dceafa; color: #164c82; }
+.status-badge.review { background: #fff0ce; color: #795000; }
+.status-badge.conflict { background: #f8dcd9; color: #882c24; }
+.proposal-filters { display: flex; gap: .75rem; align-items: center; margin: 1rem 0; max-width: 18rem; }
+.proposal-filters select { min-width: 10rem; }
+.proposal-downloads { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: .8rem; }
+.proposal-downloads a { display: inline-block; max-width: 100%; overflow-wrap: anywhere; padding: .5rem .7rem; background: #e6f2f0; color: #08685f; border-radius: .5rem; text-decoration: none; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .8rem; margin: 1rem 0; }
+.metrics article { min-width: 0; padding: .8rem 1rem; background: #fff; border: 1px solid #dde3e7; border-radius: .7rem; }
+.metrics article span { display: block; color: #66717c; }
+.metrics article strong { display: block; font-size: 1.8rem; }
+#commercial-manual-form > p,
+#commercial-full-label,
+#commercial-confirm-label { grid-column: 1 / -1; }
+#commercial-full-label,
+#commercial-confirm-label { display: flex; align-items: center; gap: .55rem; }
+#commercial-manual-form input[type="checkbox"] { width: 1.1rem; min-height: 0; height: 1.1rem; flex: none; margin: 0; }
+#commercial-manual-form > button { justify-self: start; }
+@media (max-width: 650px) { .proposal-filters { max-width: 100%; } .tablewrap td { max-width: 17rem; } }

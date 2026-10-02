@@ -153,7 +153,13 @@ class PostgresControlPlaneStore:
         where, params = product_where(filters)
         joins = """FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
             LEFT JOIN product_identity_decisions pid ON pid.source_product_id=sp.id
-            LEFT JOIN LATERAL (SELECT availability_normalized,price,quantity,currency FROM offers WHERE source_product_id=sp.id AND active ORDER BY id LIMIT 1) o ON true
+            LEFT JOIN LATERAL (SELECT availability_normalized,price,quantity,currency FROM offers
+                WHERE source_product_id=sp.id AND (active OR s.code IN ('intervesp','beka_mak','beka_mak_tr'))
+                ORDER BY active DESC,id LIMIT 1) o ON true
+            LEFT JOIN LATERAL (SELECT price_state,price,currency,availability_normalized,observed_at,capture_id
+                FROM offer_commercial_observations co WHERE co.source_product_id=sp.id
+                  AND COALESCE(co.region_code,'')=COALESCE(sp.raw_data->>'_commercial_projection_region','')
+                ORDER BY co.observed_at DESC,co.id DESC LIMIT 1) commercial ON true
             LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE media_type='image') AS image_count FROM product_media WHERE source_product_id=sp.id) media ON true
             LEFT JOIN LATERAL (SELECT count(*) AS property_count FROM product_properties WHERE source_product_id=sp.id) prop ON true
             LEFT JOIN LATERAL (SELECT string_agg(node.raw_name,' / ' ORDER BY node.position) AS category_path FROM product_category_paths path JOIN product_category_path_nodes node ON node.path_id=path.id WHERE path.source_product_id=sp.id AND path.is_current) cat ON true"""
@@ -163,7 +169,12 @@ class PostgresControlPlaneStore:
             cursor.execute(f"""SELECT sp.id,sp.external_id,sp.sku,sp.name,sp.brand_raw,sp.source_url,s.code AS supplier_code,s.name AS supplier_name,
                        pid.decision,pid.product_kind,pid.own_model,pid.reference_model,pid.best_sterbrust_id,
                        pid.decision_reason,coalesce(cat.category_path,'') AS category,
-                       o.availability_normalized,o.price,o.quantity,coalesce(media.image_count,0) AS image_count
+                       coalesce(commercial.availability_normalized,o.availability_normalized) AS availability_normalized,
+                       CASE WHEN commercial.price_state IN ('price_on_request','missing') THEN NULL
+                            ELSE coalesce(commercial.price,o.price) END AS price,
+                       coalesce(commercial.currency,o.currency) AS currency,
+                       commercial.price_state,commercial.observed_at AS commercial_observed_at,
+                       o.quantity,coalesce(media.image_count,0) AS image_count
                 {joins} WHERE {where}
                 ORDER BY s.code,coalesce(sp.brand_raw,''),sp.name,sp.id LIMIT %s OFFSET %s""",
                 [*params, filters.page_size, (filters.page - 1) * filters.page_size])
@@ -285,6 +296,19 @@ class PostgresControlPlaneStore:
             item.update(cursor.fetchone())
             cursor.execute("SELECT field_name,observed_at,source_kind,source_path,normalized_by FROM field_observations WHERE source_product_id=%s ORDER BY field_name",(item["id"],))
             item["field_freshness"]=list(cursor.fetchall())
+            if supplier_code in {"intervesp", "beka_mak", "beka_mak_tr"}:
+                cursor.execute("""SELECT co.price_state AS commercial_price_state,
+                    co.price AS commercial_price,co.currency AS commercial_currency,
+                    co.availability_normalized AS commercial_availability,
+                    co.observed_at AS commercial_observed_at,co.capture_id AS commercial_capture_id
+                    FROM offer_commercial_observations co
+                    JOIN source_products sp ON sp.id=co.source_product_id
+                    WHERE sp.id=%s AND COALESCE(co.region_code,'')=
+                        COALESCE(sp.raw_data->>'_commercial_projection_region','')
+                    ORDER BY co.observed_at DESC,co.id DESC LIMIT 1""", (item["id"],))
+                commercial = cursor.fetchone()
+                if commercial:
+                    item.update(commercial)
         return item
 
     def product_history(self, supplier_code: str, external_id: str) -> list[dict]:
@@ -293,7 +317,27 @@ class PostgresControlPlaneStore:
               FROM entity_change_history h JOIN source_products sp ON sp.id=h.source_product_id
               JOIN suppliers s ON s.id=sp.supplier_id WHERE s.code=%s AND sp.external_id=%s
               ORDER BY h.changed_at DESC,h.id DESC""", (supplier_code,external_id))
-            return list(cursor.fetchall())
+            history = list(cursor.fetchall())
+            if supplier_code in {"intervesp", "beka_mak", "beka_mak_tr"}:
+                cursor.execute("""SELECT co.observed_at,co.price_state,co.price,co.currency,
+                    co.availability_normalized,co.capture_id,s.code AS supplier_code
+                    FROM offer_commercial_observations co
+                    JOIN source_products sp ON sp.id=co.source_product_id
+                    JOIN suppliers s ON s.id=sp.supplier_id
+                    WHERE s.code=%s AND sp.external_id=%s
+                    ORDER BY co.observed_at DESC,co.id DESC""", (supplier_code, external_id))
+                for row in cursor.fetchall():
+                    price_display = (f"{row['price']} {row['currency'] or ''}".strip()
+                                     if row["price_state"] == "numeric_public" and row["price"] is not None
+                                     else "Цена по запросу" if row["price_state"] == "price_on_request"
+                                     else "Цена не указана")
+                    history.append({"changed_at": row["observed_at"], "field_group": "commercial_observation",
+                                    "field_name": "Коммерческое наблюдение", "old_value": None,
+                                    "new_value": f"{price_display}; наличие: {row['availability_normalized'] or 'unknown'}",
+                                    "crawl_run_id": None, "capture_id": row["capture_id"],
+                                    "supplier_code": row["supplier_code"]})
+                history.sort(key=lambda row: row["changed_at"], reverse=True)
+            return history
 
     def runs(self, limit: int = 100) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:

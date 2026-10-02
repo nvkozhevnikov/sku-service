@@ -1,12 +1,22 @@
-﻿.env
+.env
 .env.*
 !.env.example
+!.env.server.example
+server-data/
+release/database/
+release/FINAL_RC_*/
+release/secrets/
+*.partial
+*.pgpass
+pgpass.conf
+node_modules/
 
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
 venv/
+scripts/node_modules/
 
 *.dump
 *.backup

@@ -1,0 +1,122 @@
+name: universal-supplier-server
+
+# Separate from the historical docker-compose.yml and its named volume.
+# No supplier fetch, migration, scheduler or selection runs during ordinary start.
+services:
+  postgres:
+    image: postgres:17.11
+    restart: "no"
+    environment:
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:?set in .env.server}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set in .env.server}
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --auth-host=scram-sha-256
+      APP_DB_NAME: ${DB_NAME:?set in .env.server}
+      APP_DB_USER: ${DB_USER:?set in .env.server}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?set in .env.server}
+    command: ["postgres", "-c", "password_encryption=scram-sha-256"]
+    volumes:
+      - server_pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d postgres && pg_isready -U $$APP_DB_USER -d $$APP_DB_NAME"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [internal]
+
+  migrate:
+    build: {context: ., dockerfile: Dockerfile.server}
+    profiles: [init]
+    environment: &app_env
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:?set in .env.server}
+      DB_USER: ${DB_USER:?set in .env.server}
+      DB_PASSWORD: ${DB_PASSWORD:?set in .env.server}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      SESSION_SIGNING_SECRET: ${SESSION_SIGNING_SECRET:?set in .env.server}
+      CONTROL_PLANE_ALLOWED_HOSTS: ${CONTROL_PLANE_ALLOWED_HOSTS:-127.0.0.1,localhost}
+      SCHEDULER_ENABLED: "NO"
+      STERBRUST_WRITE_ENABLE: "NO"
+      ESOL_WRITE_ENABLE: "NO"
+      COMMERCIAL_QA_UI_ENABLED: "NO"
+    depends_on:
+      postgres: {condition: service_healthy}
+    command: ["python", "scripts/docker_postgres_migrate.py"]
+    networks: [internal]
+    restart: "no"
+
+  web:
+    build: {context: ., dockerfile: Dockerfile.server}
+    restart: "no"
+    environment:
+      <<: *app_env
+      COMMERCIAL_QA_UI_ENABLED: "YES"
+      COMMERCIAL_MANUAL_MODE: "SERVER"
+      COMMERCIAL_QA_UI_MANIFEST_PATH: /app/server-manifests/bounded_candidate_manifest.json
+      COMMERCIAL_QA_FULL_MANIFEST_PATH: /app/server-manifests/full_candidate_manifest.json
+      COMMERCIAL_QA_UI_ARTIFACTS_DIR: /app/server-artifacts/runs
+      COMMERCIAL_QA_UI_DIAGNOSTIC_XML_PATH: /app/server-artifacts/COMMERCIAL_DIAGNOSTIC.xml
+      COMMERCIAL_QA_PROPOSALS_PATH: /app/server-artifacts/proposals/PROPOSAL_TABLES.json
+      COMMERCIAL_SERVER_REGISTRY_PATH: /app/server-manifests/STERBRUST_REGISTRY.csv
+      COMMERCIAL_SERVER_SECTIONS_PATH: /app/server-manifests/STERBRUST_SECTIONS_RAW.json
+      COMMERCIAL_SERVER_WRITE_ENABLE: ${COMMERCIAL_SERVER_WRITE_ENABLE:-NO}
+      COMMERCIAL_SERVER_WRITE_CONFIRM: ${COMMERCIAL_SERVER_WRITE_CONFIRM:-NO}
+      DB_SYSTEM_IDENTIFIER: ${DB_SYSTEM_IDENTIFIER:-0}
+      FINAL_RC_ARTIFACTS_DIR: /app/server-final
+      FINAL_RC_MANIFEST_SHA256: ${FINAL_RC_MANIFEST_SHA256:?set frozen release SHA}
+    depends_on:
+      postgres: {condition: service_healthy}
+    command: ["python", "-m", "uvicorn", "universal_supplier.control_plane.web:app", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-58097}:8080"
+    volumes:
+      - server_artifacts:/app/server-artifacts
+      - ./server-data/manifests:/app/server-manifests:ro
+      - ./server-data/final-rc:/app/server-final:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=4).read()"]
+      interval: 15s
+      timeout: 6s
+      retries: 8
+      start_period: 30s
+    networks: [internal, egress]
+
+  # Optional queue executor. Never started by `up -d postgres web`.
+  worker:
+    build: {context: ., dockerfile: Dockerfile.server}
+    profiles: [worker]
+    restart: "no"
+    environment: *app_env
+    depends_on:
+      postgres: {condition: service_healthy}
+    command: ["python", "-m", "universal_supplier.control_plane.orchestrator"]
+    volumes:
+      - server_artifacts:/app/server-artifacts
+    networks: [internal, egress]
+
+  # Explicit opt-in only; never part of the default startup procedure.
+  scheduler:
+    build: {context: ., dockerfile: Dockerfile.server}
+    profiles: [scheduler]
+    restart: "no"
+    environment:
+      <<: *app_env
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-NO}
+    depends_on:
+      postgres: {condition: service_healthy}
+    command: ["python", "-m", "universal_supplier.control_plane.scheduler_main"]
+    networks: [internal]
+
+volumes:
+  server_pgdata:
+    name: ${SERVER_PGDATA_VOLUME:-universal_supplier_server_pgdata}
+  server_artifacts:
+    name: ${SERVER_ARTIFACTS_VOLUME:-universal_supplier_server_artifacts}
+
+networks:
+  internal:
+    internal: true
+  egress:

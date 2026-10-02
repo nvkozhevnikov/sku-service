@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, quote
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -19,6 +19,7 @@ from universal_supplier.stage6e import (
 )
 from universal_supplier.xml_export import XmlExportService
 from .admin_store import InMemoryAdminStore, PostgresAdminStore
+from .commercial_qa import CommercialQaService, CommercialQaUnavailable
 from .queue import InMemoryJobQueue, PostgresJobQueue
 from .rate_control import DomainRatePolicy, OPTIMUM_DEFAULT_RATE_POLICY, PARTNER_ST_DEFAULT_RATE_POLICY
 from .scheduler import controls_to_schedule, schedule_to_controls, validate_schedule
@@ -111,7 +112,8 @@ def filters_from_request(request: Request, *, forced_decision: str = "") -> Prod
 
 
 def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None,
-               session_secret: str | None = None, auth_required: bool | None = None) -> FastAPI:
+               session_secret: str | None = None, auth_required: bool | None = None,
+               commercial_qa_service=None) -> FastAPI:
     injected = store is not None; config = None
     if store is None:
         if os.environ.get("CONTROL_PLANE_DEMO_SNAPSHOT") == "YES":
@@ -126,6 +128,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         admin_store.create_user("preview", "Preview Admin", hash_password(preview_password), "ADMIN")
     if stage6e_service is None:
         stage6e_service = PostgresStage6EService(config or store.config) if isinstance(store,PostgresControlPlaneStore) else InMemoryStage6EService()
+    commercial_qa_service = commercial_qa_service or CommercialQaService.from_env()
     xml_service = XmlExportService(store)
     if session_secret:
         signer = SessionSigner(session_secret)
@@ -137,6 +140,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
     app.state.store = store; app.state.queue = queue; app.state.admin_store = admin_store; app.state.stage6e_service = stage6e_service
     app.state.auth_required = auth_required; app.state.direct_crawl_executions = 0
+    app.state.commercial_qa_service = commercial_qa_service
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE / "templates")
     templates.env.filters["ru"] = russian_label
@@ -161,8 +165,25 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             raise HTTPException(403, "Защитный токен формы недействителен. Обновите страницу")
     def context(request: Request, **values):
         data = payload(request)
+        read_only_source = bool(getattr(type(store), "read_only", False))
         return {"request": request, "current_user": current_user(request), "csrf_token": data.get("csrf", "") if data else "",
-            "safety_banner": "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН", **values}
+            "safety_banner": "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
+            "commercial_qa_available": bool(getattr(commercial_qa_service, "enabled", False)),
+            "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
+            "control_plane_read_only": read_only_source, **values}
+
+    @app.middleware("http")
+    async def block_qa_source_writes(request: Request, call_next):
+        allowed_posts = {"/login", "/logout", "/commercial-qa/runs"}
+        if getattr(type(store), "read_only", False) and request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in allowed_posts:
+            if request.url.path.startswith("/suppliers/") and request.url.path.endswith("/start") and commercial_qa_service.enabled:
+                return HTMLResponse(
+                    "<h1>Обычный запуск недоступен</h1>"
+                    "<p>Источник доступен только для чтения; обычные изменения поставщика заблокированы. "
+                    "Для коммерческих источников используйте отдельный защищённый ручной сбор.</p>"
+                    '<p><a href="/commercial-qa">Открыть ручной сбор</a></p>', status_code=403)
+            return PlainTextResponse("Источник доступен только для чтения; обычные изменения заблокированы.", status_code=403)
+        return await call_next(request)
     def page_error(request: Request, message: str, status_code=400, details=""):
         user = current_user(request)
         return templates.TemplateResponse(request, "error.html", context(request, message=message,
@@ -338,6 +359,101 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         result = queue.enqueue(supplier_id, trigger_type="manual", crawl_type="full", requested_by_user_id=user.id or None)
         admin_store.audit(user.id or None, "MANUAL_CRAWL_ENQUEUED", "crawl_job", result.job_id, None, {"supplier_id": supplier_id, "crawl_type": "full", "status": result.status, "deduplicated_job_id": result.deduplicated_job_id}, values.get("comment") or None, str(uuid.uuid4()))
         return RedirectResponse(f"/runs?enqueue_status={result.status}&job_id={result.job_id}", 303)
+
+    @app.get("/commercial-qa", response_class=HTMLResponse)
+    def commercial_qa_page(request: Request):
+        guard(request)
+        return templates.TemplateResponse(request, "commercial_qa.html", context(
+            request, data=commercial_qa_service.overview(), active="commercial_qa"))
+
+    @app.post("/commercial-qa/runs")
+    async def commercial_qa_start(request: Request):
+        guard(request, MUTATING_ROLES); require_trusted_origin(request)
+        values = await form_values(request); check_csrf(request, values)
+        try:
+            scope_args = {"full_scope": True} if values.get("full_scope") == "full" else {}
+            run = commercial_qa_service.start(values.get("source", ""), int(values.get("limit", "0")),
+                                               values.get("dry_run") == "true",
+                                               full_manifest=values.get("full_manifest") == "true",
+                                               write_confirmed=values.get("write_confirmed") == "true",
+                                               **scope_args)
+        except (CommercialQaUnavailable, ValueError) as error:
+            return page_error(request, str(error))
+        return RedirectResponse(f"/commercial-qa/runs/{run.id}", 303)
+
+    @app.get("/commercial-qa/runs/{run_id}", response_class=HTMLResponse)
+    def commercial_qa_run(request: Request, run_id: str):
+        guard(request)
+        run = commercial_qa_service.run(run_id)
+        if run is None:
+            raise HTTPException(404, "Тестовый запуск не найден")
+        return templates.TemplateResponse(request, "commercial_qa_run.html", context(
+            request, run=run, active="commercial_qa"))
+
+    @app.get("/api/commercial-qa/runs/{run_id}")
+    def commercial_qa_status(request: Request, run_id: str):
+        guard(request)
+        run = commercial_qa_service.run(run_id)
+        if run is None:
+            raise HTTPException(404, "Тестовый запуск не найден")
+        allowed = {"id", "source", "limit", "mode", "status", "started_at", "finished_at", "error",
+                   "processed", "total", "site_summary", "counts_before", "counts_after",
+                   "xml_sha256", "xml_products", "proposals_sha256"}
+        return JSONResponse({key: value for key, value in run.items() if key in allowed})
+
+    @app.get("/commercial-qa/runs/{run_id}/report")
+    def commercial_qa_report(request: Request, run_id: str):
+        guard(request)
+        try:
+            body = commercial_qa_service.report_bytes(run_id)
+        except (CommercialQaUnavailable, KeyError):
+            raise HTTPException(404, "Диагностический отчёт пока недоступен")
+        return Response(body, media_type="application/json; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="commercial-qa-{run_id}.json"'})
+
+    @app.get("/commercial-qa/xml", response_class=HTMLResponse)
+    def commercial_qa_xml(request: Request):
+        guard(request)
+        try:
+            body, info = commercial_qa_service.diagnostic_xml()
+        except CommercialQaUnavailable as error:
+            return page_error(request, str(error))
+        return templates.TemplateResponse(request, "commercial_qa_xml.html", context(
+            request, info=info, preview=body.decode("utf-8")[:16000], active="commercial_qa"))
+
+    @app.get("/commercial-qa/xml/download")
+    def commercial_qa_xml_download(request: Request):
+        guard(request)
+        try:
+            body, _ = commercial_qa_service.diagnostic_xml()
+        except CommercialQaUnavailable as error:
+            return page_error(request, str(error))
+        return Response(body, media_type="application/xml; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="stage5d-commercial-qa.xml"'})
+
+    @app.get("/commercial-qa/proposals", response_class=HTMLResponse)
+    def commercial_qa_proposals(request: Request):
+        guard(request)
+        try:
+            proposals = commercial_qa_service.proposals()
+            unavailable = ""
+        except CommercialQaUnavailable as error:
+            proposals = None
+            unavailable = str(error)
+        return templates.TemplateResponse(request, "commercial_proposals.html", context(
+            request, proposals=proposals, unavailable=unavailable, active="commercial_qa"))
+
+    @app.get("/commercial-qa/proposals/files/{filename}")
+    def commercial_qa_proposal_file(request: Request, filename: str):
+        guard(request)
+        try:
+            body = commercial_qa_service.proposal_artifact(filename)
+        except CommercialQaUnavailable:
+            raise HTTPException(404, "Диагностический файл недоступен")
+        kind = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if filename.endswith(".xlsx")
+                else "text/csv; charset=utf-8" if filename.endswith(".csv") else "application/xml; charset=utf-8")
+        return Response(body, media_type=kind,
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     @app.get("/runs", response_class=HTMLResponse)
     def runs(request: Request):
@@ -692,6 +808,30 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         try: admin_store.set_user_active(user_id, values.get("active") == "true", user.id)
         except (ValueError, KeyError) as error: return page_error(request, str(error))
         return RedirectResponse("/settings", 303)
+
+    def final_release_store():
+        from .final_release_store import FinalReleaseStore
+        directory=os.environ.get("FINAL_RC_ARTIFACTS_DIR")
+        if not directory: raise HTTPException(503,"Финальный RC пакет не подключён")
+        try: return FinalReleaseStore(directory,os.environ.get("FINAL_RC_MANIFEST_SHA256",""))
+        except (ValueError,OSError): raise HTTPException(503,"Проверка SHA финального RC пакета не пройдена")
+
+    @app.get("/rc-final", response_class=HTMLResponse)
+    def final_release_page(request:Request):
+        guard(request)
+        try:
+            data=final_release_store().page(request.query_params.get("classification",""),
+                                           request.query_params.get("supplier",""),int(request.query_params.get("page","1")))
+        except ValueError as error: raise HTTPException(400,str(error))
+        return templates.TemplateResponse(request,"final_release.html",context(request,release=data,active="rc_final"))
+
+    @app.get("/rc-final/files/{filename}")
+    def final_release_file(request:Request,filename:str):
+        guard(request)
+        if not filename.endswith((".xml",".csv",".xlsx")): raise HTTPException(404,"Файл не найден")
+        try: body=final_release_store().file(filename)
+        except ValueError: raise HTTPException(404,"Файл не прошёл SHA/allowlist проверку")
+        return Response(body,media_type="application/octet-stream",headers={"Content-Disposition":f'attachment; filename="{filename}"'})
 
     @app.get("/health")
     def health():

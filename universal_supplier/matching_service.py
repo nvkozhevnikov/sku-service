@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+import csv
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from pathlib import Path
 
 from sterbrust_matching.matching import Product, match_product
 from sterbrust_matching.normalization import (
     brand_evidenced_by_name, model_identity_evidence, normalize_brand, normalize_model,
-    normalized_name,
+    normalized_name, model_tokens,
 )
 from sterbrust_matching.product_identity import classify_model_role
 
@@ -23,6 +25,46 @@ class RegistryContext:
     by_model: dict[str, list[str]]
     by_brand: dict[str, list[str]]
     title_identifier_index: dict[tuple[str, str], list[str]]
+
+
+def load_registry_from_csv(path: str | Path) -> RegistryContext:
+    """Use a fresh GET-only registry without changing the supplier database.
+
+    Title model tokens are candidate-discovery evidence only; matching still
+    uses the existing semantic/identity gates before accepting a link.
+    """
+    products: dict[str, dict] = {}
+    identifier_index: dict[tuple[str, str], list[str]] = defaultdict(list)
+    by_model: dict[str, list[str]] = defaultdict(list)
+    by_brand: dict[str, list[str]] = defaultdict(list)
+    title_identifier_index: dict[tuple[str, str], list[str]] = defaultdict(list)
+    with Path(path).open(encoding="utf-8-sig", newline="") as handle:
+        for item in csv.DictReader(handle):
+            key = item["sterbrust_product_id"]
+            if key in products:
+                raise ValueError("duplicate Sterbrust product ID in registry CSV")
+            if item.get("active") == "N":
+                continue
+            name = item.get("name") or ""
+            brand = item.get("brand_raw") or ""
+            model = item.get("model_raw") or ""
+            article = item.get("article_raw") or ""
+            products[key] = {
+                "sterbrust_product_id": key, "name": name, "brand": brand,
+                "model": model, "article": article,
+                "category": item.get("category_path") or "",
+                "properties": {}, "supplier_identifiers": defaultdict(list),
+            }
+            model_keys = {normalize_model(model, brand)} if model else set()
+            if normalize_brand(brand) == "beka-mak":
+                model_keys.update(model_tokens(name))
+            for model_key in model_keys - {""}:
+                by_model[model_key].append(key)
+            if brand:
+                by_brand[normalize_brand(brand)].append(key)
+            for inferred_article in _optimum_title_articles(name):
+                title_identifier_index[("optimum", inferred_article)].append(key)
+    return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index)
 
 
 

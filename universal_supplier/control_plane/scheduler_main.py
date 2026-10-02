@@ -42,7 +42,7 @@ def main() -> None:
         queue=queue,
         max_parallel_supplier_jobs=maximum,
     )
-    if os.environ.get("SCHEDULER_ENABLED", "YES").upper() == "YES":
+    if os.environ.get("SCHEDULER_ENABLED", "NO").upper() == "YES":
         thread = threading.Thread(target=scheduler.run_forever, name="cron-scheduler", daemon=True)
         thread.start()
     orchestrator.run_forever()

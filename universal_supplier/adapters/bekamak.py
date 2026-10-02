@@ -7,6 +7,7 @@ from html import unescape
 import re
 
 from universal_supplier.commercial import ReadOnlySupplierProduct, extract_public_price
+from ._source_content import breadcrumb_category
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -30,6 +31,9 @@ def parse_bekamak_detail(source: str, *, source_url: str | None = None) -> ReadO
     site_id_match = re.search(r'setViewedProduct\((\d+),', source, re.I)
     site_id = site_id_match.group(1) if site_id_match else None
     article = _match(source, r'item_block--article.*?itemprop=["\']value["\']>(.*?)</span>')
+    title_model_match = re.search(r"\b((?:BMSY|BMSO|BMS|BMDO|BMH)[-\s]?\d+(?:[-\s]?[A-Z0-9]+)+)\b", name, re.I)
+    title_model = title_model_match.group(1) if title_model_match else None
+    model = article or title_model
     identity = article or name
 
     # The first price matrix is the current detail card.  The later
@@ -43,9 +47,13 @@ def parse_bekamak_detail(source: str, *, source_url: str | None = None) -> ReadO
     price = extract_public_price(synthetic, product_identity=identity, source_url=url)
     price = replace(price, source_path=".prices_block .price[data-currency=RUB][data-value]", context_path="detail product before similar-products slider")
     availability = "InStock" if re.search(r'itemprop=["\']availability["\'][^>]+InStock', detail, re.I) else None
+    category, category_url = breadcrumb_category(source, url)
     return ReadOnlySupplierProduct(
-        supplier="beka-mak", source_url=url, name=name, supplier_model=article,
+        supplier="beka-mak", source_url=url, name=name, supplier_model=model,
         manufacturer_article=article, site_internal_id=site_id, availability=availability,
         price=price,
-        diagnostics=("site_internal_id_is_not_manufacturer_article",),
+        diagnostics=(("site_internal_id_is_not_manufacturer_article",) +
+                     (("manufacturer_article_missing_from_detail",) if article is None else ())),
+        source_category=category, source_category_url=category_url,
+        raw_supplier_model=model,
     )

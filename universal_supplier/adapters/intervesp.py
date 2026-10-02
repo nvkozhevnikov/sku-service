@@ -17,6 +17,7 @@ from universal_supplier.commercial import (
     ReadOnlySupplierProduct,
     extract_public_price,
 )
+from ._source_content import breadcrumb_category
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -36,10 +37,15 @@ def _raw_match(source: str, pattern: str) -> str | None:
     return found.group(1) if found else None
 
 
-def _model(name: str) -> str | None:
+def _raw_model(name: str) -> str | None:
     # Preserve WP suffixes: a base model is not proof for a configured machine.
-    found = re.search(r"\b(BMSY?[-\s]?\d+(?:[-\s]?[A-Z0-9]+)+)\b", name, re.I)
-    return found.group(1).upper().replace(" ", "-") if found else None
+    found = re.search(r"\b((?:BMSY|BMSO|BMS|BMDO|BMH)[-\s]?\d+(?:[-\s]?[A-Z0-9]+)+)\b", name, re.I)
+    return found.group(1) if found else None
+
+
+def _model(name: str) -> str | None:
+    raw = _raw_model(name)
+    return raw.upper().replace(" ", "-") if raw else None
 
 
 def _price(source: str, identity: str, url: str | None) -> PriceExtraction:
@@ -66,9 +72,12 @@ def parse_intervesp_detail(source: str, *, source_url: str | None = None) -> Rea
     identity = model or name
     price = _price(source, identity, url)
     availability = "InStock" if re.search(r'itemprop=["\']availability["\'][^>]+InStock', source, re.I) else None
+    category, category_url = breadcrumb_category(source, url)
     return ReadOnlySupplierProduct(
         supplier="intervesp", source_url=url, name=name, supplier_model=model,
         manufacturer_article=None, site_internal_id=site_id, availability=availability,
         price=price,
         diagnostics=("manufacturer_article_not_explicit_in_observed_detail_block",),
+        source_category=category, source_category_url=category_url,
+        raw_supplier_model=_raw_model(name),
     )

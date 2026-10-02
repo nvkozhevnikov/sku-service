@@ -1,4 +1,5 @@
 .env
+.env.*
 .git
 .pytest_cache
 __pycache__
@@ -6,6 +7,11 @@ __pycache__
 .venv
 venv
 backups
+server-data
+reports
+work
+release
+node_modules
 preview-backup
 tmp
 *.dump

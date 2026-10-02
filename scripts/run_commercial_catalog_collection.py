@@ -43,6 +43,8 @@ def main() -> None:
     parser.add_argument("--db-user")
     parser.add_argument("--db-sslmode", default="disable")
     parser.add_argument("--db-password-env", default="DB_PASSWORD")
+    parser.add_argument("--db-use-password-file", action="store_true",
+                        help="Use the local PostgreSQL password file; never prints or stores its credential")
     args = parser.parse_args()
     sites = ("intervesp", "beka_mak") if args.source == "all" else (args.source,)
     if args.discovery_only:
@@ -68,8 +70,8 @@ def main() -> None:
         required = {"--db-host": args.db_host, "--db-port": args.db_port, "--db-name": args.db_name, "--db-user": args.db_user}
         missing = [key for key, value in required.items() if value in (None, "")]
         password = os.environ.get(args.db_password_env)
-        if missing or not password:
-            parser.error("non-dry-run requires explicit DB host/port/name/user and a password environment variable")
+        if missing or (not password and not args.db_use_password_file):
+            parser.error("non-dry-run requires explicit DB host/port/name/user and either a password environment variable or --db-use-password-file")
         repository = PostgresRepository(PostgresConfig(args.db_host, args.db_port, args.db_name, args.db_user, password, args.db_sslmode))
     try:
         result = run_commercial_collection(sites=sites, limit=args.limit, pause_seconds=args.pause_seconds,

@@ -33,6 +33,7 @@ SITE_SEEDS: dict[str, tuple[str, ...]] = {
 }
 MAX_CATALOG_PAGES_PER_SITE = 2
 MIN_SITE_PAUSE_SECONDS = 20.0
+MAX_MANUAL_COLLECTION_LIMIT = 100
 
 
 @dataclass(frozen=True)
@@ -226,10 +227,11 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
                               evidence_store: EvidenceStore | None = None,
                               candidate_offset: int = 0,
                               expected_manifest: CandidateManifest | None = None,
-                              catalog_page_limit: int = MAX_CATALOG_PAGES_PER_SITE) -> CommercialCollectionResult:
+                              catalog_page_limit: int = MAX_CATALOG_PAGES_PER_SITE,
+                              on_progress: Callable[[CollectionRow, int, int], None] | None = None) -> CommercialCollectionResult:
     """Run the bounded collection without matching, selection, or scheduling."""
-    if not 1 <= limit <= 30:
-        raise ValueError("limit must be between 1 and 30")
+    if not 1 <= limit <= MAX_MANUAL_COLLECTION_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_MANUAL_COLLECTION_LIMIT}")
     if candidate_offset < 0:
         raise ValueError("candidate_offset must not be negative")
     if pause_seconds < MIN_SITE_PAUSE_SECONDS and client is None:
@@ -258,6 +260,15 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
                 raise CandidateManifestMismatch(f"candidate manifest changed for {site}; no product capture was started")
         fetched_cards = numeric = on_request = errors = reviews = created = repeats = 0
         selected_candidates = candidates[candidate_offset:candidate_offset + limit]
+        attempted = 0
+
+        def record_product(row: CollectionRow) -> None:
+            nonlocal attempted
+            rows.append(row)
+            attempted += 1
+            if on_progress is not None:
+                on_progress(row, attempted, len(selected_candidates))
+
         for position, candidate in enumerate(selected_candidates):
             if blocked:
                 break
@@ -267,7 +278,7 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
                                             expected_model=candidate.expected_model, evidence_store=evidence_store)
             if captured.status is not CaptureStatus.SUCCESS or captured.capture is None or captured.final_url is None or captured.evidence_sha256 is None:
                 is_review = captured.status is CaptureStatus.AMBIGUOUS
-                rows.append(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
+                record_product(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
                                           "product", "REVIEW" if is_review else captured.status.value, captured.http_status,
                                           diagnostics=captured.diagnostics, evidence_ref=captured.evidence_ref))
                 if is_review:
@@ -282,13 +293,13 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
             parsed_model = normalise_model(product.supplier_model or "") if product.supplier_model else None
             diagnostics = list(product.diagnostics + product.price.diagnostics)
             if product.site_internal_id is None:
-                rows.append(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
+                record_product(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
                                           "product", "REVIEW", captured.http_status, parsed_model=parsed_model,
                                           diagnostics=tuple(diagnostics + ["site_internal_id_not_found"]), evidence_ref=captured.evidence_ref))
                 reviews += 1
                 continue
             if parsed_model and parsed_model != candidate.expected_model:
-                rows.append(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
+                record_product(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
                                           "product", "REVIEW", captured.http_status, product.site_internal_id, parsed_model,
                                           diagnostics=tuple(diagnostics + ["discovery_model_adapter_model_mismatch"]), evidence_ref=captured.evidence_ref))
                 reviews += 1
@@ -299,7 +310,7 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
             on_request += product.price.state.value == "price_on_request"
             created += bool(persisted and persisted["observation_created"])
             repeats += bool(persisted and persisted["exact_noop"])
-            rows.append(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
+            record_product(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
                                       "product", "DRY_RUN" if dry_run else "PERSISTED", captured.http_status,
                                       product.site_internal_id, parsed_model, product.price.state.value,
                                       None if product.price.current_price is None else str(product.price.current_price),

@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from universal_supplier.commercial_collection import (
-    CandidateManifest, CandidateManifestMismatch, SITE_SEEDS, discover_commercial_candidates,
+    CandidateManifest, CandidateManifestMismatch, MAX_MANUAL_COLLECTION_LIMIT, SITE_SEEDS, discover_commercial_candidates,
     run_commercial_collection,
 )
 from universal_supplier.http_capture import HttpResponse
@@ -42,6 +42,12 @@ class MemoryEvidenceStore:
 
 
 class CommercialCollectionTests(unittest.TestCase):
+    def test_manual_limit_rejects_values_above_ui_ceiling_before_network_io(self):
+        with self.assertRaises(ValueError):
+            run_commercial_collection(sites=("beka_mak",), limit=MAX_MANUAL_COLLECTION_LIMIT + 1,
+                                      pause_seconds=0, evidence_dir=Path.cwd(), dry_run=True,
+                                      client=FakeCollectionClient({}), sleep=lambda _: None)
+
     def test_dry_run_discovers_then_captures_without_persistence(self):
         fixture = (Path(__file__).with_name("fixtures") / "commercial" / "real" / "bekamak_bms_230dg_sanitized.html").read_bytes()
         first, second = SITE_SEEDS["beka_mak"]
@@ -54,14 +60,17 @@ class CommercialCollectionTests(unittest.TestCase):
             product_url: HttpResponse(product_url, 200, "text/html; charset=UTF-8", fixture),
         }
         pauses = []
+        progress = []
         result = run_commercial_collection(sites=("beka_mak",), limit=1, pause_seconds=0,
                                            evidence_dir=Path.cwd(), dry_run=True, client=FakeCollectionClient(pages),
-                                           sleep=pauses.append, evidence_store=MemoryEvidenceStore())
+                                           sleep=pauses.append, evidence_store=MemoryEvidenceStore(),
+                                           on_progress=lambda row, processed, total: progress.append((row.result, processed, total)))
         site = result.site_results[0]
         self.assertEqual((site.discovered_urls, site.catalog_pages_fetched, site.fetched_cards, site.numeric_prices), (1, 2, 1, 1))
         self.assertEqual(site.observations_created, 0)
         self.assertTrue(any(row.result == "DRY_RUN" for row in result.rows))
         self.assertEqual(pauses, [0, 0])
+        self.assertEqual(progress, [("DRY_RUN", 1, 1)])
 
     def test_offset_is_stable_resume_boundary_and_skips_previous_candidate(self):
         first, second = SITE_SEEDS["beka_mak"]

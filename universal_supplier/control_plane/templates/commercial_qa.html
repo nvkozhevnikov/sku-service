@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="pagehead"><div><span class="eyebrow">РУЧНОЙ СБОР ИСТОЧНИКОВ</span><h2>Intervesp, Beka-Mak и Bekamak производителя</h2><p>По умолчанию — проверка без записи. Сохранение возможно только после отдельного включения и проверки целевой базы. Официальный сайт — справочный источник, не источник подтверждённых цен или наличия.</p></div></div>
+<div class="notice warning"><strong>Ограниченный контур.</strong> Matching, offer selection, scheduler и импорт Sterbrust здесь не запускаются.</div>
+{% if not data.enabled %}
+<div class="notice error">{{data.reason}}</div><p>Для работы нужны утверждённый manifest, каталог артефактов и диагностический XML. Docker не требуется.</p>
+{% else %}
+<section class="grid2">
+  <article class="panel"><h3>Ручной запуск</h3>
+    <form method="post" action="/commercial-qa/runs" class="settings" id="commercial-manual-form">
+      <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+      <label>Покрытие<select name="full_scope" id="commercial-scope"><option value="bounded" {{'selected' if not data.server_mode else ''}}>Быстрый тест до 3 карточек</option>{% if data.full_manifest %}<option value="full" {{'selected' if data.server_mode else ''}}>Полный подтверждённый manifest трёх источников</option>{% endif %}</select></label>
+      <label>Источник<select name="source" id="commercial-source"><option value="intervesp" data-bounded="{{data.manifest.intervesp.candidates}}" data-full="{{data.full_manifest.intervesp.candidates if data.full_manifest else 0}}">Intervesp</option><option value="beka_mak" data-bounded="{{data.manifest.beka_mak.candidates}}" data-full="{{data.full_manifest.beka_mak.candidates if data.full_manifest else 0}}">Beka-Mak.su</option>{% if data.full_manifest %}<option value="beka_mak_tr" data-bounded="0" data-full="{{data.full_manifest.beka_mak_tr.candidates}}">Bekamak.com — справочник</option><option value="all" data-bounded="0" data-full="{{data.full_manifest.all.candidates}}">Обновить все три источника</option>{% endif %}</select></label>
+      <label>Режим<select name="dry_run" id="commercial-mode"><option value="true">Проверка без записи</option>{% if data.write.enabled %}<option value="false">{{'Сохранить в ' ~ data.write.target if data.server_mode else 'Сохранить в QA PostgreSQL'}}</option>{% endif %}</select></label>
+      <label>Лимит партии<input type="number" min="1" max="3" name="limit" value="3" id="commercial-limit" required></label>
+      <label id="commercial-full-label" hidden><input type="checkbox" name="full_manifest" value="true" id="commercial-full" disabled> Весь подтверждённый manifest</label>
+      {% if data.write.enabled %}
+      <label id="commercial-confirm-label" hidden><input type="checkbox" name="write_confirmed" value="true" id="commercial-confirm" disabled> Подтверждаю запись только в {{data.write.target}}</label>
+      {% else %}<p class="notice warning">Сохранение в PostgreSQL недоступно: {{data.write.reason}}</p>{% endif %}
+      <p id="commercial-estimate" aria-live="polite"></p>
+      <p>Ранее отмеченные REVIEW не подтверждаются автоматически. Возможные новые конфликты сохраняются отдельно и не записываются как товары.</p>
+      <p>Проверка без записи может охватить весь подтверждённый manifest; быстрый тест ограничен тремя карточками. PostgreSQL в dry-run не используется. Пауза между GET не менее 20 секунд.</p>
+      <button>Запустить вручную</button>
+    </form>
+  </article>
+  <article class="panel"><h3>Manifest</h3><p>Stage 5D:</p>{% for code,item in data.manifest.items() %}<p><strong>{{code}}</strong>: {{item.candidates}} кандидатов<br><small>{{item.sha256}}</small></p>{% endfor %}{% if data.full_manifest %}<p>Полный sitemap (неподтверждённые карточки уйдут в REVIEW):</p>{% for code,item in data.full_manifest.items() %}<p><strong>{{code}}</strong>: {{item.candidates}} кандидатов<br><small>{{item.sha256}}</small></p>{% endfor %}{% endif %}</article>
+</section>
+<section class="panel"><h3>Диагностический XML</h3><p>{{data.xml.notice}}</p><p>Обновляется после успешной записи. SHA-256: <code>{{data.xml.sha256}}</code></p>{% if data.xml.sha256 %}<a class="button secondary" href="/commercial-qa/xml">Открыть XML</a> <a class="button secondary" href="/commercial-qa/xml/download">Скачать XML</a>{% endif %}</section>
+<section class="panel"><h3>Локальная история ручных запусков</h3><p>Состояния сохраняются в JSONL рядом с отчётами. Прерванные задания не перезапускаются автоматически.</p><table><thead><tr><th>Время</th><th>Источник</th><th>Обработано</th><th>Статус</th><th>Новые observations</th></tr></thead><tbody>{% for run in data.runs %}<tr><td>{{run.started_at}}</td><td>{{run.source}}</td><td>{{run.processed or 0}} / {{run.total or run.limit}}</td><td><a href="/commercial-qa/runs/{{run.id}}">{{run.status}}</a></td><td>{{run.site_summary.observations_created if run.site_summary else 'ожидание'}}</td></tr>{% else %}<tr><td colspan="5">Локальных запусков пока нет.</td></tr>{% endfor %}</tbody></table></section>
+<script>
+const source = document.getElementById('commercial-source');
+const scope = document.getElementById('commercial-scope');
+const mode = document.getElementById('commercial-mode');
+const limit = document.getElementById('commercial-limit');
+const estimate = document.getElementById('commercial-estimate');
+const writeAvailable = {{'true' if data.write.enabled else 'false'}};
+function updateCommercialEstimate() {
+  const fullScope = scope.value === 'full';
+  const available = Number(fullScope ? source.selectedOptions[0].dataset.full : source.selectedOptions[0].dataset.bounded);
+  const entire = full.checked;
+  const selected = entire ? available : Math.min(available, Math.max(1, Number(limit.value) || 1));
+  const minimumMinutes = Math.ceil(Math.max(0, selected - 1) * 20 / 60);
+  estimate.textContent = `Кандидатов в manifest: ${available}. К обработке: ${selected}. Минимальная пауза между запросами: 20 секунд; только для карточек это не менее ${minimumMinutes} мин. Sitemaps и сетевые задержки увеличат время. Конфликты останутся REVIEW.`;
+}
+const full = document.getElementById('commercial-full');
+const fullLabel = document.getElementById('commercial-full-label');
+{% if data.write.enabled %}
+const confirm = document.getElementById('commercial-confirm');
+const confirmLabel = document.getElementById('commercial-confirm-label');
+{% endif %}
+function updateCommercialMode() {
+  const writing = mode.value === 'false';
+  const fullScope = scope.value === 'full';
+  const available = Number(fullScope ? source.selectedOptions[0].dataset.full : source.selectedOptions[0].dataset.bounded);
+  limit.max = fullScope ? String(available) : (writing ? '100' : '3');
+  if (Number(limit.value) > Number(limit.max)) limit.value = limit.max;
+  fullLabel.hidden = !fullScope && !writing; full.disabled = !fullScope && !writing;
+  {% if data.write.enabled %}
+  confirmLabel.hidden = !writing; confirm.disabled = !writing; confirm.required = writing;
+  if (!writing) confirm.checked = false;
+  {% endif %}
+  updateCommercialEstimate();
+}
+mode.addEventListener('change', updateCommercialMode);
+full.addEventListener('change', updateCommercialEstimate);
+updateCommercialMode();
+source.addEventListener('change', updateCommercialEstimate);
+scope.addEventListener('change', () => {
+  for (const option of source.options) option.disabled = scope.value !== 'full' && ['beka_mak_tr', 'all'].includes(option.value);
+  if (source.selectedOptions[0].disabled) source.value = 'intervesp';
+  updateCommercialMode();
+});
+for (const option of source.options) option.disabled = scope.value !== 'full' && ['beka_mak_tr', 'all'].includes(option.value);
+limit.addEventListener('input', updateCommercialEstimate);
+updateCommercialEstimate();
+</script>
+{% endif %}
+{% endblock %}

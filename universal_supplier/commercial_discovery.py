@@ -22,7 +22,7 @@ from .http_capture import (
 )
 
 
-_MODEL_RE = re.compile(r"\b(BMS(?:Y|O)?[-\s]?\d+(?:[-\s]?[A-Z0-9]+)+)\b", re.I)
+_MODEL_RE = re.compile(r"\b((?:BMSY|BMSO|BMS|BMDO|BMH)[-\s]?\d+(?:[-\s]?[A-Z0-9]+)+)\b", re.I)
 _PAGINATION_KEY_RE = re.compile(r"^(?:PAGEN_\d+|page)$", re.I)
 _SECRET_RE = re.compile(r"(?:sessid|bitrix_sessid|cookie|authorization|access_token|api[_-]?key|token)", re.I)
 _INTERVESP_HOST = "intervesp.ru"
@@ -109,7 +109,7 @@ def normalise_model(value: str) -> str:
     # not an execution boundary.  Preserve every later suffix (notably WPn)
     # verbatim so this never collapses configured machines into their base.
     match = re.fullmatch(
-        r"(BMS(?:Y|O)?)-(\d+)-?([A-Z]+\d*)((?:-[A-Z0-9]+)*)", compact,
+        r"(BMSY|BMSO|BMS|BMDO|BMH)-(\d+)-?([A-Z]+\d*)((?:-[A-Z0-9]+)*)", compact,
     )
     if not match:
         return compact
@@ -211,7 +211,9 @@ def _model_base(model: str) -> str:
 
 
 def _signals_are_compatible(signals: list[tuple[str, str]]) -> bool:
-    return len({_model_base(model) for _, model in signals}) == 1
+    # A WP execution must never be silently promoted from a base-model link
+    # (or vice versa).  Every visible/url/title signal must agree exactly.
+    return len({model for _, model in signals}) == 1
 
 
 def discover_catalog_page(site: str, page_url: str, html: str) -> CatalogDiscoveryPage:

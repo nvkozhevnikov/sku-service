@@ -34,6 +34,13 @@ _PRODUCT_MARKER_RE = re.compile(
     r"(?:\bid=[\"']elPrice[\"']|\bclass=[\"'][^\"']*prices_block|itemprop=[\"'](?:price|availability|additionalProperty)[\"']|\belTabProp\b)",
     re.I,
 )
+_MANUFACTURER_CARD_RE = re.compile(
+    r'<h1\b[^>]*class=["\'][^"\']*pagetitle__heading[^"\']*["\'][^>]*>.*?</h1\s*>',
+    re.I | re.S,
+)
+_MODEL_IN_TITLE_RE = re.compile(
+    r"\b(?:BMSY|BMSO|BMS|BMDO|BMH)[-\s]?\d+(?:[-\s]?[A-Z0-9]+)+\b", re.I,
+)
 _SENSITIVE_INPUT_RE = re.compile(
     r"(<input\b[^>]*\bname\s*=\s*['\"]?[^'\"\s>]*(?:sessid|token|cookie)[^'\"\s>]*[^>]*\bvalue\s*=\s*)(['\"])[^'\"]*\2",
     re.I,
@@ -184,15 +191,15 @@ def inspect_html_page(body: bytes, *, expected_model: str | None = None) -> tupl
     visible = _TAG_RE.sub(" ", _SCRIPT_STYLE_RE.sub(" ", html))
     has_h1 = bool(re.search(r"<h1\b[^>]*>.*?</h1\s*>", html, re.I | re.S))
     has_product_markers = bool(_PRODUCT_MARKER_RE.search(html))
-    has_product_card = has_h1 and has_product_markers
+    manufacturer_card = bool(_MANUFACTURER_CARD_RE.search(html)) and bool(re.search(r'<table\b[^>]*class=["\'][^"\']*table', html, re.I))
+    has_product_card = has_h1 and (has_product_markers or manufacturer_card)
     if has_product_card and expected_model:
         normalised_expected = re.sub(r"[\s-]+", "", expected_model).upper()
         title = re.search(r"<h1\b[^>]*>(.*?)</h1\s*>", html, re.I | re.S)
         title_text = _TAG_RE.sub(" ", title.group(1) if title else "")
-        title_models = {
-            re.sub(r"[\s-]+", "", candidate).upper()
-            for candidate in re.findall(r"\bBMSY?[-\s]?\d+(?:[-\s]?[A-Z0-9]+)+\b", title_text, re.I)
-        }
+        title_models = ({re.sub(r"[\s-]+", "", title_text).upper()} if manufacturer_card else {
+            re.sub(r"[\s-]+", "", candidate).upper() for candidate in _MODEL_IN_TITLE_RE.findall(title_text)
+        })
         if normalised_expected not in title_models:
             return CaptureStatus.AMBIGUOUS, ("expected_model_not_in_primary_product_title",)
     if has_product_card:
@@ -247,6 +254,9 @@ def capture_public_html(
         observed_at = datetime.now(timezone.utc)
         try:
             response = client.get(url, timeout_seconds=timeout_seconds)
+        except ValueError:
+            return CaptureResult(CaptureStatus.UNSAFE_URL, url, None, None, None, observed_at, (), None, None, None,
+                                 ("redirect_or_final_url_rejected",))
         except (URLError, OSError, TimeoutError) as error:
             errors.append(f"network_error:{type(error).__name__}")
             if attempt + 1 < max_attempts:

@@ -134,6 +134,21 @@ class CommercialPersistenceTests(unittest.TestCase):
         self.assertNotIn("sterbrust", card.raw_data)
         self.assertEqual(card.sku, "BMS 230 DG")
         self.assertNotEqual(card.sku, card.external_id)
+        self.assertEqual(card.raw_data["source_identity"]["raw_model"], "BMS 230 DG")
+        self.assertNotEqual(card.raw_data["source_identity"]["normalized_model"], "BMS 230 DG")
+
+    def test_bekamak_title_model_without_explicit_article_is_not_invented_article(self):
+        html = ('<link rel="canonical" href="https://beka-mak.su/product/bmso_270_dgs_nc/">'
+                '<h1 id="pagetitle">Автоматический станок Beka-Mak BMSO-270DGS NC</h1>'
+                '<script>setViewedProduct(19283, {"PRODUCT_ID":"19283"});</script>')
+        product = parse_bekamak_detail(html)
+        self.assertEqual(product.site_internal_id, "19283")
+        self.assertEqual(product.supplier_model, "BMSO-270DGS NC")
+        self.assertIsNone(product.manufacturer_article)
+        self.assertIn("manufacturer_article_missing_from_detail", product.diagnostics)
+        card = product_card_from_snapshot(product, capture(product.source_url))
+        self.assertEqual(card.sku, "")
+        self.assertEqual(card.raw_data["source_identity"]["raw_model"], "BMSO-270DGS NC")
 
     def test_capture_rejects_session_query_parameter_and_legacy_unknown_status(self):
         with self.assertRaises(ValueError):

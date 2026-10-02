@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +30,9 @@ SUPPLIER_CONFIGS = {
     # authorised repository call invokes ensure_supplier().
     "intervesp": ("Intervesp", "https://intervesp.ru/", "intervesp"),
     "beka_mak": ("Beka-Mak", "https://beka-mak.su/", "beka_mak"),
+    "beka_mak_tr": ("Bekamak manufacturer reference", "https://www.bekamak.com/", "beka_mak_tr"),
 }
-PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak"})
+PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr"})
 
 
 def should_quarantine_automatic_link(previous_auto_accepted: bool, new_status: str) -> bool:
@@ -54,7 +55,7 @@ class PostgresConfig:
     port: int
     dbname: str
     user: str
-    password: str
+    password: str | None
     sslmode: str
 
     @classmethod
@@ -67,8 +68,11 @@ class PostgresConfig:
                    os.environ["DB_USER"], os.environ["DB_PASSWORD"], os.environ["DB_SSLMODE"])
 
     def kwargs(self) -> dict:
-        return {"host": self.host, "port": self.port, "dbname": self.dbname, "user": self.user,
-                "password": self.password, "sslmode": self.sslmode}
+        values = {"host": self.host, "port": self.port, "dbname": self.dbname, "user": self.user,
+                  "sslmode": self.sslmode}
+        if self.password:
+            values["password"] = self.password
+        return values
 
 
 class PostgresRepository:
@@ -157,6 +161,12 @@ class PostgresRepository:
         counts = IngestCounts()
         with self.connection.transaction(), self.connection.cursor() as cursor:
             supplier_id = self._ensure_passive_commercial_supplier(cursor, card.supplier_code)
+            if card.supplier_code == "intervesp":
+                from .intervesp_listing import persistence_identity
+                resolved = persistence_identity(cursor, supplier_id, card)
+                if resolved != card.external_id:
+                    card = replace(card, external_id=resolved)
+                    observation = replace(observation, external_id=resolved)
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                            (f"commercial:{supplier_id}:{card.external_id}",))
             cursor.execute(
@@ -180,7 +190,11 @@ class PostgresRepository:
                 projection_region = str((raw_data or {}).get("_commercial_projection_region", ""))
                 projection_updated = projection_region == region and (last_success_at is None or capture.observed_at >= last_success_at)
                 if projection_updated:
-                    next_raw = dict(card.raw_data)
+                    if capture.capture_scope == 'intervesp_listing':
+                        from .intervesp_listing import retain_detail_content
+                        next_raw = retain_detail_content(card.raw_data, raw_data or {})
+                    else:
+                        next_raw = dict(card.raw_data)
                     next_raw["_commercial_projection_region"] = region
                     cursor.execute(
                         """UPDATE source_products SET sku=%s,name=%s,source_url=%s,canonical_url=%s,raw_data=%s::jsonb,
@@ -243,7 +257,8 @@ class PostgresRepository:
                 (supplier_id, source_product_id, capture.requested_url, capture.final_url, capture.http_status,
                  capture.content_type, observed_at, capture.fingerprint, capture.response_sha256, capture.evidence_sha256,
                  capture.evidence_ref, json.dumps(capture.redirects), region, capture.region_label,
-                 json.dumps({"codes": capture.diagnostics})),
+                 json.dumps({"codes": capture.diagnostics, "capture_scope": capture.capture_scope,
+                             "response_hash_basis": capture.response_hash_basis})),
             )
             capture_id = cursor.fetchone()[0]
             cursor.execute(
