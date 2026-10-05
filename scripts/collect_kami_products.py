@@ -19,6 +19,7 @@ from universal_supplier.kami_robots import KamiRobots
 from universal_supplier.models import FetchRecord
 from scripts.discover_kami_catalog import traversal_url_is_safe
 from universal_supplier.kami_checkpoint import write_checkpoint
+from scripts.kami_reconciliation_contract import validate_exclusions, project_exclusions
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / 'reports/KAMI_SOURCE_AUDIT_2026-10-05'
@@ -47,6 +48,8 @@ def main():
         'scope': plan['scope'], 'sql_writes': 0, 'full_RUN2': 'NOT_STARTED'}
     if state['plan_sha256'] != plan_sha:
         raise RuntimeError('Pinned reconciliation plan changed; explicit reconciliation required')
+    exclusions = validate_exclusions(BASE, state)
+    project_exclusions(state, exclusions)
     if args.coverage_resume:
         if (state['status'] != 'CAPTURES_COMPLETE_RECONCILIATION_REQUIRED' or state['queue']
                 or state.get('saved_category_resume_count', 0) != 0):
@@ -120,6 +123,8 @@ def main():
             targets += [urljoin(url, a['href']).split('#', 1)[0]
                         for a in soup.select('a[data-pagination-button][href]')]
             for target in targets:
+                if target in exclusions['rows']:
+                    continue  # validated terminal discovery exclusion, never GET
                 if not traversal_url_is_safe(target) or not robot.can_fetch(target):
                     raise RuntimeError('REQUIRED_SAVED_CATEGORY_LINK_DENIED')
                 if target not in state['completed'] and target not in state['queue']:
@@ -168,6 +173,8 @@ def main():
                     targets += [urljoin(url, a['href']).split('#', 1)[0]
                                 for a in soup.select('a[data-pagination-button][href]')]
                     for target in targets:
+                        if target in exclusions['rows']:
+                            continue
                         if not traversal_url_is_safe(target) or not robot.can_fetch(target):
                             raise RuntimeError('REQUIRED_DEEP_CATEGORY_LINK_DENIED')
                         if target not in state['completed'] and target not in state['queue']:

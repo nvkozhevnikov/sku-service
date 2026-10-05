@@ -150,15 +150,18 @@ class KamiRobotsScopeGuards(unittest.TestCase):
             self.assertTrue(entry['saved_listing_evidence'])
             self.assertEqual(entry['identity_state'], 'LISTING_EVIDENCE_ONLY_NOT_FULL_CARD')
         self.assertEqual(blocked_urls, set(DENIED_URLS))
-        # The denied URLs never became product cards and were never completed:
-        # they cannot enter matching, classification, or NEW readiness.
+        # New operator contract permits terminal exclusion, not product proof.
         state = json.loads(CHECKPOINT_PATH.read_text(encoding='utf-8'))
         self.assertEqual(state['sql_writes'], 0)
         cards = state['cards']
         for site_id in DENIED_SITE_IDS:
             self.assertNotIn(site_id, cards)
         for url in DENIED_URLS:
-            self.assertNotIn(url, state['completed'])
+            decision = state['completed'].get(url)
+            if decision is not None:
+                self.assertEqual(decision['route'], 'ROBOTS_EXCLUDED')
+                self.assertFalse(decision['downstream_actionable'])
+                self.assertNotIn('external_id', decision)
 
     def test_listing_only_robots_evidence_cannot_become_new(self):
         # Even if someone hand-forges rows from listing-only evidence, both the
