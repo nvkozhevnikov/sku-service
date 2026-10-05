@@ -103,6 +103,8 @@ def selection_view(rows):
     for row in rows:
         if row["classification"] != "EXISTING_CONFIRMED":
             continue
+        if row.get('price_basis') == 'from_price':
+            continue  # A lower bound is not a comparable exact public offer.
         if price_value(row) is None or not row.get("currency"):
             continue
         if row.get("availability") != "in_stock" or not row.get("observed_at") or not row.get("evidence_ref"):
@@ -162,6 +164,7 @@ def xml_bytes(rows, payloads, input_hashes):
         elif cls == "EXISTING_CONFIRMED":
             _json(node,"CommercialObservation", {"numeric_price":price_value(row),"price_state":row.get("price_state"),
                   "currency":row.get("currency"),"price_role":"supplier_public_not_sterbrust_sale",
+                  "price_basis":row.get("price_basis"),
                   "availability":row.get("availability"),"quantity":None,"quantity_state":"NOT_FOUND",
                   "observed_at":row.get("observed_at"),"evidence_ref":row.get("evidence_ref"),
                   "selected_comparable_public_view":identity(row) in selected, "live_stock_verified":False})
@@ -189,6 +192,7 @@ def tables(rows, payloads):
             data["Existing"].append(dict(base,identity_evidence=blocker(row)))
             data["Offers"].append(dict(base,numeric_price=float(price_value(row)) if price_value(row) is not None else None,
                 price_state=row.get("price_state"),currency=row.get("currency"),availability=row.get("availability"),
+                price_basis=row.get('price_basis'),
                 quantity=None,price_role="supplier_public_not_sterbrust_sale",selected=identity(row) in selected,
                 selection_scope="proposed_comparable_public_view_not_persisted",live_stock_verified=False))
         elif row["classification"] in {"REVIEW","CONFLICT"}:

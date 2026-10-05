@@ -203,7 +203,7 @@ def propose_new_groups(rows: Iterable[Mapping[str, Any]], *, allowed_sources=SOU
     proves only cross-source equivalence; canonical absence and SECTION_ID
     remain independent downstream gates.
     """
-    if not set(allowed_sources).issubset(SOURCES | {'partner_st','optimum'}):
+    if not set(allowed_sources).issubset(SOURCES | {'partner_st','optimum','kami'}):
         raise ValueError('Unknown supplier namespace in grouping scope')
     records = [dict(row) for row in rows]
     result: dict[str, list[dict[str, Any]]] = {"groups": [], "ungrouped": [], "review": []}

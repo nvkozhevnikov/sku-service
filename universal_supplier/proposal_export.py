@@ -32,7 +32,7 @@ EXACT_SECTION_BY_SOURCE_CATEGORY = {
 
 def new_candidate_id(source: str, external_id: str, model_key: str) -> str:
     """Stable supplier-scoped proposal key; never a Sterbrust Product ID."""
-    if source not in {"partner_st", "optimum", "intervesp", "beka_mak", "beka_mak_tr"} or not external_id or not model_key:
+    if source not in {"partner_st", "optimum", "intervesp", "beka_mak", "beka_mak_tr", "kami"} or not external_id or not model_key:
         raise ValueError("new candidate requires proven supplier, external ID and full model")
     identity = json.dumps([source, external_id, model_key], ensure_ascii=False,
                           separators=(",", ":")).encode("utf-8")

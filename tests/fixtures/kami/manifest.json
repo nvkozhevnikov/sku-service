@@ -1,0 +1,50 @@
+[
+  {
+    "fixture": "ironmac_single_sale.html",
+    "url": "https://www.stanki.ru/catalog/tokarnye_obrabatyvayushchie_tsentry/tokarno_frezernyy_obrabatyayushchiy_tsentr_ironmac_itx_508my/",
+    "capture_sha256": "6ec9526532125aacdbdb2a7e342d826ec00577a87d67e0873c915e246a54e94e",
+    "observed_at": "2026-10-05T08:21:11.079566+00:00",
+    "fixture_sha256": "75fa36d176c7afcc071a39edae2bb46451a9ae10a6fff4da7d6c4165012c69a2",
+    "sanitization": "own productGrid only; scripts/forms/events/other data attributes excluded"
+  },
+  {
+    "fixture": "spectr_group_from.html",
+    "url": "https://www.stanki.ru/catalog/tokarnye_avtomaty_s_chpu/tokarno_frezernyy_tsentr_s_chpu_spectr_model_g5_42y/",
+    "capture_sha256": "d0fe429a2f90c56e285e7d0657e9617476ab45c2b195c73377a29e6626dccc96",
+    "observed_at": "2026-10-05T08:21:16.498187+00:00",
+    "fixture_sha256": "f03a183591527b2d22d40762ab6ada281bc8e069319cce0b970e450f60353ac7",
+    "sanitization": "own productGrid only; scripts/forms/events/other data attributes excluded"
+  },
+  {
+    "fixture": "spectr_variant_standard.html",
+    "url": "https://www.stanki.ru/catalog/tokarnye_avtomaty_s_chpu/tokarno_frezernyy_tsentr_s_chpu_spectr_model_g5_42y/g5_42y_standart_2/",
+    "capture_sha256": "7f9775ea0ed9ce42e90e440e74c0258468bbf10e72c03f986d6e249cd1a8c4ac",
+    "observed_at": "2026-10-05T08:59:54.962273+00:00",
+    "fixture_sha256": "87cbdb5d42aa02ca2dd7942c790fc47f86efa9a1d39e20041fbd9be3fbfe1c2c",
+    "sanitization": "own productGrid only; scripts/forms/events/other data attributes excluded"
+  },
+  {
+    "fixture": "spectr_variant_counterspindle.html",
+    "url": "https://www.stanki.ru/catalog/tokarnye_avtomaty_s_chpu/tokarno_frezernyy_tsentr_s_chpu_spectr_model_g5_42y/g5_42ys_protivoshpindel_2/",
+    "capture_sha256": "528f53285947cacae2edc40334133bd4199bf1043ba70591b0913b997d947ab6",
+    "observed_at": "2026-10-05T09:00:00.371946+00:00",
+    "fixture_sha256": "3968547888778640631320db27c0b6457a5f503a3bbdf36c66209cf20cc2478a",
+    "sanitization": "own productGrid only; scripts/forms/events/other data attributes excluded"
+  },
+  {
+    "fixture": "observed_price_on_request.html",
+    "url": "https://www.stanki.ru/catalog/3_kh_koordinatnoe_proizvodstvo/sverlilno_pazovalnyy_obrabatyvayushchiy_tsentr_s_chpu_quadro_stick_4kh2/",
+    "capture_sha256": "a06e71175023a68ebdd4a61786845e4179f0e50d03d3a27d453d2f0d61870c0a",
+    "observed_at": "2026-10-05T09:21:06.567089+00:00",
+    "fixture_sha256": "0f6c14ed9eff93d28eedd6c9a73b81442c9225e69b5f22948a399fbbd9cee5ab",
+    "sanitization": "own productGrid only; scripts/forms/events/other data attributes excluded"
+  },
+  {
+    "fixture": "observed_incoming.html",
+    "url": "https://www.stanki.ru/catalog/3_kh_osevye_obrabatyvayushchie_tsentry/frezernye_obrabatyvayushchie_tsentry_ironmac_imv_10_55_i_imv_12_60/imv_10_55_2/",
+    "capture_sha256": "876f8120617736a3b596dfc25bf5a54c6635c38391af2a726c125bf81d08678d",
+    "observed_at": "2026-10-05T09:22:29.711903+00:00",
+    "fixture_sha256": "76c7755cb448d573d292e95a56544bfd17aed0f0ab24f22f72f551a7c4b29d7c",
+    "sanitization": "own productGrid only; scripts/forms/events/other data attributes excluded"
+  }
+]

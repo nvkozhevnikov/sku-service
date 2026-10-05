@@ -31,8 +31,9 @@ SUPPLIER_CONFIGS = {
     "intervesp": ("Intervesp", "https://intervesp.ru/", "intervesp"),
     "beka_mak": ("Beka-Mak", "https://beka-mak.su/", "beka_mak"),
     "beka_mak_tr": ("Bekamak manufacturer reference", "https://www.bekamak.com/", "beka_mak_tr"),
+    "kami": ("КАМИ", "https://www.stanki.ru/", "kami"),
 }
-PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr"})
+PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr", "kami"})
 
 
 def should_quarantine_automatic_link(previous_auto_accepted: bool, new_status: str) -> bool:
@@ -128,6 +129,12 @@ class PostgresRepository:
     def _ensure_passive_commercial_supplier(cursor, supplier_code: str) -> int:
         """Create only the isolated namespace; never touch Sterbrust identifiers."""
         name, base_url, adapter_name = SUPPLIER_CONFIGS[supplier_code]
+        if supplier_code == 'kami':
+            # Exact KAMI capture replay must not consume the supplier sequence.
+            cursor.execute('SELECT id FROM suppliers WHERE code=%s FOR UPDATE', (supplier_code,))
+            existing = cursor.fetchone()
+            if existing:
+                return existing[0]
         cursor.execute(
             """INSERT INTO suppliers (code, name, base_url, adapter_name, enabled, transport_mode,
                        deactivate_after_misses, created_at, updated_at)
@@ -154,6 +161,63 @@ class PostgresRepository:
         """
         card = product_card_from_snapshot(product, capture)
         observation = observation_from_snapshot(product, capture)
+        return self._persist_passive_observation(card, observation, capture)
+
+    def persist_kami_observation(self, card: ProductCard, capture: HttpCapture) -> dict[str, Any]:
+        """KAMI-only explicit writer; caller must preflight the new isolated target."""
+        from .kami_persistence import prepare_observation
+        card, observation = prepare_observation(card, capture)
+        return self._persist_passive_observation(card, observation, capture)
+
+    def materialize_kami_saved_content(self, card: ProductCard, capture: HttpCapture) -> bool:
+        """Explicit offline content re-extraction; does not fabricate a new GET.
+
+        Only an already persisted exact KAMI capture may be used. Commercial
+        values/timestamps, source identity, links and activation stay untouched.
+        The ordinary observation replay remains an exact no-op.
+        """
+        from .kami_persistence import prepare_observation
+        card, _ = prepare_observation(card, capture)
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute("""SELECT p.id,p.raw_data,p.catalog_product_id,o.id
+                FROM source_products p JOIN suppliers s ON s.id=p.supplier_id
+                JOIN offers o ON o.source_product_id=p.id AND o.offer_kind='default'
+                WHERE s.code='kami' AND p.external_id=%s AND p.external_id_is_stable
+                FOR UPDATE OF p,o""", (card.external_id,))
+            row = cursor.fetchone()
+            if row is None or row[2] is not None:
+                raise RuntimeError('Saved-content materialization requires unlinked existing KAMI source')
+            product_id, previous, _, offer_id = row
+            cursor.execute("""SELECT c.supplier_id FROM supplier_http_captures c
+                WHERE c.source_product_id=%s AND c.capture_fingerprint=%s""",
+                (product_id, capture.fingerprint))
+            saved = cursor.fetchone()
+            if saved is None:
+                raise RuntimeError('Exact persisted capture required; no synthetic observation')
+            prior_capture = (previous or {}).get('commercial_capture', {})
+            if prior_capture.get('response_sha256') != capture.response_sha256:
+                raise RuntimeError('Cannot overwrite newer content with historical capture')
+            if (previous or {}).get('_kami_content_fact_hash') == card.raw_data['_kami_content_fact_hash']:
+                return False
+            # Only derived content fields are replaced, never source identity or
+            # commercial projection. Extraction provenance is independently kept.
+            updated = dict(previous or {})
+            for key in ('source_content', 'property_evidence', 'comparison_matrix',
+                        'variant_evidence', 'description_state', 'documents_state',
+                        'documents_provenance', '_kami_content_fact_hash'):
+                if key in card.raw_data:
+                    updated[key] = card.raw_data[key]
+            updated['saved_content_extraction'] = {
+                'adapter': 'kami-v1', 'response_sha256': capture.response_sha256,
+                'evidence_ref': capture.evidence_ref, 'no_new_HTTP_observation': True}
+            cursor.execute("""UPDATE source_products SET brand_raw=%s,manufacturer_raw=%s,
+                description_text=%s,description_html=%s,raw_data=%s::jsonb WHERE id=%s""",
+                (card.brand or None, card.manufacturer or None, card.description_text,
+                 card.description_html, json.dumps(updated, ensure_ascii=False), product_id))
+            self._replace_details(cursor, saved[0], product_id, offer_id, card, capture.observed_at.isoformat())
+            return True
+
+    def _persist_passive_observation(self, card, observation, capture) -> dict[str, Any]:
         observed_at = capture.observed_at.isoformat()
         if card.supplier_code not in PASSIVE_COMMERCIAL_SUPPLIERS:
             raise ValueError("commercial persistence is limited to passive suppliers")
@@ -176,8 +240,13 @@ class PostgresRepository:
                 (supplier_id, card.external_id),
             )
             existing = cursor.fetchone()
+            kami_content_changed = True
+            kami_commercial_changed = True
             if existing:
                 source_product_id, catalog_product_id, last_success_at, raw_data = existing
+                if card.supplier_code == 'kami':
+                    kami_content_changed = (raw_data or {}).get('_kami_content_fact_hash') != card.raw_data.get('_kami_content_fact_hash')
+                    kami_commercial_changed = (raw_data or {}).get('_kami_commercial_fact_hash') != card.raw_data.get('_kami_commercial_fact_hash')
                 cursor.execute("SELECT id FROM supplier_http_captures WHERE source_product_id=%s AND capture_fingerprint=%s",
                                (source_product_id, capture.fingerprint))
                 exact_capture = cursor.fetchone()
@@ -198,13 +267,15 @@ class PostgresRepository:
                     next_raw["_commercial_projection_region"] = region
                     cursor.execute(
                         """UPDATE source_products SET sku=%s,name=%s,source_url=%s,canonical_url=%s,raw_data=%s::jsonb,
-                           last_seen_at=%s,last_success_at=%s,last_changed_at=%s,active=true,missed_crawls=0,
+                           last_seen_at=%s,last_success_at=%s,
+                           last_changed_at=CASE WHEN %s THEN %s ELSE last_changed_at END,active=true,missed_crawls=0,
                            last_http_status=%s,updated_at=now() WHERE id=%s""",
                         (card.sku, card.name, card.requested_url, card.canonical_url,
-                         json.dumps(next_raw, ensure_ascii=False), observed_at, observed_at, observed_at,
+                         json.dumps(next_raw, ensure_ascii=False), observed_at, observed_at,
+                         card.supplier_code != 'kami' or kami_content_changed, observed_at,
                          card.http_status, source_product_id),
                     )
-                    counts.changed_products += 1
+                    counts.changed_products += int(card.supplier_code != 'kami' or kami_content_changed)
             else:
                 projection_updated = True
                 next_raw = dict(card.raw_data)
@@ -242,13 +313,26 @@ class PostgresRepository:
                     cursor.execute(
                         """UPDATE offers SET sku=%s,title=%s,price=%s,old_price=%s,currency=%s,
                            availability_raw=%s,availability_normalized=%s,quantity=NULL,raw_data=%s::jsonb,
-                           last_seen_at=%s,last_success_at=%s,last_changed_at=%s,active=false,missed_crawls=0,updated_at=now()
+                           last_seen_at=%s,last_success_at=%s,
+                           last_changed_at=CASE WHEN %s THEN %s ELSE last_changed_at END,
+                           active=false,missed_crawls=0,updated_at=now()
                            WHERE id=%s""",
                         (card.sku, card.name, card.price, card.old_price, card.currency or None,
                          card.availability_raw, card.availability_normalized, json.dumps(card.raw_data, ensure_ascii=False),
-                         observed_at, observed_at, observed_at, offer_id),
+                         observed_at, observed_at, card.supplier_code != 'kami' or kami_commercial_changed,
+                         observed_at, offer_id),
                     )
-                    counts.changed_offers += 1
+                    counts.changed_offers += int(card.supplier_code != 'kami' or kami_commercial_changed)
+            if card.supplier_code == "kami" and projection_updated and kami_content_changed:
+                # KAMI content is visible to existing product/panel queries;
+                # other supplier projections and their accepted state are untouched.
+                cursor.execute(
+                    """UPDATE source_products SET brand_raw=%s, manufacturer_raw=%s,
+                       description_text=%s, description_html=%s WHERE id=%s AND supplier_id=%s""",
+                    (card.brand or None, card.manufacturer or None, card.description_text,
+                     card.description_html, source_product_id, supplier_id),
+                )
+                self._replace_details(cursor, supplier_id, source_product_id, offer_id, card, observed_at)
             cursor.execute(
                 """INSERT INTO supplier_http_captures
                    (supplier_id,source_product_id,requested_url,final_url,http_status,content_type,observed_at,

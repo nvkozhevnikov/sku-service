@@ -64,6 +64,14 @@ def test_selection_excludes_review_unknown_and_request_price():
           existing(external_id="4",price_state="price_on_request",price=None)]
     assert selection_view(rows)=={("test","1")}
 
+def test_from_price_is_preserved_but_never_comparable_selection():
+    row=existing(source='kami',external_id='site:1',price_basis='from_price')
+    assert selection_view([row])==set()
+    root=ET.fromstring(xml_bytes([row],[],{}))
+    observation=json.loads(root.find('EXISTING/Product/CommercialObservation').text)
+    assert observation['price_basis']=='from_price'
+    assert observation['selected_comparable_public_view'] is False
+
 def test_deterministic_and_source_input_preserved():
     rows=[existing(),existing(external_id="2")];before=deepcopy(rows)
     assert xml_bytes(rows,[],{})==xml_bytes(list(reversed(rows)),[],{})

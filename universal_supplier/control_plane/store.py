@@ -154,7 +154,7 @@ class PostgresControlPlaneStore:
         joins = """FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
             LEFT JOIN product_identity_decisions pid ON pid.source_product_id=sp.id
             LEFT JOIN LATERAL (SELECT availability_normalized,price,quantity,currency FROM offers
-                WHERE source_product_id=sp.id AND (active OR s.code IN ('intervesp','beka_mak','beka_mak_tr'))
+                WHERE source_product_id=sp.id AND (active OR s.code IN ('intervesp','beka_mak','beka_mak_tr','kami'))
                 ORDER BY active DESC,id LIMIT 1) o ON true
             LEFT JOIN LATERAL (SELECT price_state,price,currency,availability_normalized,observed_at,capture_id
                 FROM offer_commercial_observations co WHERE co.source_product_id=sp.id
@@ -296,7 +296,7 @@ class PostgresControlPlaneStore:
             item.update(cursor.fetchone())
             cursor.execute("SELECT field_name,observed_at,source_kind,source_path,normalized_by FROM field_observations WHERE source_product_id=%s ORDER BY field_name",(item["id"],))
             item["field_freshness"]=list(cursor.fetchall())
-            if supplier_code in {"intervesp", "beka_mak", "beka_mak_tr"}:
+            if supplier_code in {"intervesp", "beka_mak", "beka_mak_tr", "kami"}:
                 cursor.execute("""SELECT co.price_state AS commercial_price_state,
                     co.price AS commercial_price,co.currency AS commercial_currency,
                     co.availability_normalized AS commercial_availability,
@@ -318,7 +318,7 @@ class PostgresControlPlaneStore:
               JOIN suppliers s ON s.id=sp.supplier_id WHERE s.code=%s AND sp.external_id=%s
               ORDER BY h.changed_at DESC,h.id DESC""", (supplier_code,external_id))
             history = list(cursor.fetchall())
-            if supplier_code in {"intervesp", "beka_mak", "beka_mak_tr"}:
+            if supplier_code in {"intervesp", "beka_mak", "beka_mak_tr", "kami"}:
                 cursor.execute("""SELECT co.observed_at,co.price_state,co.price,co.currency,
                     co.availability_normalized,co.capture_id,s.code AS supplier_code
                     FROM offer_commercial_observations co
