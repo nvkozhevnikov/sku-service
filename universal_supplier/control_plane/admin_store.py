@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 from universal_supplier.postgres import PostgresConfig
+from universal_supplier.effective_identity import effective_identity_mapping_sql
 from sterbrust_matching.normalization import normalize_brand, normalize_model, normalized_name
 from sterbrust_matching.product_identity import classify_product_kind
 from .security import AuthUser, normalize_username
@@ -432,8 +433,12 @@ class PostgresAdminStore:
                 if not q.fetchone(): raise ValueError("Родительский товар Sterbrust не существует или неактивен")
             if decision_class == "MANUAL_CONFIRMED":
                 q.execute("SELECT supplier_id,catalog_product_id FROM source_products WHERE id=%s FOR UPDATE", (case["source_product_id"],)); source = q.fetchone()
-                if source["catalog_product_id"] is not None and source["catalog_product_id"] != catalog_id: raise ValueError("Нельзя создать противоречивое ручное сопоставление")
-                q.execute("SELECT id FROM source_products WHERE supplier_id=%s AND catalog_product_id=%s AND id<>%s LIMIT 1", (source["supplier_id"], catalog_id, case["source_product_id"]))
+                if source['catalog_product_id'] is not None and source['catalog_product_id']!=catalog_id:
+                    q.execute(f"SELECT {effective_identity_mapping_sql('sp.id','sp.catalog_product_id')} AS accepted FROM source_products sp WHERE sp.id=%s",(case['source_product_id'],))
+                    if q.fetchone()['accepted']:raise ValueError('Нельзя создать противоречивое ручное сопоставление')
+                    # Explicit new confirmation may replace an ineffective stale
+                    # reference after actual supersession; not automatic repair.
+                q.execute(f"SELECT sp.id FROM source_products sp WHERE sp.supplier_id=%s AND sp.catalog_product_id=%s AND sp.id<>%s AND {effective_identity_mapping_sql('sp.id','sp.catalog_product_id')} LIMIT 1", (source["supplier_id"], catalog_id, case["source_product_id"]))
                 if q.fetchone(): raise ValueError("Небезопасное объединение двух товаров одного поставщика запрещено")
                 q.execute("UPDATE source_products SET catalog_product_id=%s,updated_at=now() WHERE id=%s", (catalog_id, case["source_product_id"]))
             q.execute("SELECT id FROM review_decisions WHERE review_case_id=%s ORDER BY created_at DESC,id DESC LIMIT 1", (case_id,)); previous = q.fetchone()

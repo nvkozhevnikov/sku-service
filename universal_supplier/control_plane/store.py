@@ -151,7 +151,13 @@ class PostgresControlPlaneStore:
         return {"suppliers": suppliers, "brands": brands, "decisions": DECISIONS, "kinds": kinds}
 
     def products(self, filters: ProductFilters) -> dict:
+        return self._products(filters)
+
+    def _products(self, filters: ProductFilters, *, exact_external_id=None, stable_only=True) -> dict:
         where, params = product_where(filters)
+        if exact_external_id is not None:
+            where += ' AND sp.external_id=%s AND '+('sp.external_id_is_stable' if stable_only else 'NOT sp.external_id_is_stable')
+            params.append(exact_external_id)
         joins = """FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
             LEFT JOIN product_identity_decisions pid ON pid.source_product_id=sp.id
             LEFT JOIN LATERAL (SELECT availability_normalized,price,quantity,currency FROM offers
@@ -165,8 +171,9 @@ class PostgresControlPlaneStore:
             LEFT JOIN LATERAL (SELECT count(*) AS property_count FROM product_properties WHERE source_product_id=sp.id) prop ON true
             LEFT JOIN LATERAL (SELECT string_agg(node.raw_name,' / ' ORDER BY node.position) AS category_path FROM product_category_paths path JOIN product_category_path_nodes node ON node.path_id=path.id WHERE path.source_product_id=sp.id AND path.is_current) cat ON true"""
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute(f"SELECT count(*) AS total {joins} WHERE {where}", params)
-            total = cursor.fetchone()["total"]
+            if exact_external_id is None:
+                cursor.execute(f"SELECT count(*) AS total {joins} WHERE {where}", params)
+                total = cursor.fetchone()["total"]
             cursor.execute(f"""SELECT sp.id,sp.external_id,sp.sku,sp.name,sp.brand_raw,sp.source_url,s.code AS supplier_code,s.name AS supplier_name,
                        pid.decision,pid.product_kind,pid.own_model,pid.reference_model,pid.best_sterbrust_id,
                        pid.decision_reason,coalesce(cat.category_path,'') AS category,
@@ -178,8 +185,10 @@ class PostgresControlPlaneStore:
                        o.quantity,coalesce(media.image_count,0) AS image_count
                 {joins} WHERE {where}
                 ORDER BY s.code,coalesce(sp.brand_raw,''),sp.name,sp.id LIMIT %s OFFSET %s""",
-                [*params, filters.page_size, (filters.page - 1) * filters.page_size])
+                [*params, 2 if exact_external_id is not None else filters.page_size,
+                 0 if exact_external_id is not None else (filters.page - 1) * filters.page_size])
             items = list(cursor.fetchall())
+            if exact_external_id is not None:total=len(items)
         return {"items": items, "total": total, "page": filters.page, "page_size": filters.page_size,
                 "pages": max(1, (total + filters.page_size - 1) // filters.page_size)}
 
@@ -277,9 +286,13 @@ class PostgresControlPlaneStore:
             return list(cursor.fetchall())
 
     def product(self, supplier_code: str, external_id: str) -> dict | None:
-        filters = ProductFilters(supplier=supplier_code, search=external_id, page_size=25)
-        result = self.products(filters)
-        item = next((row for row in result["items"] if str(row["external_id"]) == external_id), None)
+        filters = ProductFilters(supplier=supplier_code)
+        result = self._products(filters,exact_external_id=external_id)
+        if not result['items']:
+            result=self._products(filters,exact_external_id=external_id,stable_only=False)
+        # Stable key is unique/indexed. Preserve unique unstable-data visibility
+        # but fail closed on ambiguous keys; never choose a substring neighbour.
+        item=result['items'][0] if len(result['items'])==1 else None
         if not item:
             return None
         with self._connect() as connection, connection.cursor() as cursor:

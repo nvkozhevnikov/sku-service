@@ -32,6 +32,18 @@ def effective_manual_mapping_sql(source_id: str, catalog_id: str) -> str:
     )"""
 
 
+def effective_identity_mapping_sql(source_id: str, catalog_id: str) -> str:
+    """Repository A-or-B predicate for the exact current physical relation."""
+    return f"""EXISTS (
+      SELECT 1 FROM source_products eia_sp
+      WHERE eia_sp.id={source_id} AND eia_sp.catalog_product_id={catalog_id}
+        AND (EXISTS (
+          SELECT 1 FROM product_matches eia_pm
+          WHERE {accepted_current_mapping_sql('eia_sp.id','eia_sp.catalog_product_id','eia_pm')}
+        ) OR {effective_manual_mapping_sql('eia_sp.id','eia_sp.catalog_product_id')})
+    )"""
+
+
 def effective_identity_accepted(*, source_product_id, source_catalog_product_id,
         catalog_product_id, current_match_status, current_match_catalog_product_id,
         effective_manual_source_product_id=None, effective_manual_catalog_product_id=None):

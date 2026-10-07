@@ -1,5 +1,49 @@
 # Effective manual overlay guard
 
+## Current targeted Phase2 corrections — 2026-10-07
+
+OPERATOR-CONFIRMED attachment e9be339d. This section supersedes the bounded
+historical implementation notes below, not the append-only ledger contract.
+
+An automatic accepted result cannot remap effective latest-final manual X to
+Y. persist_match rechecks the exact current manual relation under case ->
+source locks BEFORE either accepted assignment path, including unchanged
+fingerprints. A blocked proposed Y is retained as REVIEW candidate/evidence
+(MANUAL_MAPPING_OVERRIDE_BLOCKED), never physical assignment. The transformed
+fingerprint is deterministic; repeat produces no matching-history duplicate.
+Same-target revalidation remains unchanged. Stale/different/unrelated manual
+history does not protect; POSTPONED still does not revoke.
+
+Supersession uses derived eligibility, not physical unlink or selection DELETE.
+effective_identity_mapping_sql is the common exact-relation A-or-B predicate:
+current accepted persisted match OR latest-final exact MANUAL_CONFIRMED.
+Matcher contexts and selection load use it; feed/export use the same component
+SQL and pure acceptance predicate. A physical stale reference alone is not
+identity. Newer final non-confirming manual decision removes B, but does not
+remove independently valid A. A protected REVIEW followed by that supersession
+has neither, so no selection winner/feed. evaluate_all/apply retains current
+selection rows by UPSERT/no_eligible_offer, with second apply changed=0.
+
+AdminStore refuses a different effective accepted target. After genuine
+supersession leaves a stale unaccepted reference, explicit new MANUAL_CONFIRMED
+Y may replace it; this is an operator transition, not automatic repair. Other
+same-supplier collision checks consider effective mappings. History is never
+edited. No new decision enum, migration, revocation flag or supplier activation.
+
+Exact detail lookup uses supplier code + external_id equality, stable partial
+unique index first. Unique unstable fallback is visible; ambiguous fallback is
+fail-closed. Active-only semantics remain. No substring/display paging/count
+scan: exact projection LIMIT 2/OFFSET 0, constant enrichment query budget.
+This addresses the old Phase1 lookup P3 now proven as F2-P2-02.
+
+REPOSITORY-VERIFIED focused scratch transitions include accepted remap both
+statuses/methods, unchanged fast path, rollback and real operator/matcher lock
+serialization. LIVE-VERIFIED isolated RC has no affected manual rows and is
+read-only unchanged. Exact receipts/tests/hash evidence:
+reports/KAMI_INTEGRATION_2026-10-05/PHASE2_TARGETED_FIX_2026-10-07/.
+No RC apply/quarantine/matching rerun; ranking/false-match guards unchanged.
+Feature-only fixes require independent Phase2 rereview, not develop acceptance.
+
 Bounded operator scope a37a2364, 2026-10-06. No RC matching/application write.
 
 Migration 013 has append-only review_decisions with previous_decision_id;

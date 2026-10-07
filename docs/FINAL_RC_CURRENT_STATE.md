@@ -1,5 +1,18 @@
 # FINAL RC authoritative contract — 2026-10-02
 
+## Targeted Phase2 fixes / rereview gate — 2026-10-07
+
+3616b86099a4f12a4429e850c401414438d82120 is the rejected RC, not accepted
+Phase2 closure. Only F2-P1-01/F2-P2-01/F2-P2-02 are addressed in this follow-up:
+manual accepted-remap guard, superseded-manual derived selection eligibility,
+exact supplier/external lookup. See MANUAL_MAPPING_OVERLAY_GUARD.md and the
+PHASE2_TARGETED_FIX_2026-10-07 REPORT/CHECKPOINT for exact NEW_CODEX_FINAL_SHA.
+RC business data stays unchanged; existing final dump/restored DB and both
+mandatory KAMI-only XML are reverified against new code, not regenerated.
+No SOURCE/RUN1/RUN2/recovery/global matching repeated. No develop/production
+changes. Next gate is independent Phase2 rereview, not release/deployment.
+The prior named GLM review was performed by Codex; no GLM execution is claimed.
+
 ## Current KAMI canonical/split-operation contract — 2026-10-07
 
 OPERATOR-CONFIRMED dcc9e035 supersedes operational-authority ambiguity in the

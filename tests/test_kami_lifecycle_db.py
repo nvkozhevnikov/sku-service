@@ -321,7 +321,7 @@ def test_unprotected_stale_winner_rejected_by_yml_and_xml(fixture,status):
     # Deliberate invalid stale selection: physical link exists, no accepted
     # current match/manual ledger. Never a valid operational mapping.
     f['c'].execute('UPDATE product_matches SET status=%s,auto_accepted=false WHERE source_product_id=%s AND is_current',(status,f['source']))
-    assert not f['repo'].load_existing_link_contexts('partner_st')[f['external']]['manual_or_human_confirmed']
+    assert f['external'] not in f['repo'].load_existing_link_contexts('partner_st')
     snapshot=PostgresFeedStore(f['c']).load_snapshot()
     row=next(r for r in snapshot.selected_rows if r.source_product_id==f['source'])
     assert any(v.startswith('NO_CURRENT_ACCEPTED_MATCH') for v in selected_row_violations((row,),FeedPolicy.load(ROOT/'config/yml_feed.json'),1))

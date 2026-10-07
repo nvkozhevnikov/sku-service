@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable
+from .effective_identity import effective_identity_mapping_sql
 
 
 @dataclass(frozen=True)
@@ -312,7 +313,7 @@ class PostgresOfferSelectionStore:
             )
             grouped = {row[0]: [] for row in cursor.fetchall()}
             cursor.execute(
-                """SELECT sp.catalog_product_id,o.id,sp.id,sp.supplier_id,o.supplier_id,s.code,s.enabled,
+                f"""SELECT sp.catalog_product_id,o.id,sp.id,sp.supplier_id,o.supplier_id,s.code,s.enabled,
                           sp.catalog_product_id,sp.active,sp.missed_crawls,sp.last_success_at,
                           o.active,o.offer_kind,o.missed_crawls,o.last_success_at,
                           latest.started_at,o.price,o.currency,o.availability_normalized,
@@ -326,6 +327,7 @@ class PostgresOfferSelectionStore:
                        ORDER BY cr.started_at DESC LIMIT 1
                    ) latest ON true
                    WHERE sp.catalog_product_id IS NOT NULL
+                     AND {effective_identity_mapping_sql('sp.id','sp.catalog_product_id')}
                    ORDER BY sp.catalog_product_id,s.code,o.id"""
             )
             for row in cursor.fetchall():

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from universal_supplier.effective_identity import effective_manual_mapping_sql,accepted_current_mapping_sql
+from universal_supplier.effective_identity import effective_manual_mapping_sql,accepted_current_mapping_sql,effective_identity_mapping_sql
 
 import json
 import os
@@ -1089,12 +1089,13 @@ class PostgresRepository:
         """Read authoritative current mappings from source_products, never CSV."""
         with self.connection.cursor() as cursor:
             cursor.execute(
-                """SELECT sp.external_id, sb.sterbrust_product_id
+                f"""SELECT sp.external_id, sb.sterbrust_product_id
                    FROM source_products sp
                    JOIN suppliers s ON s.id=sp.supplier_id
                    JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id
                    WHERE s.code=%s AND sp.external_id_is_stable
-                     AND sp.catalog_product_id IS NOT NULL""",
+                     AND sp.catalog_product_id IS NOT NULL
+                     AND {effective_identity_mapping_sql('sp.id','sp.catalog_product_id')}""",
                 (supplier_code,),
             )
             return {str(external_id): str(sterbrust_id) for external_id, sterbrust_id in cursor.fetchall()}
@@ -1128,7 +1129,8 @@ class PostgresRepository:
                        ON current_match.source_product_id=sp.id AND current_match.is_current
                      LEFT JOIN origin ON origin.source_product_id=sp.id
                      WHERE s.code=%s AND sp.external_id_is_stable
-                       AND sp.catalog_product_id IS NOT NULL""",
+                       AND sp.catalog_product_id IS NOT NULL
+                       AND {effective_identity_mapping_sql('sp.id','sp.catalog_product_id')}""",
                 (supplier_code,),
             )
             return {
@@ -1165,8 +1167,6 @@ class PostgresRepository:
         conflicts = json.loads(decision.get("conflicts") or "{}") if isinstance(decision.get("conflicts"), str) else decision.get("conflicts", {})
         conflict_class = str(decision.get("conflict_class") or evidence.get("conflict_class") or "")
         candidate_key = str(decision.get("sterbrust_product_id") or "") or None
-        decision_hash = decision_fingerprint(decision["status"], decision["match_method"], candidate_key, conflict_class)
-        warning_hash = warning_fingerprint(warnings)
         with self.connection.transaction(), self.connection.cursor() as cursor:
             # AdminStore.decide locks review case before source. Use the same
             # order, so decision supersession and quarantine are serialized.
@@ -1179,8 +1179,8 @@ class PostgresRepository:
             )
             cursor.fetchall()
             cursor.execute(
-                """SELECT sp.id FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
-                   WHERE s.code=%s AND sp.external_id=%s AND sp.external_id_is_stable FOR UPDATE""",
+                """SELECT sp.id,sp.catalog_product_id FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+                   WHERE s.code=%s AND sp.external_id=%s AND sp.external_id_is_stable FOR UPDATE OF sp""",
                 (supplier_code, decision["source_external_id"]),
             )
             source_row = cursor.fetchone()
@@ -1192,6 +1192,22 @@ class PostgresRepository:
                 cursor.execute("SELECT catalog_product_id FROM sterbrust_products WHERE sterbrust_product_id=%s", (candidate_key,))
                 candidate_row = cursor.fetchone()
                 catalog_id = candidate_row[0] if candidate_row else None
+            if (decision.get('auto_accepted') in {True,'TRUE'} and catalog_id is not None
+                    and source_row[1] is not None and source_row[1]!=catalog_id):
+                cursor.execute(f"SELECT {effective_manual_mapping_sql('sp.id','sp.catalog_product_id')} FROM source_products sp WHERE sp.id=%s",(source_id,))
+                if cursor.fetchone()[0]:
+                    # Recheck under the same case/source locks: caller decisions
+                    # may predate a concurrent committed operator confirmation.
+                    # Keep proposed target as REVIEW evidence, never accepted Y.
+                    evidence={'manual_mapping_guard':{'current_catalog_product_id':source_row[1],
+                              'proposed_catalog_product_id':catalog_id,'proposed_status':decision['status']},
+                              'proposed_input_evidence':evidence}
+                    warnings={**warnings,'manual_target_change':'EFFECTIVE_HUMAN_MAPPING_PROTECTED'}
+                    conflicts={**conflicts,'manual_mapping':'AUTOMATIC_TARGET_DIFFERS_FROM_EFFECTIVE_MANUAL'}
+                    conflict_class='MANUAL_MAPPING_OVERRIDE_BLOCKED'
+                    decision={**decision,'status':'REVIEW','match_method':'REVIEW_MANUAL_TARGET_CHANGE','auto_accepted':False}
+            decision_hash = decision_fingerprint(decision['status'],decision['match_method'],candidate_key,conflict_class)
+            warning_hash = warning_fingerprint(warnings)
             cursor.execute(
                 """SELECT id, decision_fingerprint, warning_fingerprint, auto_accepted, catalog_product_id
                    FROM product_matches
