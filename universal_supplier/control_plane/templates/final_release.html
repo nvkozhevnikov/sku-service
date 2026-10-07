@@ -1,7 +1,11 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>Принятый FINAL RC</h2>
-<p>Frozen proposals 2026-10-02. Не текущие SQL canonical links и не импорт в Sterbrust.</p>
+{% if release.authority=='PERSISTED_CANONICAL_SQL' %}
+<p>Зафиксированный SQL canonical snapshot {{release.artifact_date}}. Не live-импорт в Sterbrust. Scope: {{release.release_scope}}.</p>
+<p>Canonical selected: {{release.selected_offers}}. Historical advisory selected (QA only): {{release.advisory_selection_count}}.</p>
+<details><summary>Advisory discrepancy / operations</summary><pre>{{release.advisory_summary|tojson(indent=2)}}</pre><pre>{{release.operation_counts|tojson(indent=2)}}</pre></details>
+{% else %}<p>Frozen proposals {{release.artifact_date}}. Только advisory QA, не текущие SQL canonical links и не импорт в Sterbrust.</p>{% endif %}
 <section class="metrics">{% for label,key in [('Existing','Existing'),('NEW FULL','READY_TO_CREATE_FULL'),('Review','Review'),('Conflict','Conflict'),('Sterbrust ID','unique_sterbrust_product_ids')] %}<article><span>{{label}}</span><strong>{{release.summary[key]}}</strong></article>{% endfor %}</section>
 <form method="get"><label>Статус <select name="classification">{% for code,label in [('', 'Все'),('EXISTING_CONFIRMED','Existing'),('READY_TO_CREATE_FULL','NEW FULL'),('REVIEW','Review'),('CONFLICT','Conflict')] %}<option value="{{code}}" {{'selected' if release.classification==code else ''}}>{{label}}</option>{% endfor %}</select></label><label>Источник <select name="supplier"><option value="">Все</option>{% for source in release.summary.namespaces %}<option value="{{source}}" {{'selected' if release.supplier==source else ''}}>{{source}}</option>{% endfor %}</select></label><button>Показать</button></form>
 <p>{{release.total}} строк. Страница {{release.page}}/{{release.pages}}</p>

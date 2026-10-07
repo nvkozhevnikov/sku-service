@@ -39,5 +39,6 @@ def propose_readiness(record: dict, advisory: dict, *, dedup_verified: bool,
            else 'REVIEW' if 'REVIEW_OR_SEMANTIC_CONTRADICTION' in blockers else 'NEW_CANDIDATE')
     return {'state':state, 'identity_ready':identity_ready, 'full_ready':full_ready,
             'identity_blockers':blockers,'enrichment_blockers':content_blockers,
-            'new_candidate_id':record.get('new_candidate_id'), 'new_group_id':group_id,
+            'new_candidate_id':record.get('new_candidate_id') if classification == 'NEW_CANDIDATE' else None,
+            'new_group_id':group_id if identity_ready else None,
             'sterbrust_product_id':None,'diagnostic_only':True,'input_mutated':False}

@@ -9,6 +9,7 @@ from datetime import datetime
 import hashlib
 import json
 from xml.etree import ElementTree as ET
+from universal_supplier.effective_identity import effective_identity_accepted
 
 CONTRACT = "universal-supplier-neutral/2.0"
 CLASSES = {"EXISTING_CONFIRMED", "READY_TO_CREATE_FULL", "REVIEW", "CONFLICT"}
@@ -33,6 +34,15 @@ def price_value(row):
         return None
     return str(price) if price.is_finite() and price > 0 else None
 
+
+def quantity_view(row):
+    value=row.get('quantity')
+    if value is None and row.get('selection_context'):
+        value=row['selection_context']['candidate'].get('quantity')
+    return (str(value) if value is not None else None,
+            'OBSERVED_PERSISTED' if value is not None else 'NOT_FOUND',
+            'supplier_reported_unit_unspecified' if value is not None else None)
+
 def field_value(payload, key):
     return payload["fields"][key].get("value")
 
@@ -49,6 +59,10 @@ def validate(rows, payloads):
         if cls not in CLASSES:
             raise ValueError("Unaccepted export classification")
         if cls == "EXISTING_CONFIRMED":
+            # Optional persisted proof is validated with the repository contract.
+            # Frozen proposal-only inputs remain advisory, not SQL authority.
+            if 'effective_identity_evidence' in row and not effective_identity_accepted(**row['effective_identity_evidence']):
+                raise ValueError('Existing persisted effective identity is not accepted')
             target = str(row.get("sterbrust_product_id", ""))
             if not target.isdecimal() or int(target) <= 0:
                 raise ValueError("Existing requires a real positive canonical ID")
@@ -93,41 +107,16 @@ def blocker(row):
                     ("reason", "block", "conflict", "warning", "readiness", "quarantine", "resolution"))})
 
 def selection_view(rows):
-    """Proposed public-offer view, only comparable currency/role, never sale price.
-
-    This does not alter persisted catalog_offer_selection. Unknown availability
-    or missing dated provenance stays unselected. Lowest price wins; remaining
-    ties use newest observation then supplier-scoped identity.
-    """
-    buckets = defaultdict(list)
-    for row in rows:
-        if row["classification"] != "EXISTING_CONFIRMED":
-            continue
-        if row.get('price_basis') == 'from_price':
-            continue  # A lower bound is not a comparable exact public offer.
-        if price_value(row) is None or not row.get("currency"):
-            continue
-        if row.get("availability") != "in_stock" or not row.get("observed_at") or not row.get("evidence_ref"):
-            continue
-        try:
-            observed=datetime.fromisoformat(str(row["observed_at"]))
-            if observed.tzinfo is None:continue
-        except ValueError:continue
-        buckets[(str(row["sterbrust_product_id"]), row["currency"], "supplier_public")].append(row)
-    selected = set()
-    for candidates in buckets.values():
-        cheapest = min(Decimal(price_value(r)) for r in candidates)
-        tied = [r for r in candidates if Decimal(price_value(r)) == cheapest]
-        newest = max(datetime.fromisoformat(str(r["observed_at"])) for r in tied)
-        selected.add(identity(min((r for r in tied if datetime.fromisoformat(str(r["observed_at"])) == newest), key=identity)))
-    return selected
+    """Compatibility proposal API, delegated to the shared generic policy."""
+    from .proposed_offer_selection import proposed_selection
+    return {tuple(key) for key in proposed_selection(rows)['selected']}
 
 def _json(parent, name, value):
     node = ET.SubElement(parent, name, {"encoding":"json", "null":"true" if value is None else "false"})
     node.text = compact(value)
     return node
 
-def xml_bytes(rows, payloads, input_hashes):
+def xml_bytes(rows, payloads, input_hashes, *, selection_state=None):
     validate(rows, payloads)
     by_key = {identity(p):p for p in payloads}
     root = ET.Element("UniversalSupplier", {"contract":CONTRACT, "import_authorized":"false",
@@ -137,7 +126,8 @@ def xml_bytes(rows, payloads, input_hashes):
     existing = ET.SubElement(root, "EXISTING")
     new = ET.SubElement(root, "NEW")
     unresolved = ET.SubElement(root, "UNRESOLVED", {"actionable":"false"})
-    selected = selection_view(rows)
+    from .proposed_offer_selection import persisted_selection_keys
+    selected = persisted_selection_keys(rows,selection_state)
     for row in sorted(rows, key=identity):
         cls = row["classification"]
         target = existing if cls == "EXISTING_CONFIRMED" else new if cls == "READY_TO_CREATE_FULL" else unresolved
@@ -162,12 +152,16 @@ def xml_bytes(rows, payloads, input_hashes):
             _json(card,"optional_configuration",p.get("optional_characteristics",[]))
             _json(card,"readiness_proof",p["readiness"])
         elif cls == "EXISTING_CONFIRMED":
+            quantity,quantity_state,quantity_role=quantity_view(row)
             _json(node,"CommercialObservation", {"numeric_price":price_value(row),"price_state":row.get("price_state"),
                   "currency":row.get("currency"),"price_role":"supplier_public_not_sterbrust_sale",
                   "price_basis":row.get("price_basis"),
-                  "availability":row.get("availability"),"quantity":None,"quantity_state":"NOT_FOUND",
+                  "availability":row.get("availability"),"quantity":quantity,"quantity_state":quantity_state,
+                  "quantity_role":quantity_role,
                   "observed_at":row.get("observed_at"),"evidence_ref":row.get("evidence_ref"),
-                  "selected_comparable_public_view":identity(row) in selected, "live_stock_verified":False})
+                  "selected_offer":identity(row) in selected,
+                  "selected_comparable_public_view":identity(row) in selected and price_value(row) is not None,
+                  "live_stock_verified":False})
             _json(node,"AcceptedIdentityEvidence", {k:v for k,v in row.items() if any(t in k for t in
                   ("resolution","proof","evidence","confirmed","target_model"))})
         else:
@@ -176,8 +170,9 @@ def xml_bytes(rows, payloads, input_hashes):
     ET.indent(root, space="  ")
     return ET.tostring(root, encoding="utf-8",xml_declaration=True)
 
-def tables(rows, payloads):
-    selected = selection_view(rows)
+def tables(rows, payloads, *, selection_state=None):
+    from .proposed_offer_selection import persisted_selection_keys
+    selected = persisted_selection_keys(rows,selection_state)
     base_keys = ["source_ref","supplier","external_id","name","brand","model","execution","classification",
                  "sterbrust_product_id","new_group_id","source_url","observed_at","evidence_ref"]
     data = {name:[] for name in ("Existing","Offers","NEW full cards","Review","Conflict","Source trace")}
@@ -189,12 +184,16 @@ def tables(rows, payloads):
             base["sterbrust_product_id"] = None
         data["Source trace"].append(dict(base,provenance=compact({k:row.get(k) for k in ("evidence_ref","priority_evidence_ref","source_product_id","offer_id")})))
         if row["classification"] == "EXISTING_CONFIRMED":
+            quantity,quantity_state,quantity_role=quantity_view(row)
             data["Existing"].append(dict(base,identity_evidence=blocker(row)))
             data["Offers"].append(dict(base,numeric_price=float(price_value(row)) if price_value(row) is not None else None,
                 price_state=row.get("price_state"),currency=row.get("currency"),availability=row.get("availability"),
                 price_basis=row.get('price_basis'),
-                quantity=None,price_role="supplier_public_not_sterbrust_sale",selected=identity(row) in selected,
-                selection_scope="proposed_comparable_public_view_not_persisted",live_stock_verified=False))
+                quantity=quantity,quantity_state=quantity_state,quantity_role=quantity_role,
+                price_role="supplier_public_not_sterbrust_sale",selected=identity(row) in selected,
+                selection_scope=("committed_canonical_sql_not_sterbrust_sale" if selection_state and
+                    selection_state.get('status')=='LIVE_VERIFIED_PERSISTED_CANONICAL_SELECTION' else
+                    "verified_generic_policy_snapshot_not_sterbrust_sale"),live_stock_verified=False))
         elif row["classification"] in {"REVIEW","CONFLICT"}:
             name = "Review" if row["classification"] == "REVIEW" else "Conflict"
             data[name].append(dict(base,blocker=blocker(row),candidate_evidence=compact({k:v for k,v in row.items() if "candidate" in k or "proposed" in k}),actionable=False))

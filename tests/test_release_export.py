@@ -59,7 +59,18 @@ def test_existing_invalid_canonical_id_rejected():
     with pytest.raises(ValueError):validate([existing(sterbrust_product_id="invented")],[])
 
 def test_selection_excludes_review_unknown_and_request_price():
-    rows=[existing(),existing(external_id="2",classification="REVIEW",price="1"),
+    # Positive eligibility must be explicit; old implicit-active fixtures hid
+    # the disabled/inactive exporter defect. Missing context stays fail-closed.
+    positive=existing(supplier_enabled=True,offer_active=True,source_product_id=1,offer_id=1)
+    positive['selection_context']={'canonical_identity_verified':True,'sterbrust_product_id':'19870','candidate':{
+        'catalog_product_id':7,'offer_id':1,'source_product_id':1,'supplier_id':5,'offer_supplier_id':5,
+        'supplier_code':'test','supplier_enabled':True,'source_catalog_product_id':7,'source_active':True,
+        'source_missed_crawls':0,'source_last_success_at':'2026-10-02T12:00:00+00:00','offer_active':True,
+        'offer_kind':'default','offer_missed_crawls':0,'offer_last_success_at':'2026-10-02T12:00:00+00:00',
+        'latest_successful_full_crawl_at':'2026-10-02T12:00:00+00:00','price':'100.00','currency':'RUB',
+        'availability':'in_stock','availability_raw':'В наличии','quantity':None}}
+    assert selection_view([existing()])==set()
+    rows=[positive,existing(external_id="2",classification="REVIEW",price="1"),
           existing(external_id="3",availability=None,price="2"),
           existing(external_id="4",price_state="price_on_request",price=None)]
     assert selection_view(rows)=={("test","1")}

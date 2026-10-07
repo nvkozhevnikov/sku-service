@@ -5,6 +5,8 @@ Every persisted capture can be replayed exactly. This is NOT live RUN2.
 import hashlib
 import json
 import os
+import argparse
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,7 +74,19 @@ def complete_fingerprint(conn):
     return hashes
 
 
-def main():
+def budget_available(started, max_seconds, *, now=None):
+    return max_seconds is None or (time.monotonic() if now is None else now) - started < max_seconds - 90
+
+
+def main(argv=()):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--max-seconds', type=float, default=None,
+                        help='Stop between committed cards, reserving 90 seconds for verification/checkpoint')
+    args = parser.parse_args(argv)
+    if args.max_seconds is not None and args.max_seconds <= 90:
+        parser.error('--max-seconds must exceed the 90-second shutdown reserve')
+    started = time.monotonic()
+
     proof = json.loads((INPUT / 'FINAL_DISCOVERY_VERIFIED.json').read_bytes())
     raw_cards = (INPUT / 'CARDS.jsonl').read_bytes()
     if (proof['status'] != 'REPOSITORY_VERIFIED_FULL_RECONCILIATION'
@@ -104,6 +118,16 @@ def main():
             repo.gate()
             runtime_preflight(repo)
             for payload in cards:
+                if not budget_available(started, args.max_seconds):
+                    preflight(conn, marker)
+                    if fingerprint(conn, True) != expected_baseline:
+                        raise RuntimeError('Old namespace drift at bounded stop')
+                    ledger.update(status='RUN1_SAFE_CHECKPOINT_TIME_BUDGET',
+                                  baseline_preserved=True, full_live_RUN2='NOT_STARTED',
+                                  stopped_between_committed_cards=True)
+                    write_checkpoint(ledger_path, ledger)
+                    print(json.dumps({'status': ledger['status'], 'verified_cards': len(ledger['applied'])}), flush=True)
+                    return
                 card = ProductCard.from_jsonable(payload['card'])
                 rec = payload['capture']
                 evidence = ROOT / payload['evidence_ref']
@@ -125,11 +149,24 @@ def main():
                     'saved_content_materialized': materialized}
                 ledger['updated_at'] = datetime.now(timezone.utc).isoformat()
                 write_checkpoint(ledger_path, ledger)
+                if len(ledger['applied']) % 100 == 0:
+                    print(json.dumps({'committed_verified_cards': len(ledger['applied']),
+                                      'elapsed_seconds': round(time.monotonic()-started, 1)}), flush=True)
             # A full saved-capture replay proves the whole persisted state,
             # including content and sequences, not just a return-value flag.
             preflight(conn, marker)
             replay_before = complete_fingerprint(conn)
             for payload in cards:
+                if not budget_available(started, args.max_seconds):
+                    preflight(conn, marker)
+                    if fingerprint(conn, True) != expected_baseline:
+                        raise RuntimeError('Old namespace drift at replay stop')
+                    ledger.update(status='RUN1_APPLIED_FULL_REPLAY_PENDING_TIME_BUDGET',
+                                  baseline_preserved=True, full_live_RUN2='NOT_STARTED',
+                                  stopped_between_committed_cards=True)
+                    write_checkpoint(ledger_path, ledger)
+                    print(json.dumps({'status': ledger['status'], 'verified_cards': len(ledger['applied'])}), flush=True)
+                    return
                 card = ProductCard.from_jsonable(payload['card'])
                 rec = payload['capture']
                 capture = HttpCapture(rec['url'], rec['url'], 200, rec['content_type'],
@@ -165,4 +202,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main(None)

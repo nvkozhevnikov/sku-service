@@ -37,4 +37,11 @@ class FinalReleaseStore:
               and (not supplier or r["source"]==supplier)]
         return {"rows":rows[(page-1)*50:page*50],"total":len(rows),"page":page,"pages":max(1,(len(rows)+49)//50),
                 "summary":self.freeze["summary"],"classification":classification,"supplier":supplier,
-                "files":[n for n in self.manifest if n.endswith((".xml",".csv",".xlsx"))]}
+                "files":[n for n in self.manifest if n.endswith((".xml",".csv",".xlsx"))],
+                "authority":self.freeze.get('authority','ADVISORY_QA_ONLY'),
+                "advisory_summary":self.freeze.get('advisory_summary'),
+                "selected_offers":self.freeze.get('selected_offers'),
+                "advisory_selection_count":self.freeze.get('advisory_selection_count'),
+                "operation_counts":self.freeze.get('operation_counts'),
+                "release_scope":self.freeze.get('release_scope'),
+                "artifact_date":self.freeze.get("freeze_date","2026-10-02")}

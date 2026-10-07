@@ -10,6 +10,19 @@ from universal_supplier.postgres import SUPPLIER_CONFIGS, PASSIVE_COMMERCIAL_SUP
 
 
 class KamiPersistenceTests(unittest.TestCase):
+    def test_saved_categories_preserve_seen_interval_for_out_of_order_captures(self):
+        card, _ = self.parse('ironmac_single_sale.html')
+        self.assertTrue(card.categories)
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (42,)
+        repo = object.__new__(PostgresRepository)
+        repo._replace_details(cursor, 6, 7, 8, card, '2026-10-05T08:21:16+00:00')
+        statements = [str(call.args[0]) for call in cursor.execute.call_args_list]
+        for table in ('supplier_categories', 'source_product_categories'):
+            statement = next(s for s in statements if 'INSERT INTO '+table in s)
+            self.assertIn('LEAST('+table+'.first_seen_at,EXCLUDED.first_seen_at)', statement)
+            self.assertIn('GREATEST('+table+'.last_seen_at,EXCLUDED.last_seen_at)', statement)
+
     def parse(self, fixture):
         source = (Path(__file__).parent / 'fixtures/kami' / fixture).read_text(encoding='utf-8')
         card = KamiAdapter().parse_product(FetchRecord('https://www.stanki.ru/catalog/x/y/', 'https://www.stanki.ru/catalog/x/y/', 200, (), 1, 0, source))

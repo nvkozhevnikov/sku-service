@@ -1,4 +1,5 @@
 from __future__ import annotations
+from universal_supplier.effective_identity import effective_manual_mapping_sql,accepted_current_mapping_sql
 
 import json
 import os
@@ -1102,7 +1103,7 @@ class PostgresRepository:
         """Load mappings with lineage-derived automatic/manual provenance."""
         with self.connection.cursor() as cursor:
             cursor.execute(
-                """WITH RECURSIVE lineage AS (
+                f"""WITH RECURSIVE lineage AS (
                        SELECT pm.id,pm.previous_match_id,pm.source_product_id,pm.match_method,pm.auto_accepted,0 depth
                        FROM product_matches pm WHERE pm.is_current
                        UNION ALL
@@ -1116,14 +1117,9 @@ class PostgresRepository:
                      SELECT sp.external_id,sb.sterbrust_product_id,
                             coalesce(current_match.auto_accepted,false),coalesce(origin.match_method,''),
                             (
-                              current_match.id IS NULL OR NOT coalesce(current_match.auto_accepted,false)
-                              OR EXISTS (
-                                SELECT 1 FROM review_cases rc
-                                JOIN review_decisions rd ON rd.review_case_id=rc.id
-                                WHERE rc.source_product_id=sp.id
-                                  AND rd.decision_class='MANUAL_CONFIRMED'
-                                  AND rd.sterbrust_product_id=sb.sterbrust_product_id
-                              )
+                              (NOT coalesce(current_match.auto_accepted,false)
+                               AND {accepted_current_mapping_sql('sp.id','sp.catalog_product_id','current_match')})
+                              OR {effective_manual_mapping_sql('sp.id','sp.catalog_product_id')}
                             )
                      FROM source_products sp
                      JOIN suppliers s ON s.id=sp.supplier_id
@@ -1172,6 +1168,16 @@ class PostgresRepository:
         decision_hash = decision_fingerprint(decision["status"], decision["match_method"], candidate_key, conflict_class)
         warning_hash = warning_fingerprint(warnings)
         with self.connection.transaction(), self.connection.cursor() as cursor:
+            # AdminStore.decide locks review case before source. Use the same
+            # order, so decision supersession and quarantine are serialized.
+            cursor.execute(
+                """SELECT rc.id FROM review_cases rc
+                   JOIN source_products sp ON sp.id=rc.source_product_id
+                   JOIN suppliers s ON s.id=sp.supplier_id
+                   WHERE s.code=%s AND sp.external_id=%s AND sp.external_id_is_stable
+                   FOR UPDATE OF rc""", (supplier_code, decision["source_external_id"]),
+            )
+            cursor.fetchall()
             cursor.execute(
                 """SELECT sp.id FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
                    WHERE s.code=%s AND sp.external_id=%s AND sp.external_id_is_stable FOR UPDATE""",
@@ -1223,12 +1229,14 @@ class PostgresRepository:
             if auto_accepted:
                 cursor.execute("UPDATE source_products SET catalog_product_id=%s, updated_at=now() WHERE id=%s", (catalog_id, source_id))
             elif current and should_quarantine_automatic_link(current[3], decision["status"]):
-                # Only quarantine a relationship whose provenance is the prior
-                # automatic engine decision. Manual mappings are never inferred
-                # or destroyed by this Stage 3B path.
+                # Review sync uses the latest final manual decision, ignoring
+                # POSTPONED (queue scheduling, not mapping revocation). A newer
+                # final decision supersedes an older confirmation. Protect only
+                # the exact current source/target, not any historical manual row.
                 cursor.execute(
-                    "UPDATE source_products SET catalog_product_id=NULL, updated_at=now() "
-                    "WHERE id=%s AND catalog_product_id=%s",
+                    f"""UPDATE source_products sp SET catalog_product_id=NULL, updated_at=now()
+                       WHERE sp.id=%s AND sp.catalog_product_id=%s
+                         AND NOT {effective_manual_mapping_sql('sp.id','sp.catalog_product_id')}""",
                     (source_id, current[4]),
                 )
             return "INSERTED_EVENT"
@@ -1388,7 +1396,10 @@ class PostgresRepository:
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (supplier_id, external_id) WHERE external_id IS NOT NULL DO UPDATE SET
                      name=EXCLUDED.name, source_url=EXCLUDED.source_url, parent_id=EXCLUDED.parent_id,
-                     depth=EXCLUDED.depth, last_seen_at=EXCLUDED.last_seen_at, active=true, updated_at=now()
+                     depth=EXCLUDED.depth,
+                     first_seen_at=LEAST(supplier_categories.first_seen_at,EXCLUDED.first_seen_at),
+                     last_seen_at=GREATEST(supplier_categories.last_seen_at,EXCLUDED.last_seen_at),
+                     active=true, updated_at=now()
                    RETURNING id""",
                 (supplier_id, external_id, item.name, item.url or None, parent_id, item.position, observed_at, observed_at),
             )
@@ -1397,7 +1408,9 @@ class PostgresRepository:
                 """INSERT INTO source_product_categories
                    (supplier_id, source_product_id, category_id, membership_source, first_seen_at, last_seen_at)
                    VALUES (%s,%s,%s,'breadcrumb',%s,%s)
-                   ON CONFLICT (supplier_id, source_product_id, category_id) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at""",
+                   ON CONFLICT (supplier_id, source_product_id, category_id) DO UPDATE SET
+                     first_seen_at=LEAST(source_product_categories.first_seen_at,EXCLUDED.first_seen_at),
+                     last_seen_at=GREATEST(source_product_categories.last_seen_at,EXCLUDED.last_seen_at)""",
                 (supplier_id, product_id, category_id, observed_at, observed_at),
             )
             cursor.execute(

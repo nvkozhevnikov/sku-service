@@ -13,7 +13,7 @@ from pathlib import Path
 from scripts.build_characteristic_evidence import section_evidence, sha256
 from universal_supplier.beka_canonical_offline import SavedCandidateIndex, canonical_view
 from universal_supplier.characteristic_evidence import build_evidence, evaluate_candidate, equipment_scope
-from universal_supplier.kami_matching import propose_card, attach_observation, merge_preserving_predecessor
+from universal_supplier.kami_matching import propose_card, attach_observation, merge_preserving_predecessor, readiness_advisory
 from universal_supplier.kami_overlap import cross_supplier_overlaps
 from universal_supplier.models import ProductCard
 from universal_supplier.new_group_proposals import propose_new_groups
@@ -33,21 +33,45 @@ def counters(rows):
 
 
 def load_inputs():
-    run1_path, run2_path = BASE / 'FULL_RUN1_CHECKPOINT.json', BASE / 'LIVE_RUN2/CHECKPOINT.json'
+    run1_path = BASE / 'FULL_RUN1_CHECKPOINT.json'
+    offline_path = BASE / 'OFFLINE_RUN2/CHECKPOINT.json'
+    run2_path = offline_path if offline_path.exists() else BASE / 'LIVE_RUN2/CHECKPOINT.json'
     run1, run2 = (json.loads(p.read_bytes()) for p in (run1_path, run2_path))
+    offline = run2_path == offline_path
+    if offline:
+        proof_path = BASE / 'P2_GUARDS_FIXED_2026-10-06/POST_RUN2_VERIFIED.json'
+        if not proof_path.exists():
+            raise RuntimeError('Verified full RUN1/RUN2 independent offline proof missing')
+        proof = json.loads(proof_path.read_bytes())
+        if (proof['status'] != 'LIVE_VERIFIED_INDEPENDENT_POST_OFFLINE_RUN2'
+                or sha256(offline_path) != proof['OFFLINE_RUN2_proof_SHA']
+                or run2['status'] != 'LIVE_VERIFIED_OFFLINE_RUN2_FROZEN_EXACT_NOOP'
+                or run2['mode'] != 'OFFLINE_FROZEN_ONLY' or run2['HTTP'] != 0
+                or run2['products'] != 5264 or run2['offers'] != 5264 or run2['replay_rows'] != 5264
+                or any(run2[k] != 0 for k in ('inserted','deleted','semantic_fact_changes','audit_timestamp_changes'))
+                or not run2['old_namespaces_preserved'] or not run2['all_public_table_sequence_hashes']
+                or proof['RUN1_recorded_table_sequence_snapshot'] != 'EXACT_MATCH'):
+            raise RuntimeError('Verified full RUN1/RUN2 and independent offline replay required')
+        input_sha = proof['cards_sha256']
+    else:
+        input_sha = run2.get('cards_sha256')
     if (run1['status'] != 'LIVE_VERIFIED_FULL_RUN1_SAVED_CAPTURE_REPLAY'
-            or run2['status'] != 'LIVE_RUN2_COMPLETE' or not run2.get('baseline_preserved')
-            or not run1.get('full_saved_replay_exact_noop') or not run2.get('full_saved_replay_exact_noop')):
+            or (not offline and (run2['status'] != 'LIVE_RUN2_COMPLETE' or not run2.get('baseline_preserved')
+                                or not run2.get('full_saved_replay_exact_noop')))
+            or not run1.get('full_saved_replay_exact_noop')):
         raise RuntimeError('Verified full RUN1/RUN2 and exact replay required')
     cards_path = BASE / 'RECONCILED/CARDS.jsonl'
-    if sha256(cards_path) != run1['cards_sha256'] or run2['cards_sha256'] != run1['cards_sha256']:
+    if sha256(cards_path) != run1['cards_sha256'] or input_sha != run1['cards_sha256']:
         raise RuntimeError('Pinned RUN1/RUN2 input SHA mismatch')
     predecessor_bytes = PREDECESSOR.read_bytes()
     predecessor = json.loads(predecessor_bytes)['rows']
     if len(predecessor) != 4407 or counters(predecessor) != EXPECTED:
         raise RuntimeError('Wrong authoritative five-source predecessor')
     source = [json.loads(line) for line in cards_path.read_text(encoding='utf-8').splitlines()]
-    if set(run2['completed']) != {c['card']['external_id'] for c in source}:
+    if offline:
+        if len(source) != 5264 or {c['card']['external_id'] for c in source} != set(run1['applied']):
+            raise RuntimeError('Offline frozen identity set differs from verified persisted RUN1')
+    elif set(run2['completed']) != {c['card']['external_id'] for c in source}:
         raise RuntimeError('RUN2 did not account for every source identity')
     return predecessor, source, run1, run2, hashlib.sha256(predecessor_bytes).hexdigest()
 
@@ -84,15 +108,21 @@ def main():
     kami_rows, cards_by_id = [], {}
     for item in source:
         external = item['card']['external_id']
-        result = run2['completed'][external]
-        capture = result['capture']
-        if result['route'] == 'OBSERVED_PERSISTED':
+        if run2.get('mode') == 'OFFLINE_FROZEN_ONLY':
+            capture = item['capture']
+            card = ProductCard.from_jsonable(item['card'])
+            row = propose_card(card,item['evidence_ref'],index)
+            row['RUN2_evidence_mode'] = 'OFFLINE_FROZEN_ONLY_NOT_LIVE_FRESHNESS'
+        else:
+            result = run2['completed'][external]
+            capture = result['capture']
+        if run2.get('mode') != 'OFFLINE_FROZEN_ONLY' and result['route'] == 'OBSERVED_PERSISTED':
             card_path = BASE / 'LIVE_RUN2' / result['card_file']
             if sha256(card_path) != result['card_sha256']:
                 raise RuntimeError('Latest RUN2 card SHA changed')
             card = ProductCard.from_jsonable(json.loads(card_path.read_bytes()))
             row = propose_card(card, result['evidence_ref'], index)
-        else:
+        elif run2.get('mode') != 'OFFLINE_FROZEN_ONLY':
             card = ProductCard.from_jsonable(item['card'])
             row = propose_card(card, item['evidence_ref'], SavedCandidateIndex({}))
             row.update(classification='REVIEW', sterbrust_product_id='', full_model_confirmed=False,
@@ -128,12 +158,10 @@ def main():
     for row in kami_rows:
         if row['classification'] != 'REVIEW':
             continue
-        row['new_candidate_id'] = new_candidate_id('kami', row['external_id'], normalize_model(row['model']))
         diagnostic = evaluate_candidate({**row, 'properties': row['observed_properties']}, learned,
                                         registry_index=absence)
-        row['readiness_advisory'] = diagnostic
-        row['readiness'] = propose_readiness(row, diagnostic, dedup_verified=False, group_id=None)
-        row['new_candidate_id_is_technical_not_canonical'] = True
+        resolved_advisory = readiness_advisory(row,diagnostic)
+        row.clear();row.update(resolved_advisory)
     merged = merge_preserving_predecessor(predecessor, kami_rows)
     if merged[:4407] != predecessor or sha256(PREDECESSOR) != predecessor_sha:
         raise RuntimeError('Frozen predecessor changed')
@@ -141,7 +169,7 @@ def main():
     def write(name, value):
         (OUT / name).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
     hashes = {'predecessor': predecessor_sha, 'RUN1': sha256(BASE / 'FULL_RUN1_CHECKPOINT.json'),
-              'RUN2': sha256(BASE / 'LIVE_RUN2/CHECKPOINT.json'),
+              'RUN2': sha256(BASE / ('OFFLINE_RUN2/CHECKPOINT.json' if run2.get('mode') == 'OFFLINE_FROZEN_ONLY' else 'LIVE_RUN2/CHECKPOINT.json')),
               'canonical': verified['sha256']['STERBRUST_REGISTRY.jsonl']}
     write('KAMI_MATCHING_PROPOSALS.json', {'rows': kami_rows, 'summary': counters(kami_rows), 'inputs': hashes})
     write('MATCHING_ACCEPTED.json', {'rows': merged, 'summary': counters(merged),

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from universal_supplier.effective_identity import effective_manual_mapping_sql,accepted_current_mapping_sql
 
 import csv
 from dataclasses import dataclass
@@ -212,16 +213,12 @@ class PostgresControlPlaneStore:
               LEFT JOIN LATERAL(SELECT sb.sterbrust_product_id,pm.status AS match_status,pm.match_method,
                 pm.conflicts,pm.rule_version,coalesce(pm.accepted_at,pm.created_at) AS accepted_at
                 FROM product_matches pm JOIN sterbrust_products sb ON sb.catalog_product_id=pm.catalog_product_id AND sb.active
-                WHERE pm.source_product_id=sp.id AND pm.is_current AND pm.auto_accepted
-                  AND pm.status IN ('EXACT_MATCH','HIGH_CONFIDENCE_MATCH')
+                WHERE {accepted_current_mapping_sql('sp.id','sp.catalog_product_id','pm')}
                 ORDER BY coalesce(pm.accepted_at,pm.created_at) DESC,pm.id DESC LIMIT 1) accepted ON true
-              LEFT JOIN LATERAL(SELECT rd.sterbrust_product_id
-                FROM review_cases rc JOIN review_decisions rd ON rd.review_case_id=rc.id
-                JOIN sterbrust_products sb ON sb.sterbrust_product_id=rd.sterbrust_product_id AND sb.active
-                WHERE rc.source_product_id=sp.id AND rc.lifecycle_status='RESOLVED'
-                  AND rc.resolved_decision_class='MANUAL_CONFIRMED'
-                  AND rd.decision_class='MANUAL_CONFIRMED'
-                ORDER BY rd.created_at DESC,rd.id DESC LIMIT 1) manual ON true
+              LEFT JOIN LATERAL(SELECT sb.sterbrust_product_id
+                FROM sterbrust_products sb WHERE sb.catalog_product_id=sp.catalog_product_id AND sb.active
+                  AND {effective_manual_mapping_sql('sp.id','sp.catalog_product_id')}
+                ORDER BY sb.sterbrust_product_id LIMIT 1) manual ON true
               LEFT JOIN LATERAL(SELECT availability_raw,availability_normalized,price,old_price,currency,price_type,price_raw,price_source,quantity FROM offers WHERE source_product_id=sp.id AND active ORDER BY id LIMIT 1)o ON true
               LEFT JOIN LATERAL(SELECT count(*) AS property_count FROM product_properties WHERE source_product_id=sp.id)prop ON true
               LEFT JOIN LATERAL(SELECT count(*) FILTER(WHERE media_type='image') AS image_count,count(*) FILTER(WHERE media_type='document') AS document_count FROM product_media WHERE source_product_id=sp.id)media ON true

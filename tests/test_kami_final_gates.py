@@ -10,6 +10,12 @@ from scripts import match_kami_verified as matching
 
 
 class KamiFinalGateTests(unittest.TestCase):
+    def test_bounded_run_reserves_shutdown_time(self):
+        self.assertTrue(persistence.budget_available(100, 900, now=909))
+        self.assertFalse(persistence.budget_available(100, 900, now=910))
+        self.assertFalse(persistence.budget_available(100, 900, now=1000))
+        self.assertTrue(persistence.budget_available(100, None, now=10000))
+
     def test_actual_writer_target_and_role_are_checked(self):
         from unittest.mock import MagicMock
         repo = MagicMock()
@@ -27,6 +33,15 @@ class KamiFinalGateTests(unittest.TestCase):
             with patch.object(matching, 'BASE', base):
                 with self.assertRaisesRegex(RuntimeError, 'Verified full RUN1/RUN2'):
                     matching.load_inputs()
+
+    def test_offline_matching_requires_independent_actual_proof_no_live_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base=Path(tmp);(base/'OFFLINE_RUN2').mkdir();(base/'LIVE_RUN2').mkdir()
+            (base/'FULL_RUN1_CHECKPOINT.json').write_text(json.dumps({'status':'IN_PROGRESS'}))
+            (base/'OFFLINE_RUN2/CHECKPOINT.json').write_text(json.dumps({'status':'REPOSITORY_VERIFIED_FROZEN_VALIDATION_ONLY'}))
+            (base/'LIVE_RUN2/CHECKPOINT.json').write_text(json.dumps({'status':'LIVE_RUN2_COMPLETE'}))
+            with patch.object(matching,'BASE',base),self.assertRaisesRegex(RuntimeError,'offline proof missing'):
+                matching.load_inputs()
 
     def test_no_full_verdict_while_first_collector_is_running(self):
         with tempfile.TemporaryDirectory() as tmp:

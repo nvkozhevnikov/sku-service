@@ -28,6 +28,8 @@ preview-backup/
 tmp/
 exports/
 reports/
+/release/
+/outputs/
 *_patch_backups/
 
 FULL_FIELD_COVERAGE.csv

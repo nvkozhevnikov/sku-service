@@ -16,9 +16,11 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
+from universal_supplier.effective_identity import (
+    ACCEPTED_MATCH_STATUSES, effective_manual_mapping_sql, effective_identity_accepted,
+)
 
 
-ACCEPTED_MATCH_STATUSES = frozenset({"EXACT_MATCH", "HIGH_CONFIDENCE_MATCH"})
 KNOWN_AVAILABILITY_STATUSES = frozenset({
     "in_stock", "out_of_stock", "preorder", "incoming",
     "backorder", "unknown", "discontinued",
@@ -158,6 +160,8 @@ class FeedRow:
     sterbrust_article: str | None = None
     price_type: str | None = None
     confirmed_identity_id: str | None = None
+    effective_manual_source_product_id: int | None = None
+    effective_manual_catalog_product_id: int | None = None
 
 
 SUPPORTED_PRICE_TYPES = frozenset({"RRP", "retail", "wholesale", "dealer", "promo"})
@@ -262,9 +266,16 @@ def selected_row_violations(rows: Iterable[FeedRow], policy: FeedPolicy,
         if (row.offer_supplier_id is None or row.source_supplier_id is None
                 or row.offer_supplier_id != row.source_supplier_id):
             violations.append(f"SUPPLIER_RELATIONSHIP_MISMATCH:{ref}")
-        if row.current_match_status not in ACCEPTED_MATCH_STATUSES:
+        accepted = effective_identity_accepted(
+            source_product_id=row.source_product_id,source_catalog_product_id=row.source_catalog_product_id,
+            catalog_product_id=row.catalog_product_id,current_match_status=row.current_match_status,
+            current_match_catalog_product_id=row.current_match_catalog_product_id,
+            effective_manual_source_product_id=row.effective_manual_source_product_id,
+            effective_manual_catalog_product_id=row.effective_manual_catalog_product_id,
+        )
+        if not accepted:
             violations.append(f"NO_CURRENT_ACCEPTED_MATCH:{ref}:{row.current_match_status}")
-        if row.current_match_catalog_product_id != row.catalog_product_id:
+        if not accepted and row.current_match_catalog_product_id != row.catalog_product_id:
             violations.append(f"MATCH_CATALOG_PRODUCT_MISMATCH:{ref}")
         if row.supplier_enabled is not True:
             violations.append(f"DISABLED_OR_MISSING_SUPPLIER:{ref}")
@@ -752,7 +763,7 @@ class PostgresFeedStore:
             )
             selection_counts = {str(status): int(count) for status, count in cursor.fetchall()}
             cursor.execute(
-                """SELECT cs.catalog_product_id,cs.selection_status,cs.selected_offer_id,
+                f"""SELECT cs.catalog_product_id,cs.selection_status,cs.selected_offer_id,
                           cs.rule_version AS selection_rule_version,
                           cs.evidence->>'selection_reason' AS selection_reason,
                           cs.evaluated_at AS selection_evaluated_at,
@@ -773,7 +784,10 @@ class PostgresFeedStore:
                           pm.status AS current_match_status,
                           pm.catalog_product_id AS current_match_catalog_product_id,
                           o.price_type,
+                          manual.source_product_id AS effective_manual_source_product_id,
+                          manual.catalog_product_id AS effective_manual_catalog_product_id,
                           CASE
+                            WHEN manual.source_product_id IS NOT NULL THEN sb.sterbrust_product_id
                             WHEN pid.source_product_id IS NULL THEN NULL
                             WHEN pid.decision IN ('EXACT_EXISTING','HIGH_CONFIDENCE_EXISTING')
                               THEN nullif(btrim(pid.best_sterbrust_id), '')
@@ -786,6 +800,10 @@ class PostgresFeedStore:
                    LEFT JOIN sterbrust_products sb ON sb.catalog_product_id=cs.catalog_product_id
                    LEFT JOIN product_matches pm ON pm.source_product_id=sp.id AND pm.is_current
                    LEFT JOIN product_identity_decisions pid ON pid.source_product_id=sp.id
+                   LEFT JOIN LATERAL (
+                     SELECT sp.id AS source_product_id,sp.catalog_product_id
+                     WHERE {effective_manual_mapping_sql('sp.id','cs.catalog_product_id')}
+                   ) manual ON true
                    WHERE cs.selection_status='selected'
                    ORDER BY cs.catalog_product_id,o.id,sb.sterbrust_product_id"""
             )
