@@ -14,6 +14,11 @@ node_modules/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+/pytest-cache-files-*/
+# Historical local evidence helpers, preserved but not application/release code.
+/scripts/checkpoint_kami_policy_v2_stop.py
+/scripts/verify_kami_policy_v2_state.py
+/scripts/verify_kami_policy_v2_stop_artifacts.py
 .venv/
 venv/
 scripts/node_modules/

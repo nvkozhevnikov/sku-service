@@ -1,5 +1,19 @@
 # Matching rules, version stage3a3-1.0
 
+## V2.1 operator policy — 2026-10-08
+
+OPERATOR-CONFIRMED: exact full execution + compatible brand/manufacturer and
+sold-product kind, no explicit contradiction, can be Existing without N specs.
+Missing specs/different counts do not block. Characteristics remain important
+corroborating, disambiguation and same-role material contradiction evidence.
+Own exact variant in a canonical series title is allowed; true parent is not.
+Scoped IDENTITY_ALIAS is distinct from retrieval-only SEARCH_SYNONYM. Significant
++/PRO/NEW/V suffixes survive; accessory/component cannot match complete machine.
+Current implementation: universal_supplier/matching_policy_v2.py, adopted in KAMI
+only; no silent rerun of predecessor decisions or arbitrary fuzzy acceptance.
+See ../ACCEPTANCE_MATRIX.md and ../FALSE_MATCH_CASES.md. Legacy rules below remain
+historical runtime context and do not impose a universal characteristic quota.
+
 ## Positive evidence
 
 - Existing stable supplier link: exact, unless conflicting identity evidence appears.

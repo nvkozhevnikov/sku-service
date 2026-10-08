@@ -1,0 +1,86 @@
+{
+  "provenance": "LIVE-VERIFIED isolated QA/dev; OPERATOR-CONFIRMED 2026-10-08 bf5d1d67",
+  "matching": {
+    "source_identities": 5264,
+    "offers": 5264,
+    "Existing": 717,
+    "Review": 4547,
+    "Conflict": 0,
+    "matched_numeric_public": 90,
+    "exact_numeric": 88,
+    "FROM_PRICE": 2,
+    "supplier_disabled": true,
+    "offers_inactive": true
+  },
+  "selection": {
+    "rows": 121,
+    "selected": 117,
+    "no_eligible_offer": 4,
+    "changes_in_finalization": 0
+  },
+  "accepted_identity_sha256": "0f148bd32a1e110f977d43f78298754913cd7253517e02a5b7599d4efd51ae04",
+  "tests": {
+    "tests": 233,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "PASS": 233,
+    "FAIL": 0,
+    "ERROR": 0,
+    "SKIP": 0,
+    "positive_calibrations": 35,
+    "portable_positive_fixture_bytes": 627806,
+    "scratch_database": "universal_supplier_kami_lifecycle_test_20261006",
+    "RC_business_writes": 0,
+    "full_suite": "NOT_RUN_OUTSIDE_SCOPE"
+  },
+  "dump": {
+    "bytes": 106895057,
+    "sha256": "20f80d12a7d6fcc6f31dfb3dba1559785a452747d83b7ed6c83dbc1be567ecc1",
+    "modified_at": "2026-10-08T11:06:54.208644+00:00",
+    "database": "universal_supplier_kami_rc",
+    "PG_version": "17.11",
+    "system_identifier": "7693098812512405428",
+    "format": "PostgreSQL custom"
+  },
+  "dump_filename": "universal_supplier_kami_matching_v2_1_2026-10-08.dump",
+  "restore": {
+    "status": "NEW_DATABASE_RESTORE_EXACT_VERIFIED",
+    "database": "universal_supplier_kami_v21_restore_20261008",
+    "source_unchanged": true
+  },
+  "migration_names": [
+    "001_suppliers_and_crawls.sql",
+    "002_products_and_offers.sql",
+    "003_catalog_details.sql",
+    "004_history_errors_and_feeds.sql",
+    "005_indexes.sql",
+    "006_sterbrust_registry_and_matching.sql",
+    "007_sterbrust_registry_indexes.sql",
+    "008_sterbrust_supplier_identifiers.sql",
+    "009_matching_data_quality.sql",
+    "010_persistent_match_quality.sql",
+    "011_sterbrust_optional_product_url.sql",
+    "012_web_control_plane_scheduler.sql",
+    "013_operator_admin_review.sql",
+    "014_stage6e_operator_data_tools.sql",
+    "015_commercial_capture_observations.sql"
+  ],
+  "input_hashes": {
+    "RECONCILED/CARDS.jsonl": "365fce78658e3cb692be48cda3633c4b8ec7642c200ce47e7ed4f67850345138",
+    "CANONICAL_CURRENT/STERBRUST_REGISTRY.jsonl": "40e4f2276c7d58754cfc755ca08453994193419cba6843db3170ec640007fd65"
+  },
+  "source_business_writes": 0,
+  "supplier_HTTP": 0,
+  "Sterbrust_writes": 0,
+  "ESOL": 0,
+  "selection_changes": 0,
+  "Git_commit_push_evidence": "recorded after operation in external finalization GIT_FINAL_STATE.json; not self-referential",
+  "not_authorized": [
+    "develop/production/tag",
+    "selection evaluation/apply",
+    "import/XML",
+    "NEW creation",
+    "deployment/scheduler"
+  ]
+}

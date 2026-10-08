@@ -1,5 +1,15 @@
 # FINAL RC authoritative contract — 2026-10-02
 
+## Current KAMI Matching V2.1 feature checkpoint — 2026-10-08
+
+OPERATOR-CONFIRMED87df7f85/2ec9a0b6/bf5d1d67 supersedes the historical zero-KAMI
+matching state below. LIVE-VERIFIED717Existing/4547Review/0Conflict on5264source/
+offers, numeric-public matched90/1333 (88exact/2from), supplier disabled/offers
+inactive. Selection remains121/117/4; no selection changes authorized here.
+See ../CURRENT_STATE.md and versioned V2.1 finalization receipts for exact
+test/dump/restore/feature Git proof. Full old release/export sections below are
+historical, not current matching counts or import/develop/deployment permission.
+
 ## Targeted Phase2 fixes / rereview gate — 2026-10-07
 
 3616b86099a4f12a4429e850c401414438d82120 is the rejected RC, not accepted
