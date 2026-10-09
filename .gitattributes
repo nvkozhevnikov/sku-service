@@ -1,0 +1,2 @@
+# Preserve the frozen OFFLINE RUN2 runner's exact committed LF bytes on Windows.
+/scripts/run2_kami_products.py text eol=lf
