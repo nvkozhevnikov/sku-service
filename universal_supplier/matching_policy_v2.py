@@ -259,7 +259,7 @@ def canonical_view_v2(record):
     return result
 
 
-def assess_pair(source, target):
+def assess_pair(source, target, *, kind_resolver=None):
     reasons = []
     sb,tb = normalize_brand(source.get('brand')),normalize_brand(target.get('brand'))
     sm,tm = identity_model(source),identity_model(target)
@@ -268,7 +268,8 @@ def assess_pair(source, target):
     if target.get('active')!='Y' or not str(target.get('sterbrust_product_id','')).isdigit(): reasons.append('CANONICAL_NOT_ACTIVE_REAL_ID')
     if not usable_model(source.get('model',''),sb): reasons.append('SOURCE_FULL_MODEL_NOT_PROVEN')
     if not sm or sm != tm: reasons.append('FULL_EXECUTION_MISMATCH')
-    sk,tk = sold_kind(source),sold_kind(target)
+    resolve_kind = kind_resolver or sold_kind
+    sk,tk = resolve_kind(source),resolve_kind(target)
     if sk in NON_MACHINE or tk in NON_MACHINE or sk=='unknown' or tk=='unknown' or sk!=tk:
         reasons.append('SOLD_PRODUCT_KIND_NOT_COMPATIBLE')
     for row,label in ((source,'SOURCE'),(target,'CANONICAL')):
