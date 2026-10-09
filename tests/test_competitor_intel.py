@@ -197,4 +197,11 @@ def test_db_version_history_and_optional_analysis(tmp_path):
                 def analyze(self,input): raise RuntimeError('provider failure')
             counts=analyze_pending(store,Broken()); assert counts['ERROR']>=2
             store.run_finish(run,{'errors':[],'fixture_date':SINCE})
+            from competitor_intel.report import report
+            report(store,SINCE,TODAY,tmp_path)
+            files=['REPORT.md','SOURCE_MAP.md','PAGES.csv','CAMPAIGN_ITEMS.csv','PRICE_CHANGES.csv','MACHINE_PRIORITY.csv']
+            first={f:(tmp_path/f).read_bytes() for f in files}
+            with conn.cursor() as c: c.execute('SET LOCAL enable_hashjoin=off')
+            report(store,SINCE,TODAY,tmp_path)
+            assert first=={f:(tmp_path/f).read_bytes() for f in files}
     finally: store.close()

@@ -25,7 +25,7 @@ def report(store,since,today,output):
     items = store.query('''SELECT s.code AS source,p.canonical_url AS campaign_url,i.* FROM competitor_campaign_items i
                           JOIN competitor_page_versions v ON v.id=i.page_version_id JOIN competitor_pages p ON p.id=v.page_id
                           JOIN competitor_sources s ON s.id=p.source_id WHERE v.content_hash=p.current_content_hash
-                          ORDER BY CASE i.priority WHEN 'HIGH' THEN 0 WHEN 'NORMAL' THEN 1 ELSE 2 END,s.code,p.canonical_url,i.product_url,i.product_name''')
+                          ORDER BY CASE i.priority WHEN 'HIGH' THEN 0 WHEN 'NORMAL' THEN 1 ELSE 2 END,s.code,p.canonical_url,i.product_url,i.product_name,i.campaign_name,i.tab_title,i.id''')
     valid_ids = {p['version_id'] for p in pages}; items = [i for i in items if i['page_version_id'] in valid_ids]
     changes = []
     observations = store.query('''SELECT s.code AS source,p.canonical_url,o.observed_at,o.page_version_id,v.payload,v.extractor_version
