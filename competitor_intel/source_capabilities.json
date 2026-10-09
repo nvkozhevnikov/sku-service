@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "kuvalda_nnov": ["PROMOTIONS", "NEWS", "SALE_PRODUCTS", "HOMEPAGE_BLOCKS", "PRODUCT_PRICES", "CAMPAIGN_DATES", "PRODUCT_DETAIL"],
+    "metalmaster": ["PROMOTIONS", "NEWS", "SALE_PRODUCTS", "HOMEPAGE_BLOCKS", "PRODUCT_PRICES", "CAMPAIGN_DATES"]
+  }
+}

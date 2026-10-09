@@ -18,7 +18,9 @@ def main():
     c.add_argument('--since',type=date.fromisoformat,default=date(2026,9,1)); c.add_argument('--through',type=date.fromisoformat,default=date.today())
     c.add_argument('--max-pages',type=int,default=45); c.add_argument('--browser',action='store_true')
     c.add_argument('--output',default='reports/COMPETITOR_INTELLIGENCE_2026-10-09')
-    r = sub.add_parser('report'); r.add_argument('--since',type=date.fromisoformat,default=date(2026,9,1)); r.add_argument('--through',type=date.fromisoformat,default=date.today()); r.add_argument('--output',default='reports/COMPETITOR_INTELLIGENCE_2026-10-09')
+    r = sub.add_parser('report'); r.add_argument('--since',type=date.fromisoformat,default=date(2026,9,1)); r.add_argument('--through',type=date.fromisoformat,default=None); r.add_argument('--output',default=None)
+    r.add_argument('--preview',action='store_true',help='Read-only offline HTML/CSV/JSON business report; no crawl/AI')
+    r.add_argument('--ending-days',type=int,default=7)
     a = sub.add_parser('analyze'); a.add_argument('--provider',choices=['none'],default='none'); a.add_argument('--pending',action='store_true')
     args = p.parse_args()
     dsn = json.loads(args.dev_config.read_text(encoding='utf-8'))['dsn'] if args.dev_config else None
@@ -37,7 +39,14 @@ def main():
                 result={'kuvalda':kuvalda,'metalmaster':metalmaster}
             else:
                 result=crawl(store,[args.source],args.since,args.through,args.output,args.max_pages,args.browser)
-        elif args.command=='report': result=report(store,args.since,args.through,args.output)
+        elif args.command=='report':
+            if args.preview:
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+                from .business_report import preview_from_store
+                today=args.through or datetime.now(ZoneInfo('Europe/Moscow')).date()
+                result=preview_from_store(store,args.since,today,args.output or f'reports/COMPETITOR_BUSINESS_REPORT_PREVIEW_{today}',args.ending_days)
+            else: result=report(store,args.since,args.through or date.today(),args.output or 'reports/COMPETITOR_INTELLIGENCE_2026-10-09')
         else: result=analyze_pending(store)
         print(json.dumps(result,ensure_ascii=False,default=str))
     finally: store.close()
