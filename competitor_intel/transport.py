@@ -71,6 +71,7 @@ class HttpTransport:
                 ref = self.directory / (raw_hash+'.html'); ref.write_bytes(r.content)
                 event['raw_capture_ref'] = str(ref); event['raw_hash'] = raw_hash
                 if r.status_code == 403 or challenge(r.text):
+                    event['access_failure']='HTTP_BLOCKED' if r.status_code==403 else 'CAPTCHA_BLOCKED'
                     self.blocked_hosts.add(host); raise SourceBlocked('HTTP403_OR_CHALLENGE')
                 if r.status_code == 429:
                     delay = r.headers.get('Retry-After')
@@ -84,6 +85,7 @@ class HttpTransport:
                     self.sleep(8*(attempt+1)); continue
                 if r.status_code in (301,302,303,307,308):
                     current = urljoin(current, r.headers.get('Location',''))
+                    event['redirect_to']=current
                     if not self.permitted(current): raise SourceBlocked('REGION_OR_HOST_REDIRECT')
                     if check_robots and not self.robots[host].can_fetch(USER_AGENT, current): raise SourceBlocked('REDIRECT_ROBOTS_EXCLUDED')
                     continue
@@ -103,7 +105,8 @@ class BrowserTransport:
     Explicit operator choice only after HTTP/robots preflight. All site traffic is
     source/browser traffic. Abort off-domain documents; normal public assets load.
     """
-    def __init__(self, http): self.http = http
+    def __init__(self, http, strict_robots=False, robots_informational=False):
+        self.http = http; self.strict_robots=strict_robots; self.robots_informational=robots_informational
 
     def get(self, url):
         if not self.http.permitted(url): raise ValueError('URL outside exact source allowlist')
@@ -111,7 +114,7 @@ class BrowserTransport:
         if host in self.http.blocked_hosts: raise SourceBlocked('Protected source, browser fallback forbidden')
         if host not in self.http.robots: self.http.get('https://'+host+'/robots.txt',False)
         if host not in self.http.robots: raise SourceBlocked('ROBOTS_PREFLIGHT_REQUIRED')
-        if not self.http.robots[host].can_fetch(USER_AGENT,url): raise SourceBlocked('ROBOTS_EXCLUDED')
+        if not self.robots_informational and not self.http.robots[host].can_fetch(USER_AGENT,url): raise SourceBlocked('ROBOTS_EXCLUDED')
         from playwright.sync_api import sync_playwright
         self.http.pace()
         with sync_playwright() as p:
@@ -121,7 +124,14 @@ class BrowserTransport:
             protected = []
             page.on('response', lambda r: protected.append(r.status) if urlsplit(r.url).netloc == host and r.status in (403,429) else None)
             def route(req):
-                if req.request.is_navigation_request() and urlsplit(req.request.url).netloc != host:
+                request_url=req.request.url
+                if self.robots_informational and urlsplit(request_url).netloc==host and not self.http.permitted(request_url):
+                    self.http.resource_gaps.append({'url':request_url,'resource_type':req.request.resource_type,'reason':'PRIVATE_OR_AUTH_ENDPOINT_NOT_REQUESTED'})
+                    req.abort()
+                elif self.strict_robots and urlsplit(request_url).netloc==host and not self.http.robots[host].can_fetch(USER_AGENT,request_url):
+                    self.http.resource_gaps.append({'url':request_url,'resource_type':req.request.resource_type,'status':'ROBOTS_BLOCKED','reason':self.http.robots[host].decision(request_url)[1]})
+                    req.abort()
+                elif req.request.is_navigation_request() and urlsplit(request_url).netloc != host:
                     req.abort()
                 else: req.continue_()
             page.route('**/*', route)
@@ -148,6 +158,10 @@ class BrowserTransport:
                     if seasonal.count() == 1:
                         buttons = seasonal.locator('.alt-tabs__item')
                         for idx in range(1,buttons.count()):
+                            endpoint=buttons.nth(idx).get_attribute('data-tabs-fetch')
+                            if self.strict_robots and endpoint and not self.http.robots[host].can_fetch(USER_AGENT,urljoin(url,endpoint)):
+                                self.http.tab_gaps.append({'block':'Готовимся к зиме','tab':buttons.nth(idx).inner_text(),'url':urljoin(url,endpoint),'status':'ROBOTS_BLOCKED'})
+                                continue
                             self.http.sleep(self.http.rng.uniform(3,7))
                             buttons.nth(idx).click(timeout=10000)
                             page.wait_for_timeout(4000)

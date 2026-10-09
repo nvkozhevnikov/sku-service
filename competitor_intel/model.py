@@ -174,4 +174,5 @@ class Page:
 
     def content_hash(self):
         from . import EXTRACTOR_VERSION
-        return hashlib.sha256((EXTRACTOR_VERSION+json.dumps(self.payload(), sort_keys=True, ensure_ascii=False, default=str)).encode()).hexdigest()
+        version=getattr(self,'extractor_version',EXTRACTOR_VERSION)
+        return hashlib.sha256((version+json.dumps(self.payload(), sort_keys=True, ensure_ascii=False, default=str)).encode()).hexdigest()

@@ -64,7 +64,7 @@ class Store:
             page_id = c.fetchone()['id']
             c.execute('''INSERT INTO competitor_page_versions(page_id,fetched_at,content_hash,title,raw_text,normalized_text,raw_capture_ref,extractor_version,payload)
                          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(page_id,content_hash) DO NOTHING RETURNING id''',
-                      (page_id,capture.fetched_at,digest,page.title,page.raw_text,page.normalized_text,capture.raw_ref,EXTRACTOR_VERSION,Jsonb(json_value({**page.payload(),'publication_evidence':page.publication_evidence}))))
+                      (page_id,capture.fetched_at,digest,page.title,page.raw_text,page.normalized_text,capture.raw_ref,getattr(page,'extractor_version',EXTRACTOR_VERSION),Jsonb(json_value({**page.payload(),'publication_evidence':page.publication_evidence,**({'campaign_evidence':page.campaign_evidence} if hasattr(page,'campaign_evidence') else {})}))))
             new_version = c.fetchone()
             if new_version:
                 version_id = new_version['id']

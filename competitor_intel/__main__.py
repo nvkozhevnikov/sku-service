@@ -27,7 +27,16 @@ def main():
         if args.command=='init-db': store.migrate(); result={'database':'sterbrust_competitor_intel','schema':'public','migration':'DONE'}
         elif args.command=='crawl':
             if not 1<=args.max_pages<=100: p.error('max-pages must be 1..100')
-            result=crawl(store,list(SOURCES) if args.all else [args.source],args.since,args.through,args.output,args.max_pages,args.browser)
+            if args.source=='kuvalda_nnov':
+                from .kuvalda_public_runner import crawl_public
+                result=crawl_public(store,args.output,args.since,args.through,min(args.max_pages,60))
+            elif args.all:
+                from .kuvalda_public_runner import crawl_public
+                kuvalda=crawl_public(store,args.output,args.since,args.through,min(args.max_pages,60))
+                metalmaster=crawl(store,['metalmaster'],args.since,args.through,args.output,args.max_pages,args.browser)
+                result={'kuvalda':kuvalda,'metalmaster':metalmaster}
+            else:
+                result=crawl(store,[args.source],args.since,args.through,args.output,args.max_pages,args.browser)
         elif args.command=='report': result=report(store,args.since,args.through,args.output)
         else: result=analyze_pending(store)
         print(json.dumps(result,ensure_ascii=False,default=str))
