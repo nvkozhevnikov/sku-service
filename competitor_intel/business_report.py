@@ -24,6 +24,13 @@ CSV_SCHEMAS={
  'SOURCE_SUMMARY.csv':['code','name','region','capabilities','observation_mode','latest_observed_at','promotions','active_promotions','unknown_date_promotions','sale_items','high_items','latest_news','changes','median_discount','max_discount'],
  'AI_ANALYSIS.csv':['source','entity','summary','content_type','commercial_mechanic_json','strategic_signals_json','sterbrust_relevance','provider','model','prompt_version','analyzed_at']}
 ITEM_FIELDS=('product_name','product_url','brand','model','category','priority','old_price','new_price','currency','price_type','price_label_raw','region','availability','campaign_name','tab_title')
+PROVENANCE_FIELDS=('capture_method','fetch_status','evidence_class')
+for _schema in ('PROMOTIONS.csv','CAMPAIGN_PRODUCTS.csv','NEWS.csv'):
+    CSV_SCHEMAS[_schema]+=list(PROVENANCE_FIELDS)
+CSV_SCHEMAS['SOURCE_SUMMARY.csv']+=['capture_methods','automated_access_incomplete']
+
+def capture_provenance(snapshot):
+    return {k:(snapshot.get('capture_provenance') or {}).get(k) for k in PROVENANCE_FIELDS}
 
 def business_item(item):
     return {k:item.get(k) for k in ITEM_FIELDS}
@@ -77,16 +84,16 @@ def build_facts(dataset,since,report_date,ending_days=7):
         is_campaign=is_promo or s['page_type'] in {'SALE_PAGE','HOMEPAGE_BLOCK'}
         if is_promo:
             end=day(s.get('valid_to'))
-            promotions.append({'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'valid_from':s.get('valid_from'),'valid_to':s.get('valid_to'),
+            promotions.append({**capture_provenance(s),'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'valid_from':s.get('valid_from'),'valid_to':s.get('valid_to'),
                                'status':campaign_status(s,report_date,ending_days),'days_remaining':(end-report_date).days if end else None,
                                'product_count':len(s.get('items',[])),'high_count':sum(i.get('priority')=='HIGH' for i in s.get('items',[])),
                                'mechanics':s.get('mechanics') or mechanics(s.get('text','')),'observed_at':s['observed_at'],
                                'products':[business_item(i) for i in s.get('items',[])],'excerpt':re.sub(r'\s+',' ',s.get('text','')).strip()[:600]})
         if s['page_type'] in ('NEWS','BLOG') and (not s.get('published_at') or since<=day(s['published_at'])<=report_date):
-            (blog if s['page_type']=='BLOG' else news).append({'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'published_at':s.get('published_at'),
+            (blog if s['page_type']=='BLOG' else news).append({**capture_provenance(s),'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'published_at':s.get('published_at'),
                          'excerpt':re.sub(r'\s+',' ',s.get('text','')).strip()[:360],'observed_at':s['observed_at']})
         for i in s.get('items',[]):
-            row={**business_item(i),'source':s['source'],'product_url':safe_url(i.get('product_url')),'category':i.get('category') or i.get('tab_title') or 'Категория не указана',
+            row={**business_item(i),**capture_provenance(s),'source':s['source'],'product_url':safe_url(i.get('product_url')),'category':i.get('category') or i.get('tab_title') or 'Категория не указана',
                  'campaign':i.get('campaign_name') or s['title'],'campaign_url':safe_url(s['entity']),'campaign_end':s.get('valid_to'),
                  'observed_at':s['observed_at'],'in_campaign':is_campaign,'campaign_status':campaign_status(s,report_date,ending_days) if is_promo else 'CURRENT_OBSERVATION'}
             row['discount_percent']=discount(row)

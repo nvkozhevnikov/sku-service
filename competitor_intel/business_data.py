@@ -5,7 +5,7 @@ from pathlib import Path
 from .store import json_value
 
 TABLES=('competitor_sources','competitor_pages','competitor_page_versions','competitor_campaign_items',
-        'competitor_observations','competitor_ai_analysis','competitor_runs','competitor_meta','competitor_source_surfaces','competitor_historical_seeds')
+        'competitor_observations','competitor_ai_analysis','competitor_runs','competitor_meta','competitor_source_surfaces','competitor_historical_seeds','competitor_operator_captures')
 
 def read_state(store):
     with store.conn.transaction(),store.conn.cursor() as c:
@@ -41,6 +41,13 @@ def normalized_dataset(state):
     for source in sources:
         source['historical_seed_rows']=sum(r['source_id']==source['id'] for r in state.get('competitor_historical_seeds',[]))
         source['access_gaps']=[{'url':r['canonical_url'],'fetch_status':r['fetch_status'],'reason':r['reason']} for r in state.get('competitor_source_surfaces',[]) if r['source_id']==source['id'] and r['status']=='ERROR']
+        captures=[r for r in state.get('competitor_operator_captures',[]) if r['source_id']==source['id'] and r.get('page_version_id')]
+        source['capture_methods']=sorted({r['capture_method'] for r in captures})
+        for r in state.get('competitor_source_surfaces',[]):
+            automated=(r.get('details') or {}).get('automated_access_evidence') or {}
+            if r['source_id']==source['id'] and automated.get('fetch_status') in ('HTTP_BLOCKED','CAPTCHA_BLOCKED','ERROR'):
+                source['access_gaps'].append({'url':r['canonical_url'],'fetch_status':automated['fetch_status'],'reason':'AUTOMATED_ACCESS_REMAINS_INCOMPLETE'})
+        if captures:source['automated_access_incomplete']=True
     source_by_id={s['id']:s for s in sources}; pages={p['id']:p for p in state['competitor_pages']}
     versions={v['id']:v for v in state['competitor_page_versions']}; items={}
     for item in state['competitor_campaign_items']: items.setdefault(item['page_version_id'],[]).append(item)
@@ -50,11 +57,16 @@ def normalized_dataset(state):
         if not v or v.get('qa_status')!='ACCEPTED': continue
         def snapshot(version,observed):
             p=version['payload']
+            lineage=version['extractor_version'];operator=p.get('capture_provenance') or {}
+            if operator.get('capture_method')=='OPERATOR_BROWSER_CAPTURE':
+                # Regionless captures cannot establish comparable price history.
+                lineage+='|REGION:'+operator['source_region'] if operator.get('source_region') else '|REGION_UNKNOWN:'+operator['content_hash']
             return {'source':source_by_id[page['source_id']]['code'],'entity':page['canonical_url'],
-                    'version':version['content_hash'],'extractor':version['extractor_version'],'observed_at':observed,
+                    'version':version['content_hash'],'extractor':lineage,'observed_at':observed,
                     'page_type':p['page_type'],'title':p['title'],'published_at':p.get('published_at'),
                     'valid_from':p.get('valid_from'),'valid_to':p.get('valid_to'),'text':p.get('normalized_text',''),
                     'campaign_in_news':(p.get('campaign_evidence') or {}).get('current_campaign_in_news') is True,
+                    'capture_provenance':p.get('capture_provenance'),
                     'items':items.get(version['id'],[]),'item_scope_complete':p.get('item_scope_complete') is True,
                     'source_discovery_complete':p.get('source_discovery_complete') is True,
                     'mechanics':p.get('commercial_mechanics') or p.get('mechanics') or [],'scope_key':p.get('scope_key'), 'qa_status':version.get('qa_status')}

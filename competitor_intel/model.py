@@ -171,7 +171,7 @@ class Page:
             item.pop('evidence_html')
         # Optional generic adapter metadata is absent by default, preserving
         # existing payload/hash semantics. Future verified coverage may opt in.
-        for key in ('item_scope_complete','source_discovery_complete','commercial_mechanics','scope_key','historical_context'):
+        for key in ('item_scope_complete','source_discovery_complete','commercial_mechanics','scope_key','historical_context','capture_provenance','homepage_blocks'):
             if hasattr(self,key): result[key]=getattr(self,key)
         result['items'].sort(key=lambda i: (i['product_url'] or '', i['tab_title'] or '', i['product_name']))
         return result

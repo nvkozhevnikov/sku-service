@@ -22,6 +22,15 @@ def main():
     r.add_argument('--preview',action='store_true',help='Read-only offline HTML/CSV/JSON business report; no crawl/AI')
     r.add_argument('--ending-days',type=int,default=7)
     a = sub.add_parser('analyze'); a.add_argument('--provider',choices=['none'],default='none'); a.add_argument('--pending',action='store_true')
+    o=sub.add_parser('import-browser-capture',help='Offline import of operator-saved public YouMet HTML/DOM; no HTTP')
+    o.add_argument('--source',choices=['youmet'],required=True)
+    o.add_argument('--url',required=True);o.add_argument('--file',type=Path,required=True)
+    o.add_argument('--capture-time',required=True,help='Original browser capture ISO8601 time with timezone; never file mtime')
+    from .youmet_adapter import KINDS
+    o.add_argument('--kind',choices=KINDS,default='AUTO')
+    o.add_argument('--since',type=date.fromisoformat,default=date(2026,9,1))
+    o.add_argument('--output',type=Path,default=Path('reports/YOUMET_OPERATOR_CAPTURES'))
+    o.add_argument('--report-output',type=Path,default=None)
     args = p.parse_args()
     dsn = json.loads(args.dev_config.read_text(encoding='utf-8'))['dsn'] if args.dev_config else None
     store = Store(dsn)
@@ -47,6 +56,15 @@ def main():
                 today=args.through or datetime.now(ZoneInfo('Europe/Moscow')).date()
                 result=preview_from_store(store,args.since,today,args.output or f'reports/COMPETITOR_BUSINESS_REPORT_PREVIEW_{today}',args.ending_days)
             else: result=report(store,args.since,args.through or date.today(),args.output or 'reports/COMPETITOR_INTELLIGENCE_2026-10-09')
+        elif args.command=='import-browser-capture':
+            from .operator_capture import import_browser_capture
+            result=import_browser_capture(store,args.file,args.url,args.capture_time,args.output,args.kind,args.since)
+            if result['status']=='YOUMET_PUBLIC_BROWSER_BASELINE_VERIFIED':
+                from .business_report import preview_from_store
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+                today=datetime.now(ZoneInfo('Europe/Moscow')).date()
+                result['report']=preview_from_store(store,args.since,today,args.report_output or f'reports/COMPETITOR_BUSINESS_REPORT_PREVIEW_{today}')
         else: result=analyze_pending(store)
         print(json.dumps(result,ensure_ascii=False,default=str))
     finally: store.close()

@@ -11,6 +11,9 @@ def node_text(root,selector):
     return text(el.get_text(' ',strip=True)) if el else None
 
 def extract(code,cap,kind,since=date(2026,9,1),today=date(2026,10,12)):
+    if code=='youmet':
+        from .youmet_adapter import extract_youmet
+        return extract_youmet(cap,kind,since,today)
     soup=BeautifulSoup(cap.html,'html.parser');base=urljoin(cap.final_url,soup.base.get('href','')) if soup.base else cap.final_url
     main=soup.select_one('main') or soup.select_one('.page-content') or soup.select_one('.content') or soup
     title=node_text(soup,'h1') or node_text(soup,'title') or cap.final_url
