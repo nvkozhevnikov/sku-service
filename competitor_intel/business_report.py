@@ -71,23 +71,24 @@ def build_facts(dataset,since,report_date,ending_days=7):
         if day(s['observed_at'])<=report_date: grouped[(s['source'],s['entity'])].append(s)
     for k,snaps in grouped.items():
         if len({s['observed_at'] for s in snaps})>1 and len({s.get('extractor') for s in snaps})==1: comparable.add(k)
-    promotions=[]; products=[]; news=[]
+    promotions=[]; products=[]; news=[]; blog=[]
     for s in sorted(current,key=lambda s:(s['source'],s['entity'])):
-        is_campaign=s['page_type'] in PROMO_TYPES|{'SALE_PAGE','HOMEPAGE_BLOCK'}
-        if s['page_type'] in PROMO_TYPES:
+        is_promo=s['page_type'] in PROMO_TYPES or s.get('campaign_in_news') is True
+        is_campaign=is_promo or s['page_type'] in {'SALE_PAGE','HOMEPAGE_BLOCK'}
+        if is_promo:
             end=day(s.get('valid_to'))
             promotions.append({'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'valid_from':s.get('valid_from'),'valid_to':s.get('valid_to'),
                                'status':campaign_status(s,report_date,ending_days),'days_remaining':(end-report_date).days if end else None,
                                'product_count':len(s.get('items',[])),'high_count':sum(i.get('priority')=='HIGH' for i in s.get('items',[])),
                                'mechanics':s.get('mechanics') or mechanics(s.get('text','')),'observed_at':s['observed_at'],
                                'products':[business_item(i) for i in s.get('items',[])],'excerpt':re.sub(r'\s+',' ',s.get('text','')).strip()[:600]})
-        if s['page_type']=='NEWS' and (not s.get('published_at') or since<=day(s['published_at'])<=report_date):
-            news.append({'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'published_at':s.get('published_at'),
+        if s['page_type'] in ('NEWS','BLOG') and (not s.get('published_at') or since<=day(s['published_at'])<=report_date):
+            (blog if s['page_type']=='BLOG' else news).append({'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'published_at':s.get('published_at'),
                          'excerpt':re.sub(r'\s+',' ',s.get('text','')).strip()[:360],'observed_at':s['observed_at']})
         for i in s.get('items',[]):
             row={**business_item(i),'source':s['source'],'product_url':safe_url(i.get('product_url')),'category':i.get('category') or i.get('tab_title') or 'Категория не указана',
                  'campaign':i.get('campaign_name') or s['title'],'campaign_url':safe_url(s['entity']),'campaign_end':s.get('valid_to'),
-                 'observed_at':s['observed_at'],'in_campaign':is_campaign,'campaign_status':campaign_status(s,report_date,ending_days) if s['page_type'] in PROMO_TYPES else 'CURRENT_OBSERVATION'}
+                 'observed_at':s['observed_at'],'in_campaign':is_campaign,'campaign_status':campaign_status(s,report_date,ending_days) if is_promo else 'CURRENT_OBSERVATION'}
             row['discount_percent']=discount(row)
             row['discount_amount']=(decimal(i['old_price'])-decimal(i['new_price'])) if row['discount_percent'] is not None else None
             products.append(row)
@@ -117,7 +118,7 @@ def build_facts(dataset,since,report_date,ending_days=7):
         ps=[p for p in promotions if p['source']==src['code']]; ins=[i for i in products if i['source']==src['code']]
         ss=[s for s in current if s['source']==src['code']]; ds=[i['discount_percent'] for i in public_discounts if i['source']==src['code']]
         comparable_count=sum(k[0]==src['code'] for k in comparable)
-        source_summary.append({**src,'observation_mode':'COMPARABLE_HISTORY' if comparable_count else 'INITIAL BASELINE',
+        source_summary.append({**src,'observation_mode':'COMPARABLE_HISTORY' if comparable_count else 'INITIAL BASELINE' if ss else 'ACCESS INCOMPLETE' if src.get('access_gaps') else 'HISTORICAL_SEED' if src.get('historical_seed_rows') else 'NO LIVE OBSERVATION',
                                'latest_observed_at':max((s['observed_at'] for s in ss),default=None),'promotions':len(ps),
                                'active_promotions':sum(p['status'] in ('ACTIVE','ENDING_SOON') for p in ps),'unknown_date_promotions':sum(p['status']=='UNKNOWN' for p in ps),
                                'sale_items':sum(i['price_type']=='SALE' or i['campaign_url'] in {s['entity'] for s in ss if s['page_type']=='SALE_PAGE'} for i in ins),
@@ -139,7 +140,7 @@ def build_facts(dataset,since,report_date,ending_days=7):
                       'Новости показаны с исходным фрагментом; ИИ-резюме без сохранённого анализа не создаётся.']+dataset.get('limitations',[])}
     return {'summary':summary,'sources':source_summary,'events':events,'important':meaningful,'price_changes':price_events,
             'promotions':promotions,'products':products,'news':sorted(news,key=lambda n:(n.get('published_at') or '',n['source'],n['title']),reverse=True),
-            'categories':categories,'ending_soon':ending,'distribution':distribution,'analysis':dataset.get('analysis',[])}
+            'blog':sorted(blog,key=lambda n:(n.get('published_at') or '',n['source'],n['title']),reverse=True),'categories':categories,'ending_soon':ending,'distribution':distribution,'analysis':dataset.get('analysis',[])}
 
 def export_preview(dataset,since,report_date,output,ending_days=7):
     from .business_html import render_html
@@ -149,6 +150,8 @@ def export_preview(dataset,since,report_date,output,ending_days=7):
     (out/'SUMMARY.json').write_text(json.dumps(serialized['summary'],ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
     mappings={'EVENTS.csv':'events','PRICE_CHANGES.csv':'price_changes','PROMOTIONS.csv':'promotions','CAMPAIGN_PRODUCTS.csv':'products',
               'NEWS.csv':'news','CATEGORY_ACTIVITY.csv':'categories','ENDING_SOON.csv':'ending_soon','SOURCE_SUMMARY.csv':'sources','AI_ANALYSIS.csv':'analysis'}
+    mappings['BLOG.csv']='blog'
+    CSV_SCHEMAS['BLOG.csv']=CSV_SCHEMAS['NEWS.csv']
     for name,key in mappings.items(): write_csv(out/name,facts[key],CSV_SCHEMAS[name])
     (out/'index.html').write_text(render_html(serialized),encoding='utf-8')
     (out/'EVENTS.json').write_text(json.dumps(serialized['events'],ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')

@@ -1,0 +1,6 @@
+{
+ "stanki_ru":{"name":"КАМИ / stanki.ru","base_url":"https://www.stanki.ru/","hosts":["www.stanki.ru","stanki.ru"],"homepage_commercial":true},
+ "jet_online":{"name":"JET / Станкогрупп","base_url":"https://jet-online.ru/","hosts":["jet-online.ru","www.jet-online.ru"],"suggested":"/special_offers/","homepage_commercial":true},
+ "youmet":{"name":"YouMet","base_url":"https://youmet.ru/","hosts":["youmet.ru","www.youmet.ru"],"homepage_commercial":true},
+ "titaniumgroup":{"name":"Titanium Group","base_url":"https://titaniumgroup.ru/","hosts":["titaniumgroup.ru","www.titaniumgroup.ru"],"homepage_commercial":true}
+}

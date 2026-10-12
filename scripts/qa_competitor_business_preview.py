@@ -1,9 +1,10 @@
 """Native Edge file:// QA. All HTTP(S) requests aborted; no competitor refresh."""
 import json
+import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-out=Path('reports/COMPETITOR_BUSINESS_REPORT_PREVIEW_2026-10-09').resolve()
+out=Path(sys.argv[1] if len(sys.argv)>1 else 'reports/COMPETITOR_BUSINESS_REPORT_PREVIEW_2026-10-09').resolve()
 url=(out/'index.html').as_uri()
 result={'transport':'ordinary Edge / file:// / offline','source_HTTP':0,'checks':[],'blocked_remote_attempts':[]}
 def check(name,ok,details=None):
@@ -36,7 +37,10 @@ with sync_playwright() as p:
     check('ten_price_rows_reviewed',len(price_samples)==10 and all('₽' in s['current'] for s in price_samples),price_samples)
     check('five_promotions_rendered',page.locator('.promo').count()>=5,[page.locator('.promo-name').nth(i).inner_text() for i in range(min(5,page.locator('.promo').count()))])
     source_blocks=page.locator('.source-card').all_text_contents()
-    check('all_source_summaries',len(source_blocks)==2 and any('MetalMaster' in t for t in source_blocks) and any('Кувалда' in t for t in source_blocks),source_blocks)
+    check('all_source_summaries',len(source_blocks)==page.evaluate('D.sources.length') and any('MetalMaster' in t for t in source_blocks) and any('Кувалда' in t for t in source_blocks),source_blocks)
+    if page.evaluate('D.sources.length')==6:
+        check('historical_cache_separate_and_access_gap_visible',any('5264' in t and 'Исторический справочник' in t for t in source_blocks) and any('YouMet' in t and 'HTTP_BLOCKED' in t for t in source_blocks))
+        check('blog_separate_from_news',page.locator('#blog-content .news-row').count()==2 and page.locator('#news-content .news-row').count()==9)
     page.screenshot(path=str(out/'DESKTOP_TOP.png'),full_page=False)
     page.screenshot(path=str(out/'DESKTOP.png'),full_page=True)
     page.locator('#priority-filter').select_option('HIGH')

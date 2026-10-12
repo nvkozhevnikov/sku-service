@@ -5,7 +5,7 @@ from pathlib import Path
 from .store import json_value
 
 TABLES=('competitor_sources','competitor_pages','competitor_page_versions','competitor_campaign_items',
-        'competitor_observations','competitor_ai_analysis','competitor_runs','competitor_meta','competitor_source_surfaces')
+        'competitor_observations','competitor_ai_analysis','competitor_runs','competitor_meta','competitor_source_surfaces','competitor_historical_seeds')
 
 def read_state(store):
     with store.conn.transaction(),store.conn.cursor() as c:
@@ -15,7 +15,7 @@ def read_state(store):
             c.execute('SELECT to_regclass(%s) AS name',('public.'+table,))
             if c.fetchone()['name'] is None: state[table]=[]; continue
             # Names are a closed local schema allowlist, never user/source input.
-            c.execute('SELECT * FROM '+table+' ORDER BY '+('singleton' if table=='competitor_meta' else 'id'))
+            c.execute('SELECT * FROM '+table+' ORDER BY '+('singleton' if table=='competitor_meta' else 'source_id,seed_id' if table=='competitor_historical_seeds' else 'id'))
             state[table]=json_value(c.fetchall())
     return state
 
@@ -38,6 +38,9 @@ def fingerprints(state):
 def normalized_dataset(state):
     declared=json.loads(Path(__file__).with_name('source_capabilities.json').read_text(encoding='utf-8'))['sources']
     sources=[{**s,'capabilities':s.get('capabilities') or declared.get(s['code'],[])} for s in state['competitor_sources']]
+    for source in sources:
+        source['historical_seed_rows']=sum(r['source_id']==source['id'] for r in state.get('competitor_historical_seeds',[]))
+        source['access_gaps']=[{'url':r['canonical_url'],'fetch_status':r['fetch_status'],'reason':r['reason']} for r in state.get('competitor_source_surfaces',[]) if r['source_id']==source['id'] and r['status']=='ERROR']
     source_by_id={s['id']:s for s in sources}; pages={p['id']:p for p in state['competitor_pages']}
     versions={v['id']:v for v in state['competitor_page_versions']}; items={}
     for item in state['competitor_campaign_items']: items.setdefault(item['page_version_id'],[]).append(item)
@@ -51,6 +54,7 @@ def normalized_dataset(state):
                     'version':version['content_hash'],'extractor':version['extractor_version'],'observed_at':observed,
                     'page_type':p['page_type'],'title':p['title'],'published_at':p.get('published_at'),
                     'valid_from':p.get('valid_from'),'valid_to':p.get('valid_to'),'text':p.get('normalized_text',''),
+                    'campaign_in_news':(p.get('campaign_evidence') or {}).get('current_campaign_in_news') is True,
                     'items':items.get(version['id'],[]),'item_scope_complete':p.get('item_scope_complete') is True,
                     'source_discovery_complete':p.get('source_discovery_complete') is True,
                     'mechanics':p.get('commercial_mechanics') or p.get('mechanics') or [],'scope_key':p.get('scope_key'), 'qa_status':version.get('qa_status')}
