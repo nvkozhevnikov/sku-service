@@ -171,8 +171,12 @@ class Page:
             item.pop('evidence_html')
         # Optional generic adapter metadata is absent by default, preserving
         # existing payload/hash semantics. Future verified coverage may opt in.
-        for key in ('item_scope_complete','source_discovery_complete','commercial_mechanics','scope_key','historical_context','capture_provenance','homepage_blocks'):
+        for key in ('item_scope_complete','source_discovery_complete','commercial_mechanics','scope_key','historical_context','capture_provenance','homepage_blocks','item_metadata','content_kind','campaign_coverage'):
             if hasattr(self,key): result[key]=getattr(self,key)
+        if 'item_metadata' in result:
+            # Capture provenance belongs to evidence, not semantic version identity.
+            raw_keys={'original_capture_time','raw_capture_ref','raw_hash'}
+            result['item_metadata']={k:{f:v for f,v in m.items() if f not in raw_keys} for k,m in result['item_metadata'].items()}
         result['items'].sort(key=lambda i: (i['product_url'] or '', i['tab_title'] or '', i['product_name']))
         return result
 

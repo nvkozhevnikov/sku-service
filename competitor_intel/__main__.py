@@ -15,7 +15,7 @@ def main():
     for command in ('collect','run-scheduled'):
         sc=sub.add_parser(command,help='Unified bounded collection; no timer activation')
         sc.add_argument('--schedule-config',type=Path)
-        sc.add_argument('--source',action='append',choices=['kuvalda_nnov','metalmaster','jet_online','stanki_ru','titaniumgroup','youmet'])
+        sc.add_argument('--source',action='append',choices=['kuvalda_nnov','metalmaster','jet_online','stanki_ru','titaniumgroup','youmet','jettools_ru','rustan','belmash','harvey_rus','amur_stan'])
         sc.add_argument('--max-pages',type=int)
     sub.add_parser('init-db')
     c = sub.add_parser('crawl'); group=c.add_mutually_exclusive_group(required=True)

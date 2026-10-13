@@ -42,7 +42,8 @@ class MonitoringRepository:
                       'valid_from',v.payload->>'valid_from','valid_to',v.payload->>'valid_to','normalized_text',v.normalized_text,
                       'commercial_mechanics',v.payload->'commercial_mechanics','campaign_evidence',v.payload->'campaign_evidence',
                       'capture_provenance',v.payload->'capture_provenance','item_scope_complete',v.payload->'item_scope_complete',
-                      'source_discovery_complete',v.payload->'source_discovery_complete','scope_key',v.payload->'scope_key') payload
+                      'source_discovery_complete',v.payload->'source_discovery_complete','scope_key',v.payload->'scope_key',
+                      'item_metadata',v.payload->'item_metadata','content_kind',v.payload->'content_kind','campaign_coverage',v.payload->'campaign_coverage') payload
                       FROM competitor_page_versions v JOIN competitor_pages p ON p.id=v.page_id
                       JOIN competitor_page_versions cv ON cv.page_id=p.id AND cv.content_hash=p.current_content_hash
                       WHERE v.qa_status='ACCEPTED' AND v.extractor_version=cv.extractor_version ORDER BY v.id LIMIT 1001''',cap=1000)
@@ -86,10 +87,10 @@ def state_facts(state,now):
             news_offers.extend(p for p in f['promotions'] if kinds[p['url']]=='NEWS')
             content_by_url={n['url']:n for n in f['news']+f['blog']}
             for snapshot in ds['current']:
-                if snapshot['page_type'] not in ('NEWS','BLOG'):continue
+                if snapshot['page_type'] not in ('NEWS','BLOG','ARTICLE','EVENT','MODERNIZATION','CONTENT','NEW_PRODUCT_ANNOUNCEMENT'):continue
                 body=snapshot.get('text','')
                 item=content_by_url.get(snapshot['entity']) or {'source':snapshot['source'],'title':snapshot['title'],'url':safe_url(snapshot['entity']),
-                    'published_at':snapshot.get('published_at'),'excerpt':' '.join(body.split())[:360],'observed_at':snapshot['observed_at']}
+                    'published_at':snapshot.get('published_at'),'excerpt':' '.join(body.split())[:360],'observed_at':snapshot['observed_at'],'source_content_type':snapshot.get('content_kind') or snapshot['page_type']}
                 (all_news if snapshot['page_type']=='NEWS' else all_blog).append({**item,'search_text':body})
             s['comparable']=f['summary']['comparable_entities']>0
         except Exception:
@@ -108,6 +109,11 @@ def state_facts(state,now):
         s['evidence_type']='PUBLIC_BROWSER_EVIDENCE' if s['capture_method']=='OPERATOR_BROWSER_CAPTURE' else 'SAVED_PUBLIC_OBSERVATION' if latest else None
         s['last_event']=max((e.get('observed_after') or e.get('observed_before') for e in all_events if e['source']==s['code']),default=None)
         s['baseline_confirmed']=bool(s['pages']);s['historical_seed_rows']=state.get('seed_counts',{}).get(src['id'],0)
+        own_items=[i for i in all_products if i['source']==src['code']]
+        s['source_novelties']=len({i.get('product_url') for i in own_items if i.get('source_new_label')})
+        unique={}
+        for item in own_items:unique.setdefault((item.get('product_url'),item.get('region'),item.get('condition_identity')),item)
+        s['current_items']=list(unique.values())[:20]
         sources.append(s)
     return {'sources':sources,'events':all_events,'products':all_products,'promotions':all_promotions,'news_offers':news_offers,'news':all_news,'blog':all_blog,'problems':problems}
 
@@ -145,7 +151,8 @@ class MonitoringService:
         for kind,entries in [('NEWS',f['news']),('BLOG',f['blog'])]:
             for item in entries:
                 allowed=caps.get(item['source'],set())
-                if not (kind in allowed or kind=='BLOG' and allowed & {'ARTICLE','ARTICLES'}):continue
+                actual_kind=item.get('source_content_type') or kind
+                if not (kind in allowed or kind=='BLOG' and (allowed & {'ARTICLE','ARTICLES'} or actual_kind in allowed)):continue
                 published=material_time(item.get('published_at'));observed=material_time(item.get('observed_at'));effective=published or observed
                 if not effective or effective>now:continue
                 signal=indicators.get((item['source'],item['url']))

@@ -33,7 +33,8 @@ def capture_provenance(snapshot):
     return {k:(snapshot.get('capture_provenance') or {}).get(k) for k in PROVENANCE_FIELDS}
 
 def business_item(item):
-    return {k:item.get(k) for k in ITEM_FIELDS}
+    extras=('sku','source_new_label','condition_label','condition_identity','displayed_saving_raw','ambiguous_commercial_values','record_kind')
+    return {k:item.get(k) for k in ITEM_FIELDS+tuple(k for k in extras if k in item)}
 
 def safe_url(value):
     if not value: return None
@@ -89,8 +90,8 @@ def build_facts(dataset,since,report_date,ending_days=7):
                                'product_count':len(s.get('items',[])),'high_count':sum(i.get('priority')=='HIGH' for i in s.get('items',[])),
                                'mechanics':s.get('mechanics') or mechanics(s.get('text','')),'observed_at':s['observed_at'],
                                'products':[business_item(i) for i in s.get('items',[])],'excerpt':re.sub(r'\s+',' ',s.get('text','')).strip()[:600]})
-        if s['page_type'] in ('NEWS','BLOG') and (not s.get('published_at') or since<=day(s['published_at'])<=report_date):
-            (blog if s['page_type']=='BLOG' else news).append({**capture_provenance(s),'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'published_at':s.get('published_at'),
+        if s['page_type'] in ('NEWS','BLOG','ARTICLE','EVENT','MODERNIZATION','CONTENT','NEW_PRODUCT_ANNOUNCEMENT') and (not s.get('published_at') or since<=day(s['published_at'])<=report_date):
+            (news if s['page_type']=='NEWS' else blog).append({**capture_provenance(s),'source':s['source'],'title':s['title'],'url':safe_url(s['entity']),'published_at':s.get('published_at'),'source_content_type':s.get('content_kind') or s['page_type'],
                          'excerpt':re.sub(r'\s+',' ',s.get('text','')).strip()[:360],'observed_at':s['observed_at']})
         for i in s.get('items',[]):
             row={**business_item(i),**capture_provenance(s),'source':s['source'],'product_url':safe_url(i.get('product_url')),'category':i.get('category') or i.get('tab_title') or 'Категория не указана',

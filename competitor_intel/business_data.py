@@ -57,6 +57,12 @@ def normalized_dataset(state):
         if not v or v.get('qa_status')!='ACCEPTED': continue
         def snapshot(version,observed):
             p=version['payload']
+            extra_keys={'sku','source_new_label','condition_label','condition_identity','displayed_saving_raw','ambiguous_commercial_values','record_kind','original_capture_time','capture_page_url','unit_price_evidence'}
+            enriched=[]
+            for item in items.get(version['id'],[]):
+                metadata_key=json.dumps([item.get('product_url'),item.get('tab_title') or ''],ensure_ascii=False,separators=(',',':'))
+                meta=(p.get('item_metadata') or {}).get(metadata_key,{})
+                enriched.append({**item,**{k:v for k,v in meta.items() if k in extra_keys}})
             lineage=version['extractor_version'];operator=p.get('capture_provenance') or {}
             if operator.get('capture_method')=='OPERATOR_BROWSER_CAPTURE':
                 # Regionless captures cannot establish comparable price history.
@@ -67,7 +73,7 @@ def normalized_dataset(state):
                     'valid_from':p.get('valid_from'),'valid_to':p.get('valid_to'),'text':p.get('normalized_text',''),
                     'campaign_in_news':(p.get('campaign_evidence') or {}).get('current_campaign_in_news') is True,
                     'capture_provenance':p.get('capture_provenance'),
-                    'items':items.get(version['id'],[]),'item_scope_complete':p.get('item_scope_complete') is True,
+                    'items':enriched,'content_kind':p.get('content_kind') or p['page_type'],'campaign_coverage':p.get('campaign_coverage'),'item_scope_complete':p.get('item_scope_complete') is True,
                     'source_discovery_complete':p.get('source_discovery_complete') is True,
                     'mechanics':p.get('commercial_mechanics') or p.get('mechanics') or [],'scope_key':p.get('scope_key'), 'qa_status':version.get('qa_status')}
         current.append(snapshot(v,page['last_seen_at']))

@@ -1,6 +1,88 @@
 {
- "stanki_ru":{"name":"КАМИ / stanki.ru","base_url":"https://www.stanki.ru/","hosts":["www.stanki.ru","stanki.ru"],"homepage_commercial":true},
- "jet_online":{"name":"JET / Станкогрупп","base_url":"https://jet-online.ru/","hosts":["jet-online.ru","www.jet-online.ru"],"suggested":"/special_offers/","homepage_commercial":true},
- "youmet":{"name":"YouMet","base_url":"https://youmet.ru/","hosts":["youmet.ru","www.youmet.ru"],"homepage_commercial":true},
- "titaniumgroup":{"name":"Titanium Group","base_url":"https://titaniumgroup.ru/","hosts":["titaniumgroup.ru","www.titaniumgroup.ru"],"homepage_commercial":true}
+  "stanki_ru": {
+    "name": "КАМИ / stanki.ru",
+    "base_url": "https://www.stanki.ru/",
+    "hosts": [
+      "www.stanki.ru",
+      "stanki.ru"
+    ],
+    "homepage_commercial": true
+  },
+  "jet_online": {
+    "name": "JET / Станкогрупп",
+    "base_url": "https://jet-online.ru/",
+    "hosts": [
+      "jet-online.ru",
+      "www.jet-online.ru"
+    ],
+    "suggested": "/special_offers/",
+    "homepage_commercial": true
+  },
+  "youmet": {
+    "name": "YouMet",
+    "base_url": "https://youmet.ru/",
+    "hosts": [
+      "youmet.ru",
+      "www.youmet.ru"
+    ],
+    "homepage_commercial": true
+  },
+  "titaniumgroup": {
+    "name": "Titanium Group",
+    "base_url": "https://titaniumgroup.ru/",
+    "hosts": [
+      "titaniumgroup.ru",
+      "www.titaniumgroup.ru"
+    ],
+    "homepage_commercial": true
+  },
+  "jettools_ru": {
+    "name": "JETTools / jettools.ru",
+    "base_url": "https://www.jettools.ru/",
+    "hosts": [
+      "www.jettools.ru",
+      "jettools.ru"
+    ],
+    "operator_urls": [
+      "https://www.jettools.ru/catalog/new/"
+    ]
+  },
+  "rustan": {
+    "name": "РуСтан",
+    "base_url": "https://rustan.ru/",
+    "hosts": [
+      "rustan.ru",
+      "www.rustan.ru"
+    ],
+    "operator_urls": [
+      "https://rustan.ru/articles"
+    ]
+  },
+  "belmash": {
+    "name": "BELMASH",
+    "base_url": "https://belmash.ru/",
+    "hosts": [
+      "belmash.ru",
+      "www.belmash.ru"
+    ],
+    "operator_urls": []
+  },
+  "harvey_rus": {
+    "name": "Harvey / harvey-rus.ru",
+    "base_url": "https://harvey-rus.ru/",
+    "hosts": [
+      "harvey-rus.ru",
+      "www.harvey-rus.ru"
+    ],
+    "operator_urls": []
+  },
+  "amur_stan": {
+    "name": "Амур-Стан",
+    "base_url": "https://amur-stan.ru/",
+    "hosts": [
+      "amur-stan.ru",
+      "www.amur-stan.ru"
+    ],
+    "operator_urls": []
+  }
 }

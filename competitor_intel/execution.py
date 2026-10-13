@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import json, logging, os, time, uuid
 from logging.handlers import RotatingFileHandler
 
-SOURCES={'kuvalda_nnov','metalmaster','jet_online','stanki_ru','titaniumgroup','youmet'}
+SOURCES={'kuvalda_nnov','metalmaster','jet_online','stanki_ru','titaniumgroup','youmet','jettools_ru','rustan','belmash','harvey_rus','amur_stan'}
 ORIGINS={'OPERATOR_UI','CLI_MANUAL','SCHEDULED'}
 EXIT_CODES={'COMPLETED':0,'PARTIAL':1,'FAILED':2,'SKIP_ALREADY_RUNNING':3,'CONFIG_ERROR':4}
 ROOT=Path(__file__).resolve().parents[1]
@@ -78,6 +78,7 @@ def run_competitor_collection(repository,collector,rebuild,*,origin,config,runti
                 run_id=repository.start(date.fromisoformat(config['since']),result);result['run_id']=run_id
                 atomic_json(runtime/'last-run.json',result);logger.info('run=%s origin=%s start',run_id,origin)
                 enabled=repository.enabled_sources()
+                repository.collection_options=config.get('targets',{})
                 for source in selected:
                     if source not in enabled:result['sources'][source]={'status':'SKIPPED_DISABLED'};continue
                     if clock()>=deadline:

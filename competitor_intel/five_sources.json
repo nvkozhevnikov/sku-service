@@ -1,0 +1,7 @@
+{
+  "jettools_ru": {"name":"JETTools / jettools.ru","base_url":"https://www.jettools.ru/","hosts":["www.jettools.ru","jettools.ru"],"operator_urls":["https://www.jettools.ru/catalog/new/"]},
+  "rustan": {"name":"РуСтан","base_url":"https://rustan.ru/","hosts":["rustan.ru","www.rustan.ru"],"operator_urls":["https://rustan.ru/articles"]},
+  "belmash": {"name":"BELMASH","base_url":"https://belmash.ru/","hosts":["belmash.ru","www.belmash.ru"],"operator_urls":[]},
+  "harvey_rus": {"name":"Harvey / harvey-rus.ru","base_url":"https://harvey-rus.ru/","hosts":["harvey-rus.ru","www.harvey-rus.ru"],"operator_urls":[]},
+  "amur_stan": {"name":"Амур-Стан","base_url":"https://amur-stan.ru/","hosts":["amur-stan.ru","www.amur-stan.ru"],"operator_urls":[]}
+}

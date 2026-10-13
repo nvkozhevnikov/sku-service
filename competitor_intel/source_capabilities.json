@@ -1,11 +1,95 @@
 {
   "schema_version": 1,
   "sources": {
-    "kuvalda_nnov": ["PROMOTIONS", "NEWS", "SALE_PRODUCTS", "HOMEPAGE_BLOCKS", "PRODUCT_PRICES", "CAMPAIGN_DATES", "PRODUCT_DETAIL"],
-    "metalmaster": ["PROMOTIONS", "NEWS", "SALE_PRODUCTS", "HOMEPAGE_BLOCKS", "PRODUCT_PRICES", "CAMPAIGN_DATES"],
-    "stanki_ru": ["PROMOTIONS", "NEWS", "SALE_PRODUCTS", "HOMEPAGE_BLOCKS", "PRODUCT_PRICES", "HISTORICAL_SEED", "PRODUCT_DETAIL"],
-    "jet_online": ["PROMOTIONS", "NEWS", "SALE_PRODUCTS", "HOMEPAGE_BLOCKS", "PRODUCT_PRICES", "PRODUCT_DETAIL"],
-    "youmet": ["PROMOTIONS", "NEWS", "BLOG", "SALE_PRODUCTS", "HOMEPAGE_BLOCKS", "PRODUCT_PRICES", "PRODUCT_DETAIL"],
-    "titaniumgroup": ["PROMOTIONS", "NEWS", "BLOG", "SALE_PRODUCTS", "HOMEPAGE_BLOCKS", "PRODUCT_PRICES", "PRODUCT_DETAIL"]
+    "kuvalda_nnov": [
+      "PROMOTIONS",
+      "NEWS",
+      "SALE_PRODUCTS",
+      "HOMEPAGE_BLOCKS",
+      "PRODUCT_PRICES",
+      "CAMPAIGN_DATES",
+      "PRODUCT_DETAIL"
+    ],
+    "metalmaster": [
+      "PROMOTIONS",
+      "NEWS",
+      "SALE_PRODUCTS",
+      "HOMEPAGE_BLOCKS",
+      "PRODUCT_PRICES",
+      "CAMPAIGN_DATES"
+    ],
+    "stanki_ru": [
+      "PROMOTIONS",
+      "NEWS",
+      "SALE_PRODUCTS",
+      "HOMEPAGE_BLOCKS",
+      "PRODUCT_PRICES",
+      "HISTORICAL_SEED",
+      "PRODUCT_DETAIL"
+    ],
+    "jet_online": [
+      "PROMOTIONS",
+      "NEWS",
+      "SALE_PRODUCTS",
+      "HOMEPAGE_BLOCKS",
+      "PRODUCT_PRICES",
+      "PRODUCT_DETAIL"
+    ],
+    "youmet": [
+      "PROMOTIONS",
+      "NEWS",
+      "BLOG",
+      "SALE_PRODUCTS",
+      "HOMEPAGE_BLOCKS",
+      "PRODUCT_PRICES",
+      "PRODUCT_DETAIL"
+    ],
+    "titaniumgroup": [
+      "PROMOTIONS",
+      "NEWS",
+      "BLOG",
+      "SALE_PRODUCTS",
+      "HOMEPAGE_BLOCKS",
+      "PRODUCT_PRICES",
+      "PRODUCT_DETAIL"
+    ],
+    "jettools_ru": [
+      "NEWS",
+      "PROMOTIONS",
+      "SALE_PRODUCTS",
+      "PRODUCT_PRICES",
+      "SOURCE_NOVELTIES"
+    ],
+    "rustan": [
+      "BLOG",
+      "PROMOTIONS",
+      "PRODUCT_PRICES"
+    ],
+    "belmash": [
+      "NEWS",
+      "BLOG",
+      "EVENT",
+      "MODERNIZATION",
+      "CONTENT",
+      "NEW_PRODUCT_ANNOUNCEMENT",
+      "PROMOTIONS",
+      "PRODUCT_PRICES",
+      "SOURCE_NOVELTIES"
+    ],
+    "harvey_rus": [
+      "BLOG",
+      "PROMOTIONS",
+      "SALE_PRODUCTS",
+      "PRODUCT_PRICES",
+      "SOURCE_NOVELTIES",
+      "OUTLET"
+    ],
+    "amur_stan": [
+      "NEWS",
+      "BLOG",
+      "PROMOTIONS",
+      "PRODUCT_PRICES",
+      "SOURCE_NOVELTIES"
+    ]
   }
 }

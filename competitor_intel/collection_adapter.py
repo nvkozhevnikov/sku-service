@@ -23,6 +23,9 @@ class Repository:
         with self.store.conn.transaction(),self.store.conn.cursor() as c:c.execute('UPDATE competitor_runs SET status=%s,finished_at=now(),result=%s WHERE id=%s',(result['status'],Jsonb(json_value(result)),run))
 
 def collect_source(repo,code,run,since,output,max_pages,deadline):
+    if code in ('jettools_ru','rustan','belmash','harvey_rus','amur_stan'):
+        from .five_source_runner import collect_baseline
+        return collect_baseline(repo,code,run,since,output,max_pages,deadline)
     if code=='youmet':return {'status':'MANUAL_PENDING','reason':'OPERATOR_HTML_REQUIRED','HTTP_GETs':0,'stored':0}
     configs=json.loads(Path(__file__).with_name('new_sources.json').read_text(encoding='utf-8'))
     cfg=configs.get(code) or {**SOURCES[code],'hosts':[urlsplit(SOURCES[code]['base_url']).netloc]}
