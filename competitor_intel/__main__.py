@@ -12,6 +12,11 @@ def main():
     p = argparse.ArgumentParser(description='Изолированный мониторинг конкурентов; AI disabled by default')
     p.add_argument('--dev-config',type=Path,help='Ignored local JSON with dedicated DB dsn; otherwise COMPETITOR_INTEL_DSN')
     sub = p.add_subparsers(dest='command',required=True)
+    for command in ('collect','run-scheduled'):
+        sc=sub.add_parser(command,help='Unified bounded collection; no timer activation')
+        sc.add_argument('--schedule-config',type=Path)
+        sc.add_argument('--source',action='append',choices=['kuvalda_nnov','metalmaster','jet_online','stanki_ru','titaniumgroup','youmet'])
+        sc.add_argument('--max-pages',type=int)
     sub.add_parser('init-db')
     c = sub.add_parser('crawl'); group=c.add_mutually_exclusive_group(required=True)
     group.add_argument('--source',choices=SOURCES); group.add_argument('--all',action='store_true')
@@ -32,6 +37,17 @@ def main():
     o.add_argument('--output',type=Path,default=Path('reports/YOUMET_OPERATOR_CAPTURES'))
     o.add_argument('--report-output',type=Path,default=None)
     args = p.parse_args()
+    if args.command in ('collect','run-scheduled','crawl'):
+        from .execution import CollectionService
+        try:
+            if args.command=='crawl' and (args.browser or args.since!=date(2026,9,1) or args.through!=date.today()):raise ValueError('Legacy options not supported; use documented collect configuration')
+            selection=([args.source] if args.source else None) if args.command=='crawl' else args.source
+            result=CollectionService(args.dev_config,getattr(args,'schedule_config',None)).run('SCHEDULED' if args.command=='run-scheduled' else 'CLI_MANUAL',selection,args.max_pages)
+        except (ValueError,KeyError,FileNotFoundError,json.JSONDecodeError):
+            result={'status':'CONFIG_ERROR','exit_code':4}
+        except Exception:
+            result={'status':'FAILED','exit_code':2,'reason':'EXECUTION_UNAVAILABLE'}
+        print(json.dumps(result,ensure_ascii=False,default=str));return result['exit_code']
     dsn = json.loads(args.dev_config.read_text(encoding='utf-8'))['dsn'] if args.dev_config else None
     store = Store(dsn)
     try:
@@ -69,4 +85,4 @@ def main():
         print(json.dumps(result,ensure_ascii=False,default=str))
     finally: store.close()
 
-if __name__=='__main__': main()
+if __name__=='__main__': raise SystemExit(main())

@@ -113,7 +113,7 @@ def filters_from_request(request: Request, *, forced_decision: str = "") -> Prod
 
 def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None,
                session_secret: str | None = None, auth_required: bool | None = None,
-               commercial_qa_service=None) -> FastAPI:
+               commercial_qa_service=None, competitor_service=None, competitor_collection=None) -> FastAPI:
     injected = store is not None; config = None
     if store is None:
         if os.environ.get("CONTROL_PLANE_DEMO_SNAPSHOT") == "YES":
@@ -141,6 +141,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     app.state.store = store; app.state.queue = queue; app.state.admin_store = admin_store; app.state.stage6e_service = stage6e_service
     app.state.auth_required = auth_required; app.state.direct_crawl_executions = 0
     app.state.commercial_qa_service = commercial_qa_service
+    app.state.competitor_monitoring_available=competitor_service is not None
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE / "templates")
     templates.env.filters["ru"] = russian_label
@@ -152,7 +153,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     def current_user(request: Request):
         data = payload(request)
         if not data: return None
-        if not auth_required: return AuthUser(0, "test", "Тестовый администратор", "ADMIN")
+        if not auth_required:
+            return AuthUser(0,'local','Локальный просмотр','VIEWER') if getattr(type(store),'local_monitoring_review',False) else AuthUser(0, "test", "Тестовый администратор", "ADMIN")
         user = admin_store.user_by_id(int(data["uid"]))
         return user if user and user.is_active and user.role == data.get("role") else None
     def guard(request: Request, roles: set[str] | None = None):
@@ -167,14 +169,23 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         data = payload(request)
         read_only_source = bool(getattr(type(store), "read_only", False))
         return {"request": request, "current_user": current_user(request), "csrf_token": data.get("csrf", "") if data else "",
-            "safety_banner": "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
+            "safety_banner": "ЛОКАЛЬНЫЙ ПРОСМОТР · ИЗМЕНЕНИЯ И ФОНОВЫЙ СБОР ВЫКЛЮЧЕНЫ" if getattr(type(store),'local_monitoring_review',False) else "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
+            "local_monitoring_review":getattr(type(store),'local_monitoring_review',False),
+            "fixture_preview":getattr(type(store),'fixture_preview',False),
             "commercial_qa_available": bool(getattr(commercial_qa_service, "enabled", False)),
             "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
             "control_plane_read_only": read_only_source, **values}
 
+    if competitor_service is not None:
+        app.state.monitoring_template_context=context
+        app.state.monitoring_templates=templates
+        from .competitor_ui import register_monitoring
+        register_monitoring(app, templates, context, guard, competitor_service,competitor_collection,check_csrf)
+
     @app.middleware("http")
     async def block_qa_source_writes(request: Request, call_next):
         allowed_posts = {"/login", "/logout", "/commercial-qa/runs"}
+        if competitor_collection is not None:allowed_posts.add('/competitor-monitoring/runs')
         if getattr(type(store), "read_only", False) and request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in allowed_posts:
             if request.url.path.startswith("/suppliers/") and request.url.path.endswith("/start") and commercial_qa_service.enabled:
                 return HTMLResponse(
@@ -842,7 +853,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     return app
 
 
-try:
-    app = create_app()
-except RuntimeError as error:
-    app = create_app(store=UnavailableControlPlaneStore(str(error)), queue=InMemoryJobQueue(), auth_required=False)
+if os.environ.get('CONTROL_PLANE_SKIP_DEFAULT_APP')=='YES':
+    app = None  # Explicit local factory launcher; no default supplier DB bootstrap.
+else:
+    try:
+        app = create_app()
+    except RuntimeError as error:
+        app = create_app(store=UnavailableControlPlaneStore(str(error)), queue=InMemoryJobQueue(), auth_required=False)

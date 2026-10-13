@@ -82,16 +82,29 @@ def test_auth_marker_without_amount_remains_auth_not_unknown():
 def test_cli_kuvalda_uses_corrected_public_policy(monkeypatch,capsys):
     import sys
     from competitor_intel import __main__ as cli
-    from competitor_intel import kuvalda_public_runner
+    from competitor_intel import execution
     calls=[]
-    class FakeStore:
-        def close(self): calls.append('closed')
-    monkeypatch.setattr(cli,'Store',lambda dsn:FakeStore())
-    monkeypatch.setattr(kuvalda_public_runner,'crawl_public',lambda *a,**k:(calls.append('public_policy') or {'status':'test'}))
+    class SharedService:
+        def __init__(self,*args):pass
+        def run(self,origin,sources,max_pages):
+            calls.append((origin,sources,max_pages));return {'status':'COMPLETED','exit_code':0}
+    monkeypatch.setattr(execution,'CollectionService',SharedService)
     monkeypatch.setattr(cli,'crawl',lambda *a,**k: (_ for _ in ()).throw(AssertionError('legacy robots-hard-block runner')))
     monkeypatch.setattr(sys,'argv',['competitor_intel','crawl','--source','kuvalda_nnov'])
-    cli.main()
-    assert calls==['public_policy','closed']
+    assert cli.main()==0
+    assert calls==[('CLI_MANUAL',['kuvalda_nnov'],45)]
+
+def test_shared_transport_keeps_robots_informational_for_public_kuvalda(tmp_path):
+    from competitor_intel.source_transport import SourceTransport
+    from types import SimpleNamespace
+    h=SourceTransport({'base_url':BASE,'hosts':['nnov.kuvalda.ru']},tmp_path,sleeper=lambda _:None)
+    html='<h1>Открытая акция</h1><p>Обычная публичная страница</p>'
+    def response(url,**kwargs):
+        raw='User-agent: *\nDisallow: /promo/\n' if url.endswith('robots.txt') else html
+        return SimpleNamespace(status_code=200,content=raw.encode(),text=raw,headers={},raise_for_status=lambda:None)
+    h.session.get=response
+    h.prepare();cap=h.get(BASE+'promo/')
+    assert h.robots_disallowed(BASE+'promo/') is True and cap.html==html and cap.transport=='HTTP'
 
 def test_optional_sitemap_warning_is_not_source_blocker():
     from competitor_intel.kuvalda_public_runner import public_run_status

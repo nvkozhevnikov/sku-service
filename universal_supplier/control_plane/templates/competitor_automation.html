@@ -1,0 +1,22 @@
+<section class="panel mon-section" aria-label="Сбор и расписание">
+<div class="spread"><h3>Ручной сбор и расписание</h3><span class="badge">Планировщик не подключён</span></div>
+<div class="mon-automation-grid">
+<div><h4>Ручной сбор</h4><p>{{'Сбор уже выполняется' if automation.running else 'Готов / доступен' if collection_available else 'Не подключён в режиме просмотра'}}</p>
+<small>Один последовательный запуск. Публичные страницы; YouMet ожидает operator HTML. Полные каталоги не обходятся.</small>
+<form method="post" action="/competitor-monitoring/runs" class="mon-run-form">
+<input type="hidden" name="csrf_token" value="{{csrf_token}}">
+<label>Источник<select name="source"><option value="">Все включённые источники</option>{% for code in automation.config.selected_sources %}<option value="{{code}}">{% for src in monitoring.sources if src.code==code %}{{src.name}}{% endfor %}</option>{% endfor %}</select></label>
+<label>Лимит страниц на источник<input name="max_pages" type="number" min="1" max="{{automation.config.max_pages_per_source}}" value="{{automation.config.max_pages_per_source}}"></label>
+<button {{'disabled' if not collection_available or automation.running}}>Запустить ручной сбор</button>
+</form>
+<p>Последний ручной запуск: {% if automation.manual %}{{automation.manual.started_at|monitor_time}} · {{{'COMPLETED':'Завершён','PARTIAL':'Выполнен частично','FAILED':'Ошибка','CONFIG_ERROR':'Ошибка настройки'}.get(automation.manual.status,automation.manual.status)}}{% else %}Никогда{% endif %}</p>
+</div>
+<div><h4>Автоматический сбор</h4><p><span class="badge">Подготовлен · не подключён</span></p>
+<p>Подготовленное расписание: ежедневно, {{automation.config.time_of_day}} · {{automation.config.timezone}}</p>
+<p>Последний автоматический запуск: {% if automation.scheduled %}{{automation.scheduled.started_at|monitor_time}} · {{automation.scheduled.status}}{% else %}Никогда{% endif %}</p>
+<p>Следующий запуск: Планировщик не подключён</p>
+<button disabled>Автоматический запуск будет доступен после подключения планировщика</button>
+<p class="muted">{{'Расписание выключено.' if not automation.config.enabled else 'Расписание настроено, планировщик не подключён.'}} Подключение планировщика выполняется только после отдельного разрешения.</p>
+</div></div>
+{% if automation.last %}<details><summary>Итог последнего запуска</summary><p>Run {{automation.last.run_id or '—'}} · {{automation.last.status}} · {{automation.last.origin}}</p>{% for code,state in automation.last.sources.items() %}<p>{{code}} · {{state.status}}{% if state.reason %} · {{state.reason}}{% endif %}</p>{% endfor %}</details>{% endif %}
+</section>
