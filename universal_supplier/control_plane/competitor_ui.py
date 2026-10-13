@@ -4,7 +4,7 @@ from fastapi import Request,HTTPException
 from fastapi.responses import JSONResponse
 from competitor_intel.monitoring import MonitoringUnavailable,money_display,stamp
 
-TABS=[('overview','Обзор'),('changes','Изменения'),('prices','Цены'),('promotions','Акции'),('assortment','Ассортимент'),('sources','Источники')]
+TABS=[('overview','Обзор'),('changes','Изменения'),('prices','Цены'),('promotions','Акции'),('news','Новости'),('assortment','Ассортимент'),('sources','Источники')]
 
 def register_monitoring(app,templates,context,guard,service,collection=None,check_csrf=None):
     templates.env.filters['monitor_money']=money_display
@@ -17,9 +17,10 @@ def register_monitoring(app,templates,context,guard,service,collection=None,chec
         except MonitoringUnavailable:error='База мониторинга сейчас недоступна. Остальные разделы приложения продолжают работать. Проверьте локальное подключение и повторите просмотр.'
         except ValueError as e:error=str(e)
         def link(page):return '/competitor-monitoring/'+tab+'?'+urlencode({**dict(request.query_params),'page':page})
+        def content_link(kind):return '/competitor-monitoring/news?'+urlencode({**dict(request.query_params),'content_type':kind,'page':1})
         from competitor_intel.execution import settings
         automation=collection.view() if collection else {'config':settings(),'last':None,'running':False,'manual':None,'scheduled':None,'installed':False,'next_run_at':None}
-        return templates.TemplateResponse(request,'competitor_monitoring.html',context(request,title='Мониторинг конкурентов',active='competitor_monitoring',monitoring_available=True,monitoring=view,monitoring_error=error,monitor_tabs=TABS,monitor_page_link=link,collection_available=collection is not None,automation=automation))
+        return templates.TemplateResponse(request,'competitor_monitoring.html',context(request,title='Мониторинг конкурентов',active='competitor_monitoring',monitoring_available=True,monitoring=view,monitoring_error=error,monitor_tabs=TABS,monitor_page_link=link,monitor_content_link=content_link,collection_available=collection is not None,automation=automation))
     @app.post('/competitor-monitoring/runs')
     async def collect(request:Request):
         if collection is None:raise HTTPException(403,'Ручной сбор не подключён в read-only preview')

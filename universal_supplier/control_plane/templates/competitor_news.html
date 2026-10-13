@@ -1,0 +1,21 @@
+<nav class="mon-content-tabs" aria-label="Тип материалов">
+{% for key,label in [('ALL','Все'),('NEWS','Новости'),('BLOG','Статьи / блог')] %}<a class="{{'active' if m.query.get('content_type','ALL')==key}}" href="{{monitor_content_link(key)}}">{{label}}</a>{% endfor %}
+</nav>
+<form class="filters mon-filters mon-news-filters" method="get">
+<label>Конкурент<select name="source"><option value="">Все с поддержкой материалов</option>{% for s in m.content_sources %}<option value="{{s.code}}" {{'selected' if m.query.get('source')==s.code}}>{{s.name}}</option>{% endfor %}</select></label>
+<label>Период<select name="period"><option value="all" {{'selected' if m.query.get('period','all')=='all'}}>Все сохранённые</option><option value="7" {{'selected' if m.query.get('period')=='7'}}>7 дней</option><option value="30" {{'selected' if m.query.get('period')=='30'}}>30 дней</option><option value="custom" {{'selected' if m.query.get('period')=='custom'}}>Произвольный</option></select></label>
+<label class="mon-custom-date" {{'hidden' if m.query.get('period')!='custom'}}>С<input type="date" name="from" value="{{m.query.get('from','')}}" {{'disabled' if m.query.get('period')!='custom'}}></label>
+<label class="mon-custom-date" {{'hidden' if m.query.get('period')!='custom'}}>По<input type="date" name="to" value="{{m.query.get('to','')}}" {{'disabled' if m.query.get('period')!='custom'}}></label>
+<label>Тип<select name="content_type">{% for key,label in [('ALL','Все'),('NEWS','Новости'),('BLOG','Статьи / блог')] %}<option value="{{key}}" {{'selected' if m.query.get('content_type','ALL')==key}}>{{label}}</option>{% endfor %}</select></label>
+<label class="mon-search">Поиск<input name="search" value="{{m.query.get('search','')}}" placeholder="Заголовок или текст"></label>
+<label class="mon-only-new"><input type="checkbox" name="only_new" value="1" {{'checked' if m.query.get('only_new')=='1'}}> Только новые</label>
+<button>Показать</button>{% if m.query %}<a class="mon-reset" href="/competitor-monitoring/news">Сбросить</a>{% endif %}
+</form>
+<p class="muted">Новости и статьи показаны отдельно по типу. NEW / CHANGED — только из реальных событий; первый снимок не считается новой новостью. При неизвестной дате публикации используется дата наблюдения.</p>
+<div class="mon-news-list">{% for n in m.rows %}
+<article class="panel mon-news-card" data-content-type="{{n.content_type}}">
+<div class="spread"><div class="mon-news-meta"><b>{{n.source_name}}</b><span class="badge {{'mon-blog-badge' if n.content_type=='BLOG'}}">{{'NEWS · Новость' if n.content_type=='NEWS' else 'BLOG / ARTICLE · Статья / блог'}}</span>{% if n.indicator %}<span class="badge mon-content-event">{{n.indicator}}</span>{% endif %}</div><small>{{n.published_at or 'Дата публикации не указана'}}</small></div>
+<h3><a href="{{n.url}}" target="_blank" rel="noopener noreferrer">{{n.title}}</a></h3><p>{{n.excerpt}}</p>
+<div class="mon-news-footer"><small>Наблюдалось: {{n.observed_at|monitor_time}}</small><a href="{{n.url}}" target="_blank" rel="noopener noreferrer">Открыть материал {{icon('external-link')}}</a></div>
+<details><summary>Канонический URL</summary><a class="mon-url" href="{{n.url}}" target="_blank" rel="noopener noreferrer">{{n.url}}</a></details>
+</article>{% else %}<div class="panel empty">{{icon('newspaper')}}<b>Материалов по выбранным фильтрам нет</b><p>Выберите другой период или тип материала.</p></div>{% endfor %}</div>

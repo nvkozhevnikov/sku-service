@@ -7,7 +7,7 @@ import json,time,math
 from zoneinfo import ZoneInfo
 from .store import Store,json_value
 from .business_data import normalized_dataset
-from .business_report import build_facts
+from .business_report import build_facts,safe_url
 
 LABELS={'PRICE_DECREASE':'Цена снизилась','PRICE_INCREASE':'Цена выросла','NEW_PRODUCT_OBSERVED':'Новый товар','NEW_CAMPAIGN_PRODUCT':'Новый товар в акции','PRODUCT_DISAPPEARED_FROM_CURRENT_CAMPAIGN':'Товар исчез из акции','CAMPAIGN_PRODUCT_REMOVED':'Товар удалён из акции','NEW_PROMOTION':'Новая акция','PROMOTION_CHANGED':'Акция изменилась','PROMOTION_ENDING_SOON':'Акция скоро заканчивается','PROMOTION_ENDED':'Акция завершена','NEW_NEWS':'Новость','NEWS_CHANGED':'Материал обновился','PRICE_REVIEW':'Цена требует проверки','PRICE_SEMANTICS_CHANGED':'Изменились условия цены'}
 TYPES={'down':{'PRICE_DECREASE'},'up':{'PRICE_INCREASE'},'new':{'NEW_PRODUCT_OBSERVED','NEW_CAMPAIGN_PRODUCT'},'promotion':{'NEW_PROMOTION','PROMOTION_CHANGED','PROMOTION_ENDING_SOON','PROMOTION_ENDED'},'news':{'NEW_NEWS','NEWS_CHANGED'}}
@@ -84,7 +84,13 @@ def state_facts(state,now):
             all_events.extend(e for e in f['events'] if e['event_type']!='BASELINE_OBSERVATION');all_products+=f['products']
             all_promotions.extend(p for p in f['promotions'] if kinds[p['url']] in ('PROMOTION','CAMPAIGN'))
             news_offers.extend(p for p in f['promotions'] if kinds[p['url']]=='NEWS')
-            all_news+=f['news'];all_blog+=f['blog']
+            content_by_url={n['url']:n for n in f['news']+f['blog']}
+            for snapshot in ds['current']:
+                if snapshot['page_type'] not in ('NEWS','BLOG'):continue
+                body=snapshot.get('text','')
+                item=content_by_url.get(snapshot['entity']) or {'source':snapshot['source'],'title':snapshot['title'],'url':safe_url(snapshot['entity']),
+                    'published_at':snapshot.get('published_at'),'excerpt':' '.join(body.split())[:360],'observed_at':snapshot['observed_at']}
+                (all_news if snapshot['page_type']=='NEWS' else all_blog).append({**item,'search_text':body})
             s['comparable']=f['summary']['comparable_entities']>0
         except Exception:
             s={**src,'pages':0,'products':None,'latest_observed_at':None,'comparable':False,'promotions':0};problems[src['code']]='Данные источника требуют проверки';s['data_error']=True
@@ -113,14 +119,40 @@ class MonitoringService:
                 self.cached=state_facts(self.repository.load(),self.clock());self.expires=time.monotonic()+30
             return self.cached
     def view(self,tab,query):
-        now=self.clock();period=query.get('period','7');days={'today':1,'7':7,'30':30}.get(period,7)
+        now=self.clock();period=query.get('period','all' if tab=='news' else '7');days={'today':1,'7':7,'30':30}.get(period,7)
         try:
             start=datetime.fromisoformat(query['from']).replace(tzinfo=now.tzinfo) if period=='custom' else (now-timedelta(days=days-1)).replace(hour=0,minute=0,second=0,microsecond=0)
             end=datetime.fromisoformat(query['to']).replace(hour=23,minute=59,second=59,tzinfo=now.tzinfo) if period=='custom' else now
             page=max(1,int(query.get('page',1)))
-            if start>end or (end-start).days>366:raise ValueError()
+            if tab=='news' and period=='all':start=datetime(2026,9,1,tzinfo=now.tzinfo)
+            if start>end or period=='custom' and (end-start).days>366:raise ValueError()
         except (ValueError,KeyError):raise ValueError('Укажите корректный период (не более года).')
         f=self.facts();names={s['code']:s['name'] for s in f['sources']}
+        # Read projection only: reuse stored materials/capabilities and detector events.
+        caps={s['code']:set(s.get('capabilities',[])) for s in f['sources']}
+        indicators={}
+        for event in f['events']:
+            if event['event_type'] in ('NEW_NEWS','NEWS_CHANGED'):
+                key=(event['source'],event['entity']);when=stamp(event.get('observed_after') or event.get('observed_before'))
+                if when and when<=now and (key not in indicators or when>indicators[key][0]):indicators[key]=(when,'NEW' if event['event_type']=='NEW_NEWS' else 'CHANGED')
+        def material_time(value):
+            if not value:return None
+            try:
+                parsed=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+                return parsed.replace(tzinfo=now.tzinfo) if parsed.tzinfo is None else parsed.astimezone(now.tzinfo)
+            except ValueError:return None
+        materials=[]
+        for kind,entries in [('NEWS',f['news']),('BLOG',f['blog'])]:
+            for item in entries:
+                allowed=caps.get(item['source'],set())
+                if not (kind in allowed or kind=='BLOG' and allowed & {'ARTICLE','ARTICLES'}):continue
+                published=material_time(item.get('published_at'));observed=material_time(item.get('observed_at'));effective=published or observed
+                if not effective or effective>now:continue
+                signal=indicators.get((item['source'],item['url']))
+                materials.append({**item,'source_name':names[item['source']],'content_type':kind,'effective_at':effective,
+                    'indicator':signal[1] if signal and kind=='NEWS' else None,'indicator_at':signal[0] if signal and kind=='NEWS' else None})
+        materials.sort(key=lambda n:(n['effective_at'],material_time(n.get('observed_at')) or n['effective_at'],n['url']),reverse=True)
+        if tab=='news' and period=='all':start=min((n['effective_at'] for n in materials),default=now)
         def matches(row):return (not query.get('source') or row['source']==query['source']) and (not query.get('brand') or row.get('brand')==query['brand']) and (not query.get('search') or query['search'].casefold() in (row.get('product_name') or row.get('title') or '').casefold())
         events=[]
         for e in f['events']:
@@ -138,6 +170,14 @@ class MonitoringService:
             if s['mode']=='MANUAL' and not s['last_capture']:attention.append({'label':'Нужен ручной снимок','title':s['name'],'severity':'MEDIUM','severity_reason':'Первый публичный HTML ещё не предоставлен','entity':None})
             if s['status']=='ERROR':attention.append({'label':'Данные источника недоступны','title':s['name'],'severity':'CRITICAL','severity_reason':'Нет принятого снимка или ошибка чтения данных','entity':None})
         rows=events if tab=='changes' else [e for e in events if e['event_type'] in ('PRICE_DECREASE','PRICE_INCREASE')] if tab=='prices' else [p for p in f['promotions'] if matches(p)] if tab=='promotions' else []
+        if tab=='news':
+            kind=query.get('content_type','ALL').upper()
+            if kind not in ('ALL','NEWS','BLOG'):raise ValueError('Выберите тип материала: все, новости или статьи / блог.')
+            term=query.get('search','').casefold()
+            rows=[n for n in materials if start<=n['effective_at']<=end and
+                (not query.get('source') or n['source']==query['source']) and (kind=='ALL' or n['content_type']==kind) and
+                (query.get('only_new')!='1' or n['indicator']=='NEW' and n['indicator_at'] and start<=n['indicator_at']<=end) and
+                (not term or term in (n['title']+' '+n.get('search_text',n.get('excerpt',''))).casefold())]
         if tab=='prices':rows.sort(key=lambda e:abs(float(e.get('percent_delta') or 0)),reverse=True)
         if tab=='prices' and query.get('sort')=='amount':rows.sort(key=lambda e:float(e.get('absolute_delta') or 0),reverse=True)
         if tab=='prices' and query.get('sort')=='fresh':rows.sort(key=lambda e:e['when'],reverse=True)
@@ -152,5 +192,6 @@ class MonitoringService:
             total=len(assortment);pages=max(1,math.ceil(total/50));page=min(page,pages)
         return {'tab':tab,'now':now,'start':start,'end':end,'query':dict(query),'sources':source_cards,'attention':attention[:8],'rows':rows[(page-1)*50:page*50],'total':total,'page':page,'pages':pages,'brands':sorted({i['brand'] for i in f['products'] if i.get('brand')}),'assortment':assortment[(page-1)*50:page*50],
           'news':[n for n in f['news'] if n.get('published_at') and start.date()<=datetime.fromisoformat(n['published_at']).date()<=end.date()],'blog':[n for n in f['blog'] if n.get('published_at') and start.date()<=datetime.fromisoformat(n['published_at']).date()<=end.date()],
-          'last_update':max((s.get('latest_observed_at') for s in source_cards if s.get('latest_observed_at')),default=None),'baseline_only':not any(s['comparable'] for s in source_cards),'kpi':{'prices':counts['PRICE_DECREASE']+counts['PRICE_INCREASE'],'down':counts['PRICE_DECREASE'],'new_products':counts['NEW_PRODUCT_OBSERVED'],'new_promotions':counts['NEW_PROMOTION'],'attention':len(attention),'errors':sum(s['status']=='ERROR' for s in source_cards)},
+          'materials':materials[:8],'content_sources':[s for s in source_cards if caps.get(s['code'],set()) & {'NEWS','BLOG','ARTICLES'}],
+          'last_update':max((s.get('latest_observed_at') for s in source_cards if s.get('latest_observed_at')),default=None),'baseline_only':not any(s['comparable'] for s in source_cards),'kpi':{'prices':counts['PRICE_DECREASE']+counts['PRICE_INCREASE'],'down':counts['PRICE_DECREASE'],'new_products':counts['NEW_PRODUCT_OBSERVED'],'new_promotions':counts['NEW_PROMOTION'],'new_news':len({(e['source'],e['entity']) for e in events if e['event_type']=='NEW_NEWS' and any(n['content_type']=='NEWS' and n['source']==e['source'] and n['url']==e['entity'] for n in materials)}),'attention':len(attention),'errors':sum(s['status']=='ERROR' for s in source_cards)},
           'events_24h':sum(stamp(e.get('observed_after') or e.get('observed_before'))>=now-timedelta(hours=24) for e in f['events']),'events_7d':sum(stamp(e.get('observed_after') or e.get('observed_before'))>=now-timedelta(days=7) for e in f['events'])}
