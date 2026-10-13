@@ -71,18 +71,27 @@ class FullSupplierCollectionTests(unittest.TestCase):
                 "https://www.bekamak.com/urun/bmso-460c/en",
                 "https://www.bekamak.com/urun/opus-300/en",
                 "https://www.bekamak.com/urun/bmso-460c/tr"),
+            "https://vekprom.ru/sitemap.xml": xml("https://vekprom.ru/sitemap-iblock-1.xml", index=True),
+            "https://vekprom.ru/sitemap-iblock-1.xml": xml(
+                "https://vekprom.ru/catalog/lentochnopilnye-stanki-po-metallu/poluavtomaticheskiy-lentochnopilnyy-stanok-beka-mak-bmsy-440dgh/",
+                "https://vekprom.ru/catalog/lentochnopilnye-stanki-po-metallu/",
+                "https://vekprom.ru/brands/beka-mak/"),
         }
         client = FakeClient({url: HttpResponse(url, 200, "text/xml", body) for url, body in sources.items()})
         pacer = PublicPacer(sleep=lambda seconds: None)
         evidence = []
         result = discover_full_manifest(client=client, pacer=pacer, evidence_log=evidence)
-        self.assertEqual(len(result.candidates), 4)
-        self.assertEqual({item.source for item in result.candidates}, {"intervesp", "beka_mak", "beka_mak_tr"})
+        self.assertEqual(len(result.candidates), 5)
+        self.assertEqual({item.source for item in result.candidates},
+                         {"intervesp", "beka_mak", "beka_mak_tr", "vekprom"})
         self.assertIn("BMSY-440DGH-WP2", {item.expected_model for item in result.candidates})
         self.assertIn("OPUS-300", {item.expected_model for item in result.candidates})
+        vekprom_items = [item for item in result.candidates if item.source == "vekprom"]
+        self.assertEqual(len(vekprom_items), 1)
+        self.assertEqual(vekprom_items[0].expected_model, "")
         self.assertEqual(result.sha256, _candidate_sha(result.candidates))
-        self.assertEqual(len(client.calls), 5)
-        self.assertEqual(len(evidence), 5)
+        self.assertEqual(len(client.calls), 7)
+        self.assertEqual(len(evidence), 7)
         self.assertTrue(all(item["http_status"] == 200 and len(item["raw_sha256"]) == 64
                             for item in evidence))
 

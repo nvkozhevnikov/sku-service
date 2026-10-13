@@ -33,8 +33,9 @@ SUPPLIER_CONFIGS = {
     "beka_mak": ("Beka-Mak", "https://beka-mak.su/", "beka_mak"),
     "beka_mak_tr": ("Bekamak manufacturer reference", "https://www.bekamak.com/", "beka_mak_tr"),
     "kami": ("КАМИ", "https://www.stanki.ru/", "kami"),
+    "vekprom": ("Векпром", "https://vekprom.ru/", "vekprom"),
 }
-PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr", "kami"})
+PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr", "kami", "vekprom"})
 
 
 def should_quarantine_automatic_link(previous_auto_accepted: bool, new_status: str) -> bool:
