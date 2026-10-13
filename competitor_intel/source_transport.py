@@ -18,7 +18,11 @@ class SourceTransport(HttpTransport):
         return p.scheme=='https' and p.netloc in self.config['hosts'] and not p.username and not p.password and not re.match(r'^/(?:admin|bitrix/admin|wp-admin|auth|login|account|personal|api|cart|basket|order)(?:/|$)',path)
     def get(self,url,check_robots=True):
         cap=super().get(url,False)
-        cap.html=decode_public_html(Path(cap.raw_ref).read_bytes())
+        if urlsplit(cap.final_url).netloc in {'harvey-rus.ru','www.harvey-rus.ru'}:
+            from .harvey_decode import decode_harvey
+            cap.html,evidence=decode_harvey(Path(cap.raw_ref).read_bytes())
+            self.events[-1]['decoding_evidence']=evidence
+        else:cap.html=decode_public_html(Path(cap.raw_ref).read_bytes())
         return cap
     def prepare(self):
         url=self.config['base_url']+'robots.txt'
