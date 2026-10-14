@@ -101,9 +101,11 @@ def collect_source(repo,code,run,since,output,max_pages,deadline):
                     with repo.store.conn.transaction(),repo.store.conn.cursor() as c:
                         c.execute("UPDATE competitor_page_versions v SET qa_status='ACCEPTED' FROM competitor_pages p,competitor_sources s WHERE v.page_id=p.id AND p.source_id=s.id AND s.code=%s AND p.canonical_url=%s AND v.content_hash=%s",(code,page.canonical_url,page.content_hash()))
                 with repo.store.conn.transaction(),repo.store.conn.cursor() as c:
+                    # run_id/scope_complete describe this capture. Preserve
+                    # unrelated configuration and accumulated diagnostic keys.
                     c.execute('''INSERT INTO competitor_source_surfaces(source_id,canonical_url,surface_kind,title,status,robots_disallowed,fetch_status,evidence_class,reason,observed_at,raw_capture_ref,details)
                       SELECT id,%s,%s,%s,'LIVE_CRAWLED',%s,'PUBLIC_FETCH_OK','LIVE_CRAWLED','NORMAL_PUBLIC_HTTP_RESPONSE',%s,%s,%s FROM competitor_sources WHERE code=%s
-                      ON CONFLICT(source_id,canonical_url) DO UPDATE SET status=excluded.status,robots_disallowed=excluded.robots_disallowed,fetch_status=excluded.fetch_status,reason=excluded.reason,observed_at=excluded.observed_at,raw_capture_ref=excluded.raw_capture_ref''',
+                      ON CONFLICT(source_id,canonical_url) DO UPDATE SET status=excluded.status,robots_disallowed=excluded.robots_disallowed,fetch_status=excluded.fetch_status,reason=excluded.reason,observed_at=excluded.observed_at,raw_capture_ref=excluded.raw_capture_ref,details=competitor_source_surfaces.details || excluded.details''',
                       (page.canonical_url,kind,page.title,h.robots_disallowed(url),cap.fetched_at,cap.raw_ref,Jsonb({'run_id':run,'scope_complete':False}),code))
                 if code in SOURCES:
                     from .parser import discover
