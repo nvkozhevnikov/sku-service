@@ -138,7 +138,7 @@ def test_ui_post_uses_shared_service_and_refuses_cross_origin():
     class Controller:
         def __init__(self):self.calls=[]
         def view(self):return {'config':settings(),'last':None,'manual':None,'scheduled':None,'running':False}
-        def run(self,*args):self.calls.append(args);return {'status':'COMPLETED','exit_code':0}
+        def submit(self,*args):self.calls.append(args);return {'status':'STARTING','request_id':'fixture','exit_code':0}
     controller=Controller();app=create_app(store=ReadOnlyStore('fixture'),auth_required=False,competitor_service=service(),competitor_collection=controller)
     with TestClient(app) as c:
         response=c.post('/competitor-monitoring/runs',data={'source':'metalmaster','max_pages':'1'},headers={'origin':'http://testserver'},follow_redirects=False)
@@ -150,7 +150,7 @@ def test_ui_duplicate_returns409():
     from tests.test_competitor_monitoring_ui import service,ReadOnlyStore
     from universal_supplier.control_plane.web import create_app
     class Controller:
-        def run(self,*args):return {'status':'SKIP_ALREADY_RUNNING','exit_code':3}
+        def submit(self,*args):return {'status':'SKIP_ALREADY_RUNNING','exit_code':3}
     with TestClient(create_app(store=ReadOnlyStore('fixture'),auth_required=False,competitor_service=service(),competitor_collection=Controller())) as c:
         response=c.post('/competitor-monitoring/runs',headers={'origin':'http://testserver'})
         assert response.status_code==409 and response.json()['message']=='Сбор уже выполняется'

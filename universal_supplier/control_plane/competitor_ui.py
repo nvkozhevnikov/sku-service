@@ -43,13 +43,24 @@ def register_monitoring(app,templates,context,guard,service,collection=None,chec
         if check_csrf:check_csrf(request,values)
         try:
             source=values.get('source') or None
-            result=await run_in_threadpool(collection.run,'OPERATOR_UI',[source] if source else None,int(values['max_pages']) if values.get('max_pages') else None)
+            result=await run_in_threadpool(collection.submit,'OPERATOR_UI',[source] if source else None,int(values['max_pages']) if values.get('max_pages') else None)
         except ValueError:raise HTTPException(400,'Некорректные параметры сбора')
         if result['status']=='SKIP_ALREADY_RUNNING':return JSONResponse({'status':result['status'],'message':'Сбор уже выполняется'},status_code=409)
+        if result['status']=='START_BLOCKED_ORPHAN':return JSONResponse({'status':result['status'],'message':'Незавершённый запуск требует проверки; новый сбор не начат'},status_code=409)
+        if result['status']=='FAILED' and not result.get('run_id'):return JSONResponse({'status':'FAILED','message':'Запуск независимого процесса завершился ошибкой'},status_code=503)
+        if 'application/json' in request.headers.get('accept',''):return JSONResponse({k:result.get(k) for k in ('status','request_id','run_id','origin','started_at')},status_code=202)
         # Clear only the read projection cache after completed persistence.
         if hasattr(service,'cached'):
             with service.lock:service.cached=None;service.expires=0
         return RedirectResponse('/competitor-monitoring/sources',status_code=303)
+    @app.get('/api/competitor-monitoring/run')
+    def run_status(request:Request):
+        guard(request)
+        if collection is None:raise HTTPException(403,'Сбор не подключён')
+        v=collection.view()
+        if (v.get('active') or {}).get('status') in ('COMPLETED','PARTIAL','FAILED') and hasattr(service,'cached'):
+            with service.lock:service.cached=None;service.expires=0
+        return JSONResponse({k:v.get(k) for k in ('last','active','running','worker_liveness','run_health')})
     @app.get('/competitor-monitoring')
     def overview(request:Request):return render(request,'overview')
     @app.get('/competitor-monitoring/{tab}')

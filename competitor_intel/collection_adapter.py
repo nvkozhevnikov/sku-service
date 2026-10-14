@@ -15,6 +15,7 @@ class Repository:
         self.store=Store(json.loads(Path(config).read_text(encoding='utf-8'))['dsn'] if config else None)
     def close(self):self.store.close()
     def enabled_sources(self):return {r['code'] for r in self.store.query('SELECT code FROM competitor_sources WHERE enabled=true')}
+    def running_runs(self):return self.store.query("SELECT id,status FROM competitor_runs WHERE status='RUNNING'")
     def start(self,since,result):
         run=self.store.run_start(since)
         with self.store.conn.transaction(),self.store.conn.cursor() as c:c.execute('UPDATE competitor_runs SET result=%s WHERE id=%s',(Jsonb(json_value(result)),run))

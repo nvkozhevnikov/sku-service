@@ -51,9 +51,14 @@ def execution_lock(directory):
 
 def atomic_json(path,value):
     path=Path(path);tmp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
-    tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2,default=str),encoding='utf-8');os.replace(tmp,path)
+    tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
+    for attempt in range(20):
+        try:os.replace(tmp,path);return
+        except PermissionError:
+            if os.name!='nt' or attempt==19:raise
+            time.sleep(.025)  # Windows readers may briefly deny delete sharing.
 
-def run_competitor_collection(repository,collector,rebuild,*,origin,config,runtime,selected_sources=None,max_pages=None,clock=time.monotonic):
+def run_competitor_collection(repository,collector,rebuild,*,origin,config,runtime,selected_sources=None,max_pages=None,clock=time.monotonic,request_id=None):
     """Dependency-injected only for QA; normal entry points supply the same adapters."""
     if origin not in ORIGINS:raise ValueError('Invalid origin')
     selected=config['selected_sources'] if selected_sources is None else selected_sources
@@ -64,10 +69,14 @@ def run_competitor_collection(repository,collector,rebuild,*,origin,config,runti
     runtime=Path(runtime)
     try:
         with execution_lock(runtime):
+            from .worker_dispatch import pending_blocks,process_identity,update_dispatch
+            if pending_blocks(runtime,request_id):return {'status':'SKIP_ALREADY_RUNNING','origin':origin,'exit_code':3}
             deadline=clock()+config['max_runtime']
             logger=logging.Logger('competitor.collection');logger.setLevel(logging.INFO);logger.propagate=False
             handler=RotatingFileHandler(runtime/'collection.log',maxBytes=config['log_max_bytes'],backupCount=config['log_backups'],encoding='utf-8');logger.addHandler(handler)
             result={'status':'RUNNING','origin':origin,'started_at':datetime.now(timezone.utc).isoformat(),'sources':{},'errors':[],'scheduler_enabled':config['enabled'],'pid':os.getpid()}
+            result['worker_identity']=process_identity(os.getpid())
+            if request_id:result['request_id']=request_id
             run_id=None
             try:
                 previous=runtime/'last-run.json'
@@ -77,6 +86,7 @@ def run_competitor_collection(repository,collector,rebuild,*,origin,config,runti
                         repository.finish(old['run_id'],{**old,'status':'FAILED','reason':'PROCESS_INTERRUPTED'})
                 run_id=repository.start(date.fromisoformat(config['since']),result);result['run_id']=run_id
                 atomic_json(runtime/'last-run.json',result);logger.info('run=%s origin=%s start',run_id,origin)
+                if request_id:update_dispatch(runtime,request_id,result)
                 enabled=repository.enabled_sources()
                 repository.collection_options=config.get('targets',{})
                 for source in selected:
@@ -91,6 +101,8 @@ def run_competitor_collection(repository,collector,rebuild,*,origin,config,runti
                         # Never print connection strings, request credentials or arbitrary exception messages.
                         result['sources'][source]={'status':'FAILED','reason':type(error).__name__};result['errors'].append({'source':source,'reason':type(error).__name__})
                     logger.info('run=%s source=%s status=%s',run_id,source,result['sources'][source]['status']);atomic_json(runtime/'last-run.json',result)
+                    result['updated_at']=datetime.now(timezone.utc).isoformat()
+                    if request_id:update_dispatch(runtime,request_id,result)
                 if not any(v['status']!='SKIPPED_DISABLED' for v in result['sources'].values()):raise ValueError('NO_ENABLED_SOURCES')
                 result['report']=rebuild(repository,runtime/'business-report',config)
                 statuses=[v['status'] for v in result['sources'].values()]
@@ -108,14 +120,26 @@ def run_competitor_collection(repository,collector,rebuild,*,origin,config,runti
                     try:
                         atomic_json(runtime/'last-run.json',result)
                         atomic_json(runtime/('scheduled-last.json' if origin=='SCHEDULED' else 'manual-last.json'),result)
+                        if request_id:update_dispatch(runtime,request_id,result)
                         logger.info('run=%s status=%s exit=%s',run_id,result['status'],result['exit_code'])
                     finally:handler.close();logger.removeHandler(handler)
             return result
     except AlreadyRunning:return {'status':'SKIP_ALREADY_RUNNING','origin':origin,'exit_code':3}
 
 class CollectionService:
-    def __init__(self,dev_config=None,schedule_config=None,runtime=None):
+    def __init__(self,dev_config=None,schedule_config=None,runtime=None,*,fixture_spec=None):
         self.dev_config=dev_config;self.schedule_config=schedule_config;self.runtime=Path(runtime or ROOT/'competitor-data/collection')
+        self.fixture_spec=Path(fixture_spec).resolve() if fixture_spec else None
+        if self.fixture_spec and (self.runtime.resolve()==(ROOT/'competitor-data/collection').resolve() or self.fixture_spec.parent!=self.runtime.resolve()):raise ValueError('Fixture backend must be isolated')
+    def repository(self):
+        if self.fixture_spec:
+            from scripts.qa_competitor_worker_backend import FixtureRepository
+            return FixtureRepository(self.fixture_spec)
+        from .collection_adapter import Repository
+        return Repository(self.dev_config)
+    def submit(self,origin,selected_sources=None,max_pages=None):
+        from .worker_dispatch import submit
+        return submit(self,origin,selected_sources,max_pages)
     def view(self):
         cfg=settings(self.schedule_config);p=self.runtime/'last-run.json';last=json.loads(p.read_text(encoding='utf-8')) if p.exists() else None
         try:
@@ -124,12 +148,22 @@ class CollectionService:
         history={}
         for kind in ('manual','scheduled'):
             path=self.runtime/(kind+'-last.json');history[kind]=json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
-        return {'config':cfg,'last':last,'running':running,**history,'next_run_at':None,'installed':False}
-    def run(self,origin,selected_sources=None,max_pages=None):
+        from .worker_dispatch import dispatch_state,pending_blocks,liveness
+        dispatch=dispatch_state(self.runtime)
+        running=running or pending_blocks(self.runtime)
+        identity=(last or {}).get('worker_identity') if (last or {}).get('status')=='RUNNING' else (dispatch or {}).get('worker_identity') or (dispatch or {}).get('launcher_identity')
+        worker_state=liveness(identity)
+        active=dispatch if dispatch and not dispatch.get('run_id') else last
+        health='ORPHANED' if active and active.get('status')=='RUNNING' and not running and worker_state in ('GONE','PID_REUSED') else 'UNKNOWN' if active and active.get('status')=='RUNNING' and (not running or worker_state!='ALIVE') else 'RUNNING' if running else 'TERMINAL'
+        return {'config':cfg,'last':last,'running':running,**history,'active':active,'worker_liveness':worker_state,'run_health':health,'dispatch':dispatch,'next_run_at':None,'installed':False}
+    def run(self,origin,selected_sources=None,max_pages=None,*,request_id=None):
         from .collection_adapter import Repository,collect_source,rebuild_report
         cfg=settings(self.schedule_config)
         if origin=='SCHEDULED' and not cfg['enabled']:return {'status':'CONFIG_ERROR','reason':'SCHEDULER_DISABLED','exit_code':4,'origin':origin}
-        repo=Repository(self.dev_config)
-        try:result=run_competitor_collection(repo,collect_source,rebuild_report,origin=origin,config=cfg,runtime=self.runtime,selected_sources=selected_sources,max_pages=max_pages)
+        if self.fixture_spec:
+            from scripts.qa_competitor_worker_backend import fixture_collector,fixture_rebuild
+            collect_source,rebuild_report=fixture_collector,fixture_rebuild
+        repo=self.repository()
+        try:result=run_competitor_collection(repo,collect_source,rebuild_report,origin=origin,config=cfg,runtime=self.runtime,selected_sources=selected_sources,max_pages=max_pages,request_id=request_id)
         finally:repo.close()
         return result

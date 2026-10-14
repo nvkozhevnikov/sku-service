@@ -1,3 +1,40 @@
+# Collection/UI lifetime handoff — CLOSED LOCALLY / REVIEW, 2026-10-14
+
+## PROBLEM
+REPOSITORY-VERIFIED: the old UI awaited synchronous collection inside Uvicorn.
+## CURRENT BEHAVIOR
+Local implementation now submits an independent one-shot worker. Persistent
+request/journal/DB run state and PID creation/executable evidence drive status.
+## EXPECTED BEHAVIOR
+Worker survives UI restart/browser close, with one shared collection lock.
+## WHAT WAS CHECKED
+Actual Windows UI/browser/worker processes, old UI30896/new UI25652,
+worker17976/run1; all survival/reconnect/duplicate/terminal checks PASS.
+254 testsPASS; real business DB fingerprints unchanged, zero competitor HTTP.
+## ROOT CAUSE
+Original UI/worker coupling=REPOSITORY-VERIFIED and locally fixed.
+Exact historical run30 PID termination trigger remains SUSPECTED.
+## REQUIRED CHANGES
+Implemented CollectionService.submit, one-shot worker, persistent admission
+reservation and process identity, status API, minimal existing-form/status UI.
+No duplicate adapters/change/report logic or daemon.
+## MUST NOT BREAK
+Eleven sources, decoder/content, baseline/price semantics, report, CLI,
+scheduled CLI, existing cross-process kernel lock and explicit orphan recovery.
+All existing244 assertions retained and ten control/process regressions added.
+## ACCEPTANCE CRITERIA
+Windows worker survives old UI stop; new UI sees same run; browser closes safely;
+UI/actual CLI/scheduled fixture duplicates rejected; worker finalizes; killed
+fixture worker stays an honest orphan without automatic restart.
+## VERIFICATION STEPS
+See docs/COMPETITOR_UI_WORKER_DECOUPLING_REPORT.md and
+reports/UI_WORKER_DECOUPLING_2026-10-14/OS_ACCEPTANCE.json,TEST_RESULT.xml.
+Controlled fixture backend is constructor-only, isolated from business runtime.
+No actual competitor HTTP/business writes. Schedulerfalse. No commit/push/merge/deploy.
+WAITING_FOR_OPERATOR_REVIEW / STOP.
+
+## Historical handoff — preserved incident evidence
+
 # Developer handoff: collection lifetime coupled to UI process
 
 ## PROBLEM
