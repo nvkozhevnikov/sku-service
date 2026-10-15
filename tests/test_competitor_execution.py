@@ -77,9 +77,10 @@ def test_configuration_fails_closed(patch,tmp_path):
     cfg=config();cfg.update(patch);path=tmp_path/'cfg.json';path.write_text(json.dumps(cfg))
     with pytest.raises((ValueError,KeyError)):settings(path)
 
-def test_scheduled_cli_disabled_noninteractive_exit4():
+def test_scheduled_cli_disabled_noninteractive_exit4(tmp_path):
     import subprocess
-    run=subprocess.run([sys.executable,'-m','competitor_intel','run-scheduled'],capture_output=True,text=True)
+    cfg=config();cfg['enabled']=False;path=tmp_path/'disabled-schedule.json';path.write_text(json.dumps(cfg))
+    run=subprocess.run([sys.executable,'-m','competitor_intel','run-scheduled','--schedule-config',str(path)],capture_output=True,text=True)
     assert run.returncode==4 and json.loads(run.stdout)['reason']=='SCHEDULER_DISABLED'
 
 def test_scheduled_cli_uses_service_origin(monkeypatch,capsys):

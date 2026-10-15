@@ -95,7 +95,7 @@ def test_surface_refresh_preserves_metadata_and_observation_history(isolated_sto
     with store.conn.transaction(), store.conn.cursor() as cursor:
         cursor.execute('TRUNCATE competitor_source_surfaces,competitor_runs,competitor_pages CASCADE')
     assert len(store.query('SELECT code FROM competitor_sources')) == 11
-    assert settings()['enabled'] is False
+    # Scheduler state is intentionally not asserted here: this regression must hold for both disabled and enabled repository schedules (repository-state coverage: tests/test_onboarding_gap_closure.py).
     observed = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
     def forbidden(*args, **kwargs):

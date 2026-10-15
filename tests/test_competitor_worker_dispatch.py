@@ -7,7 +7,7 @@ from competitor_intel.worker_dispatch import liveness,process_identity,load
 def fixture_service(path,**spec):
     path.mkdir(parents=True,exist_ok=True)
     (path/'fixture.json').write_text(json.dumps({'mode':'ISOLATED_FIXTURE_ONLY',**spec}),encoding='utf-8')
-    cfg=settings();cfg.update(selected_sources=['metalmaster'],max_runtime=30,max_pages_per_source=1)
+    cfg=settings();cfg.update(enabled=False,selected_sources=['metalmaster'],max_runtime=30,max_pages_per_source=1)
     (path/'schedule.json').write_text(json.dumps(cfg),encoding='utf-8')
     return CollectionService(None,path/'schedule.json',path,fixture_spec=path/'fixture.json')
 
