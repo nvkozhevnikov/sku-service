@@ -23,9 +23,10 @@ def test_deferred_article_not_news_and_initial_completion_not_new_event():
     s={'source':'amur_stan','entity':'https://amur-stan.ru/articles/a/','title':'Статья','page_type':'BLOG','version':'initial','extractor':'five-sources-1.2','observed_at':'2026-10-13T18:00:00Z','items':[]}
     assert not [e for e in detect_events({'history':[s],'coverage':[]},'2026-10-13') if e['event_type']!='BASELINE_OBSERVATION']
 
-def test_future_schedule_eleven_distinct_disabled():
-    cfg=settings();assert cfg['enabled'] is False and len(cfg['selected_sources'])==11
+def test_future_schedule_eleven_distinct_enabled():
+    cfg=settings();assert cfg['enabled'] is True and len(cfg['selected_sources'])==11
     assert set(cfg['selected_sources'])==SOURCES
+    assert cfg['timezone']=='Europe/Moscow' and cfg['time_of_day']=='08:00' and cfg['skip_if_running'] is True
 
 def test_deferred_category_context_and_harvey_outlet_detail():
     from scripts.close_competitor_onboarding_gaps import material_kind,harvey_page

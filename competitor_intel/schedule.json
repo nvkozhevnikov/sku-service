@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "timezone": "Europe/Moscow",
   "time_of_day": "08:00",
   "selected_sources": ["kuvalda_nnov", "metalmaster", "jet_online", "stanki_ru", "titaniumgroup", "youmet", "jettools_ru", "rustan", "belmash", "harvey_rus", "amur_stan"],
