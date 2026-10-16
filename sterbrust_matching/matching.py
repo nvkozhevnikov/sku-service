@@ -87,6 +87,10 @@ def _identity_conflicts(source: Product, candidate: Product) -> dict[str, Any]:
         conflicts["brand"] = {"source": sb, "candidate": cb}
     if sm and cm and sm != cm:
         conflicts["model"] = {"source": sm, "candidate": cm}
+        if sm.count("+") != cm.count("+"):
+            conflicts["model_execution"] = {
+                "source": sm, "candidate": cm, "rule": "LITERAL_PLUS_EXECUTION_MISMATCH",
+            }
     sa, ca = normalize_model(source.manufacturer_article), normalize_model(candidate.manufacturer_article)
     if sa and ca and sa != ca:
         conflicts["manufacturer_article"] = {"source": sa, "candidate": ca}

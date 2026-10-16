@@ -16,6 +16,7 @@ from sterbrust_matching.normalization import (
 from sterbrust_matching.product_identity import classify_model_role
 
 from .models import ProductCard
+from .matching_input import matching_product
 
 
 @dataclass
@@ -139,14 +140,7 @@ def _candidate(row: dict) -> Product:
 
 
 def _source(card: ProductCard) -> Product:
-    category = " / ".join(node.name for node in card.categories if node.name)
-    role = classify_model_role(card.name, category)
-    # supplier_code is not a brand, and a compatibility model is not own_model.
-    brand = (card.brand or "").strip() or brand_evidenced_by_name(card.name)
-    return Product(key=card.external_id, name=card.name, brand=brand,
-                   model=role.own_model, supplier_article=card.sku,
-                   supplier_code=card.supplier_code,
-                   category=category, properties={item.name: item.value for item in card.properties})
+    return matching_product(card.as_jsonable())
 
 
 def _candidates(source: Product, registry: RegistryContext) -> list[dict]:

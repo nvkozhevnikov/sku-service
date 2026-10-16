@@ -201,3 +201,29 @@ universal_supplier/postgres.py -text
 
 .gitattributes -text
 docs/ltt_uss_source_ingestion_checkpoint_2026-10-16/** -text
+
+# Preserve accepted matching-prep code/evidence bytes on Windows checkout.
+docs/ltt_uss_matching_prep_2026-10-16/CROSS_SOURCE_GROUPING_CONTRACT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/FINAL_ARTIFACT_SEAL.json -text
+docs/ltt_uss_matching_prep_2026-10-16/FINAL_CHECKPOINT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/LOADER_FIX.json -text
+docs/ltt_uss_matching_prep_2026-10-16/LTT_USS_MATCHING_PREP_CODE_READY_2026-10-16.md -text
+docs/ltt_uss_matching_prep_2026-10-16/MATCHING_ONLY_PATH.json -text
+docs/ltt_uss_matching_prep_2026-10-16/PLUS_CORPUS_IMPACT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/PLUS_SIGN_FIX.json -text
+docs/ltt_uss_matching_prep_2026-10-16/PREFLIGHT_VERIFICATION.json -text
+docs/ltt_uss_matching_prep_2026-10-16/REGISTRY_LOAD_CONTRACT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/REGISTRY_REFRESH_PLAN.json -text
+docs/ltt_uss_matching_prep_2026-10-16/TEST_RECEIPT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/TEST_SELECTION.json -text
+scripts/audit_ltt_uss_matching_input.py -text
+scripts/matching_prep_test_guard.py -text
+scripts/run_ltt_uss_matching.py -text
+scripts/snapshot_sterbrust.py -text
+sterbrust_matching/matching.py -text
+sterbrust_matching/normalization.py -text
+tests/test_ltt_uss_matching_prep.py -text
+universal_supplier/identity_service.py -text
+universal_supplier/matching_input.py -text
+universal_supplier/matching_service.py -text
+universal_supplier/new_group_proposals.py -text

@@ -1,0 +1,27 @@
+{
+  "status": "PASS",
+  "active_scope": {
+    "ltt_msk": 365,
+    "ltt_sib": 1266,
+    "uss_stanko": 227,
+    "ltt_yug": 591
+  },
+  "total": 2449,
+  "article_rows_excluded": 4,
+  "snapshot": "D:\\documents\\personal\\ChatGPT\\Стербруст\\work\\sku-service-ltt-uss\\reports\\LTT_USS_INTEGRATION_2026-10-13\\SOURCE_INGESTION_FINALIZATION_2026-10-16\\SOURCE_LIVE_SNAPSHOT.json",
+  "snapshot_sha256": "f0835e559ea2933b1e03129f73c7fc62cb5a3017c1679775e070a6339cd76788",
+  "frozen_evidence": "PACKAGED-EVIDENCE",
+  "verification": "REPOSITORY-VERIFIED actual _load_cards via frozen SELECT cursor and shared matching conversion",
+  "registry_counts": {
+    "sterbrust_products": 0,
+    "sterbrust_product_supplier_identifiers": 0,
+    "catalog_products": 0
+  },
+  "db_connections": 0,
+  "db_writes": 0,
+  "supplier_http": 0,
+  "matching_executed": false,
+  "relational_detail_fallback_exercised": true,
+  "stored_model_rows": 1813,
+  "own_model_rows": 2183
+}

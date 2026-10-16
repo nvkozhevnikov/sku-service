@@ -1,0 +1,21 @@
+{
+  "status": "PREPARED_NOT_EXECUTED",
+  "cwd": "D:\\documents\\personal\\ChatGPT\\Стербруст\\work\\sku-service-ltt-uss-matching",
+  "command": "python scripts/run_getonly_sterbrust_snapshot.py --workers 2",
+  "credential": "BITRIX_WEBHOOK_URL supplied interactively by wrapper; never save/log/commit token",
+  "allowed_methods": [
+    "catalog.product.list",
+    "catalog.section.list",
+    "catalog.productProperty.list"
+  ],
+  "http_method": "GET",
+  "writes_to_sterbrust": 0,
+  "executed": false,
+  "metadata_seed": "Do not use stale --metadata-seed for fresh definitions",
+  "output": "New matching worktree reports/STERBRUST_REGISTRY.jsonl, .csv, reports/rest/STERBRUST_*_RAW.*, sterbrust_snapshot_metadata.json; stop if existing registry files would be overwritten",
+  "select": "catalog iblock48 id/iblockId/* plus explicit1090/1272/1273/1131/1140/1156 and every ARTIKUL_ definition id; brand iblock45 id/name/code/active; sections id/name/code/active/parent/depth/sort; productProperty definitions[*]",
+  "pagination": "Existing deterministic product start pagination50; duplicate/empty IDs and total mismatch fail; 2 workers",
+  "supplier_article_values": "catalog.productProperty.list gives definitions; catalog.product.list explicit property<ID> gives values. No new GET method identified as necessary. If fields unavailable under existing permissions, STOP; do not broaden API methods.",
+  "mapping": "Fresh snapshot does not create or confirm namespace mapping. Operator confirmation is required for LTT regional and USS article aliases before identifier loading.",
+  "next": "Separate operator authorization for GET refresh and/or reviewed registry load/bootstrap; matching remains not run"
+}

@@ -1,0 +1,89 @@
+{
+  "status": "REPOSITORY-VERIFIED_CODE_ONLY",
+  "entrypoint": "scripts/run_ltt_uss_matching.py",
+  "apply": "--apply --enable-matching-writes; default/--dry-run is SELECT-only plan and does not classify source rows",
+  "configuration": "Explicit DB_* env; entrypoint restricts127.0.0.1:55455/universal_supplier_ltt_uss",
+  "scope": [
+    "ltt_msk",
+    "ltt_sib",
+    "ltt_yug",
+    "uss_stanko"
+  ],
+  "matching_service": "RuntimeIdentityService.reconcile(...,include_offer_selection=False); same match_cards, PostgresRepository.persist_match, classify_identity_card and review sync",
+  "writes": {
+    "product_matches": [
+      "source_product_id",
+      "catalog_product_id",
+      "status",
+      "match_method",
+      "confidence_score",
+      "evidence",
+      "conflicts",
+      "warnings",
+      "data_quality_flags",
+      "rule_version",
+      "auto_accepted",
+      "accepted_at",
+      "last_validated_at",
+      "is_current",
+      "previous_match_id",
+      "decision_fingerprint",
+      "warning_fingerprint"
+    ],
+    "source_products": [
+      "catalog_product_id (accept or guarded automatic quarantine only)",
+      "updated_at"
+    ],
+    "product_identity_decisions": [
+      "source_product_id",
+      "decision",
+      "own_model",
+      "reference_model",
+      "product_kind (decision metadata only; not ingestion raw_data)",
+      "best_sterbrust_id",
+      "decision_reason",
+      "conflicts",
+      "identity_characteristics",
+      "rule_version",
+      "audited_at"
+    ],
+    "review_cases": [
+      "source_product_id (insert)",
+      "priority_rank",
+      "priority_reason",
+      "automatic_decision",
+      "proposed_sterbrust_id",
+      "explanation",
+      "source_identity_fingerprint",
+      "source_identity_snapshot",
+      "lifecycle_status",
+      "resolved_decision_class",
+      "resolved_at",
+      "updated_at"
+    ],
+    "audit_events": [
+      "user_id",
+      "action",
+      "entity_type",
+      "entity_id",
+      "before_state",
+      "after_state",
+      "comment",
+      "correlation_id"
+    ]
+  },
+  "defaults": "Associated table-generated IDs/sequences and created_at defaults; existing per-product transactions/history semantics reused. Apply is not one atomic2449-row transaction; independently gated future execution must retain receipts on partial failure.",
+  "forbidden": [
+    "catalog_offer_selection",
+    "offers",
+    "supplier_http_captures",
+    "offer_commercial_observations",
+    "source_products.raw_data and ingestion product_kind",
+    "source_products.active/missed_crawls",
+    "registry or catalog bootstrap writes",
+    "Sterbrust/ESOL"
+  ],
+  "prerequisites": "Nonempty active PostgreSQL registry, complete catalog_product_id bootstrap, exact eligible source counts; service rechecks registry before matching/persistence; no registry load inside entrypoint",
+  "executed": false,
+  "db_writes": 0
+}

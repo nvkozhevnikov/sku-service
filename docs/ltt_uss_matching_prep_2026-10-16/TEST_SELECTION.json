@@ -1,0 +1,30 @@
+{
+  "files": [
+    "tests/test_ltt_uss_matching_prep.py",
+    "tests/test_matching.py",
+    "tests/test_stage6b.py",
+    "tests/test_stage3b.py",
+    "tests/test_new_group_proposals.py",
+    "tests/test_kami_new_group_scope.py",
+    "tests/test_kami_matching.py",
+    "tests/test_proposed_matching.py",
+    "tests/test_matching_closure.py",
+    "tests/test_optimum_identity_review.py",
+    "tests/test_beka_visible_identity.py",
+    "tests/test_effective_identity.py",
+    "tests/test_execution_evidence.py",
+    "tests/test_characteristic_evidence.py",
+    "tests/test_commercial.py",
+    "tests/test_commercial_persistence.py",
+    "tests/test_ltt_uss_adapters.py",
+    "tests/test_ltt_uss_identity.py",
+    "tests/test_ltt_uss_source_fields.py",
+    "tests/test_ltt_yug_page_role.py",
+    "tests/test_public_url_transport.py",
+    "tests/test_proposal_export.py",
+    "tests/test_offline_review_resolution.py",
+    "tests/test_cross_source_reconciliation.py"
+  ],
+  "scope": "Complete affected offline matching, identity, grouping, property/commercial/source-adapter regression modules. Live DB/lifecycle suites and historical correction replay suites are outside code-only authorization.",
+  "guard": "scripts.matching_prep_test_guard: rejects real PostgreSQL/network calls"
+}

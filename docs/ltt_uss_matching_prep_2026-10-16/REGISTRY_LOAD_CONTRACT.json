@@ -1,0 +1,29 @@
+{
+  "status": "REPOSITORY-VERIFIED_CONTRACT_PACKAGED_SNAPSHOT",
+  "loader": "universal_supplier/postgres.py:PostgresRepository.load_sterbrust_snapshot",
+  "sql": "scripts/bootstrap_sterbrust_catalog.sql",
+  "candidate": "D:\\documents\\personal\\ChatGPT\\Стербруст\\work\\sku-service\\reports\\STERBRUST_REGISTRY.jsonl",
+  "candidate_unique_ids": 59500,
+  "candidate_active": 57478,
+  "candidate_inactive": 2022,
+  "captured_at": "2026-09-29T09:05:41.406261+00:00",
+  "age_days_at_task": 17,
+  "answers": {
+    "1_current_loader_requires_map_for_registry": "YES: opens property_map_path unconditionally before starting transaction/reading JSONL; missing map fails. It uses property_code->supplier_code only for supplier identifiers.",
+    "2_intrinsic_product_registry_requirement": "NO: canonical product rows need no supplier map; dedicated article identifiers do. Current implementation couples both operations, so no unsupported map-free invocation is offered.",
+    "3_safe_product_only_load": "Conceptually possible in a separately explicit product-only mode, preserving existing supplier identifiers; not implemented or authorized here. Current loader cannot safely run without the map. CSV matching context is read-only and not a PostgreSQL registry load.",
+    "4_regeneration": "scripts/generate_stage3a1_supplier_identifiers.py deterministically derives property namespace suffixes from saved definitions; 1546 ARTIKUL_PARTNER is a special confirmed mapping. Other derived entries are REVIEW. Its main also needs PARTNER_ST_MATCHING_SAMPLE.csv and writes multiple reports; do not run it merely to create a map. Old definitions contain63 ARTIKUL properties and no ARTIKUL_LTT/USS or regional aliases. A syntactic suffix is not confirmation of a supplier namespace. No map created.",
+    "5_fresh_get_snapshot": "Produces registry JSONL/CSV, raw product/property/section/brand metadata, snapshot metadata; does NOT itself produce supplier-article mapping CSV. Prepared select explicitly requests all discovered ARTIKUL property IDs using the existing GET method. Actual current values/permissions/completeness require separately authorized live verification.",
+    "6_required_fields": "CSV consumed fields: property_code,supplier_code. Audit/confirmation also needs property_id,property_name,active,mapping_status,mapping_evidence. JSONL needs sterbrust_product_id,name,captured_at,snapshot_hash; identity fields brand_raw,model_raw,article_raw,category_path and properties[]. Each supplier property needs property_id,property_code,value (scalar/list/nested valueEnum/value). Catalog bootstrap must then create catalog_products/catalog_product_identifiers, set sterbrust_products.catalog_product_id; sync supplier identifier links separately. No bootstrap/load done."
+  },
+  "registry_load_writes": [
+    "sterbrust_products UPSERT identity/category/properties/raw/snapshot/timestamp fields",
+    "sterbrust_product_supplier_identifiers DELETE per canonical product then INSERT property values"
+  ],
+  "map_found_in_finalized_worktree": false,
+  "old_property_definitions_sha256": "cfcd0095d37c7c153faca501d35901165841cb895ead9703625cda6ea1a177f3",
+  "old_supplier_property_count": 63,
+  "confirmed_ltt_uss_supplier_article_mapping": false,
+  "db_connections": 0,
+  "registry_load_executed": false
+}

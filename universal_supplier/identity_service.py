@@ -6,6 +6,7 @@ It contains no supplier HTTP or Sterbrust write path.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from typing import Any, Iterable
@@ -27,6 +28,7 @@ from sterbrust_matching.product_identity import (
 
 from .matching_service import RegistryContext, load_registry_from_postgres, match_cards
 from .models import CategoryNode, ProductCard, PropertyValue
+from .matching_input import matching_product, with_persisted_evidence
 from .postgres import PostgresConfig, PostgresRepository
 
 
@@ -71,15 +73,7 @@ def registry_properties(row: dict) -> dict[str, str]:
 
 
 def source_product(card: dict) -> Product:
-    path = category_path(card)
-    role = classify_model_role(card.get("name", ""), path)
-    return Product(
-        key=str(card.get("external_id") or ""), name=str(card.get("name") or ""),
-        brand=str(card.get("brand") or "") or brand_evidenced_by_name(card.get("name", "")),
-        model=role.own_model,
-        supplier_article=str(card.get("sku") or ""), category=path,
-        properties=source_properties(card), supplier_code=str(card.get("supplier_code") or ""),
-    )
+    return matching_product(card)
 
 
 def registry_product(row: dict, supplier_code: str = "", supplier_sku: str = "") -> Product:
@@ -134,7 +128,7 @@ def model_candidates(source: Product, by_model: dict[str, list[str]], by_brand_m
 
 def decision_reason(decision: str, source: Product, candidate_rows: list[dict], conflicts: dict) -> str:
     role = classify_model_role(source.name, source.category, source.model)
-    kind = classify_product_kind(source.name, source.category).product_kind
+    kind = source.product_kind or classify_product_kind(source.name, source.category).product_kind
     if decision in {"EXACT_EXISTING", "HIGH_CONFIDENCE_EXISTING"}:
         return f"same product kind ({kind}) + compatible own model ({role.own_model}) + no critical identity conflict"
     if decision == "ACCESSORY_OR_COMPATIBILITY_ITEM":
@@ -156,6 +150,8 @@ def classify_identity_card(card: dict, match_row: dict, registry: dict[str, dict
         by_model, by_brand_model = registry_indexes(registry)
     source = source_product(card)
     kind_evidence = classify_product_kind(source.name, source.category)
+    if source.product_kind:
+        kind_evidence = replace(kind_evidence, product_kind=source.product_kind)
     role = classify_model_role(source.name, source.category, source.model)
     explicit_ids = evidence_candidate_ids(match_row)
     branded_ids, normalized_ids = model_candidates(source, by_model, by_brand_model)
@@ -286,7 +282,7 @@ def _load_cards(connection, supplier_code: str | None) -> tuple[list[ProductCard
          availability_raw, availability, quantity) = row
         external_id = str(external_id or source_id)
         source_ids[(str(code), external_id)] = int(source_id)
-        cards.append(ProductCard(
+        cards.append(with_persisted_evidence(ProductCard(
             supplier_code=str(code), external_id=external_id, sku=sku, name=name,
             requested_url=source_url, final_url=source_url, canonical_url=canonical_url,
             http_status=http_status, redirect_urls=(), price=price, old_price=old_price,
@@ -296,7 +292,7 @@ def _load_cards(connection, supplier_code: str | None) -> tuple[list[ProductCard
             brand=brand, manufacturer=manufacturer,
             properties=tuple(properties[source_id]), categories=tuple(categories[source_id]),
             raw_data=raw_data or {},
-        ))
+        )))
     return cards, source_ids
 
 
@@ -306,13 +302,21 @@ class RuntimeIdentityService:
     def __init__(self, config: PostgresConfig) -> None:
         self.config = config
 
-    def reconcile(self, supplier_code: str | None = None) -> dict[str, Any]:
+    def reconcile(self, supplier_code: str | None = None, *, include_offer_selection: bool = True) -> dict[str, Any]:
         import psycopg
         from .control_plane.admin_store import PostgresAdminStore
 
         repository = PostgresRepository(self.config)
         try:
             registry_context = load_registry_from_postgres(repository.connection)
+            if not include_offer_selection:
+                if not registry_context.products:
+                    raise RuntimeError('MATCHING_REGISTRY_EMPTY')
+                missing_links = repository.connection.execute(
+                    "SELECT count(*) FROM sterbrust_products WHERE active IS DISTINCT FROM false AND catalog_product_id IS NULL"
+                ).fetchone()[0]
+                if missing_links:
+                    raise RuntimeError('MATCHING_CATALOG_BOOTSTRAP_INCOMPLETE')
             registry = _registry_rows(registry_context)
             by_model, by_brand_model = registry_indexes(registry)
             cards, source_ids = _load_cards(repository.connection, supplier_code)
@@ -353,6 +357,12 @@ class RuntimeIdentityService:
                                audit["decision_reason"], audit["conflicts"], audit["identity_characteristics"],
                                IDENTITY_RULE_VERSION))
             review = PostgresAdminStore(self.config).generate_review_cases(supplier_code)
+            if not include_offer_selection:
+                return {
+                    "source_products": len(cards), "identity_decisions": dict(match_counts),
+                    "match_persistence": dict(persistence), "review_sync": review,
+                    "offer_selection": {"executed": False},
+                }
             from pathlib import Path
             from .offer_selection import OfferSelectionPolicy, PostgresOfferSelectionStore
             selection_policy = OfferSelectionPolicy.load(
@@ -372,3 +382,10 @@ class RuntimeIdentityService:
 
 def reconcile_runtime_identity(config: PostgresConfig, supplier_code: str | None = None) -> dict[str, Any]:
     return RuntimeIdentityService(config).reconcile(supplier_code)
+
+
+def reconcile_matching_only(config: PostgresConfig, supplier_code: str) -> dict[str, Any]:
+    """Matching/materialized review only; no registry load, bootstrap or selection."""
+    if not supplier_code:
+        raise ValueError('An explicit supplier namespace is required')
+    return RuntimeIdentityService(config).reconcile(supplier_code, include_offer_selection=False)

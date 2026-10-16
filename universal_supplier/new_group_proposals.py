@@ -29,6 +29,7 @@ from .execution_evidence import axis_execution_guard, axis_signature, condition_
 
 RULE_VERSION = "cross-source-new-1"
 SOURCES = frozenset({"intervesp", "beka_mak", "beka_mak_tr"})
+SUPPORTED_SOURCES = SOURCES | {'partner_st', 'optimum', 'kami', 'ltt_msk', 'ltt_sib', 'ltt_yug', 'uss_stanko'}
 BRAND_ALIASES = {alias: "beka-mak" for alias in (
     "bekamak", "beka mak", "beka-mak", "бекамак", "бека-мак",
 )}
@@ -203,7 +204,7 @@ def propose_new_groups(rows: Iterable[Mapping[str, Any]], *, allowed_sources=SOU
     proves only cross-source equivalence; canonical absence and SECTION_ID
     remain independent downstream gates.
     """
-    if not set(allowed_sources).issubset(SOURCES | {'partner_st','optimum','kami'}):
+    if not set(allowed_sources).issubset(SUPPORTED_SOURCES):
         raise ValueError('Unknown supplier namespace in grouping scope')
     records = [dict(row) for row in rows]
     result: dict[str, list[dict[str, Any]]] = {"groups": [], "ungrouped": [], "review": []}

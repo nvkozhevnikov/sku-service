@@ -1,0 +1,22 @@
+{
+  "status": "READY_OPT_IN_CODE_ONLY",
+  "rule": "cross-source-new-1 unchanged",
+  "namespaces": [
+    "ltt_msk",
+    "ltt_sib",
+    "ltt_yug",
+    "uss_stanko"
+  ],
+  "call": "propose_new_groups(rows, allowed_sources={'ltt_msk','ltt_sib','ltt_yug','uss_stanko'})",
+  "default": "Historical three-source default unchanged",
+  "guards": [
+    "Canonical matching must complete before NEW proposals",
+    "Exact full model/execution and brand, owned model and sold-object context",
+    "Independent shared dimensional anchor or manufacturer article proof",
+    "All-pairs checks, duplicate/collision/transitive ambiguity quarantine",
+    "Similar title alone or missing independent proof remains REVIEW",
+    "No identifier inferred from -rub or same model; per-source keys retained"
+  ],
+  "real_grouping_executed": false,
+  "db_writes": 0
+}

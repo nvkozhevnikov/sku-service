@@ -28,6 +28,18 @@ REST_DIR = REPORTS / "rest"
 EMPTY_VALUES = (None, "", [], {})
 
 
+def product_select_fields(properties: list[dict]) -> list[str]:
+    """Explicitly request supplier article values, including hidden properties.
+
+    Property definitions come from the same allowlisted GET metadata call.
+    This selects raw values only and does not infer supplier namespace mappings.
+    """
+    fields = ["id", "iblockId", "*", "property1090", "property1272", "property1273", "property1131", "property1140", "property1156"]
+    fields.extend('property' + str(p['id']) for p in properties
+                  if str(p.get('code') or '').startswith('ARTIKUL_') and str(p.get('id') or '').isdigit())
+    return list(dict.fromkeys(fields))
+
+
 def read_env(path: Path | None) -> dict[str, str]:
     result: dict[str, str] = {}
     if not path or not path.exists():
@@ -182,7 +194,7 @@ def main() -> None:
     paths, section_codes = section_paths(sections)
 
     # Bitrix wildcard omits some hidden identity properties, so they are explicit.
-    product_fields = ["id", "iblockId", "*", "property1090", "property1272", "property1273", "property1131", "property1140", "property1156"]
+    product_fields = product_select_fields(properties)
     first = client.call("catalog.product.list", select_params(IBLOCK_ID, product_fields, 0))
     first_rows = extract(first, "products")
     api_total = int(first.get("total") or len(first_rows))
