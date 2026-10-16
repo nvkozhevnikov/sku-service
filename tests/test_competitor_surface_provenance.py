@@ -95,8 +95,8 @@ def test_surface_refresh_preserves_metadata_and_observation_history(isolated_sto
     with store.conn.transaction(), store.conn.cursor() as cursor:
         cursor.execute('TRUNCATE competitor_source_surfaces,competitor_runs,competitor_pages CASCADE')
     # Table must contain exactly: sources seeded by Store.migrate() from the model
-    # registry, plus this fixture's scheduled codes (schedule.json is intentionally
-    # 11 and lasercut_ru is registered but not scheduled until its canary).
+    # registry, plus this fixture's scheduled codes (schedule.json is 12 since the
+    # lasercut_ru canary passed and it was activated as the 12th scheduled source).
     assert {row['code'] for row in store.query('SELECT code FROM competitor_sources')} == set(SOURCES) | set(settings()['selected_sources'])
     # Scheduler state is intentionally not asserted here: this regression must hold for both disabled and enabled repository schedules (repository-state coverage: tests/test_onboarding_gap_closure.py).
     observed = datetime(2026, 10, 1, tzinfo=timezone.utc)
