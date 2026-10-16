@@ -19,7 +19,7 @@ from psycopg.types.json import Jsonb
 
 from competitor_intel.collection_adapter import collect_source
 from competitor_intel.execution import settings
-from competitor_intel.model import Page
+from competitor_intel.model import Page, SOURCES
 from competitor_intel.store import Store
 from competitor_intel.transport import Capture
 
@@ -94,7 +94,10 @@ def test_surface_refresh_preserves_metadata_and_observation_history(isolated_sto
     # Each parameter has independent synthetic state inside the disposable DB.
     with store.conn.transaction(), store.conn.cursor() as cursor:
         cursor.execute('TRUNCATE competitor_source_surfaces,competitor_runs,competitor_pages CASCADE')
-    assert len(store.query('SELECT code FROM competitor_sources')) == 11
+    # Table must contain exactly: sources seeded by Store.migrate() from the model
+    # registry, plus this fixture's scheduled codes (schedule.json is intentionally
+    # 11 and lasercut_ru is registered but not scheduled until its canary).
+    assert {row['code'] for row in store.query('SELECT code FROM competitor_sources')} == set(SOURCES) | set(settings()['selected_sources'])
     # Scheduler state is intentionally not asserted here: this regression must hold for both disabled and enabled repository schedules (repository-state coverage: tests/test_onboarding_gap_closure.py).
     observed = datetime(2026, 10, 1, tzinfo=timezone.utc)
 

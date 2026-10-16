@@ -90,6 +90,15 @@
       "PROMOTIONS",
       "PRODUCT_PRICES",
       "SOURCE_NOVELTIES"
+    ],
+    "lasercut_ru": [
+      "PROMOTIONS",
+      "NEWS",
+      "BLOG",
+      "SALE_PRODUCTS",
+      "HOMEPAGE_BLOCKS",
+      "PRODUCT_PRICES",
+      "PRODUCT_DETAIL"
     ]
   }
 }

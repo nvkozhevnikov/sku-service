@@ -84,5 +84,14 @@
       "www.amur-stan.ru"
     ],
     "operator_urls": []
+  },
+  "lasercut_ru": {
+    "name": "LASERCUT / lasercut.ru",
+    "base_url": "https://lasercut.ru/",
+    "hosts": [
+      "lasercut.ru",
+      "www.lasercut.ru"
+    ],
+    "operator_urls": []
   }
 }

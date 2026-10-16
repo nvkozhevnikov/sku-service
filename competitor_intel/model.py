@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode, urljoin
 SOURCES = {
     'kuvalda_nnov': {'name': 'Кувалда / Нижний Новгород', 'base_url': 'https://nnov.kuvalda.ru/', 'region': 'Нижний Новгород', 'seeds': ['/', '/promo/', '/news/', '/sale/']},
     'metalmaster': {'name': 'MetalMaster', 'base_url': 'https://metalmaster.ru/', 'region': 'Москва (source display)', 'seeds': ['/', '/c_actions/', '/news/', '/top_action/']},
+    'lasercut_ru': {'name': 'LASERCUT / Санкт-Петербург', 'base_url': 'https://lasercut.ru/', 'region': 'Санкт-Петербург', 'seeds': ['/', '/vse-aktsii/', '/novosti/', '/blog/']},
 }
 TRACKING = {'yclid', 'gclid', 'etext', 'fbclid', 'ysclid', '_openstat', 'roistat', 'from', 'referrer'}
 

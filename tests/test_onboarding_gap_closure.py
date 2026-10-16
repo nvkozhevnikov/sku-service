@@ -25,7 +25,10 @@ def test_deferred_article_not_news_and_initial_completion_not_new_event():
 
 def test_future_schedule_eleven_distinct_enabled():
     cfg=settings();assert cfg['enabled'] is True and len(cfg['selected_sources'])==11
-    assert set(cfg['selected_sources'])==SOURCES
+    # lasercut_ru is registered as the 12th source but deliberately NOT scheduled
+    # until its isolated canary run is authorized; the daily schedule must keep
+    # covering exactly the 11 operational sources.
+    assert set(cfg['selected_sources'])==SOURCES-{'lasercut_ru'}
     assert cfg['timezone']=='Europe/Moscow' and cfg['time_of_day']=='08:00' and cfg['skip_if_running'] is True
 
 def test_deferred_category_context_and_harvey_outlet_detail():

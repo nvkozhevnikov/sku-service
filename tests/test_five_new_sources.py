@@ -51,7 +51,7 @@ def test_optional_metadata_does_not_change_old_source_hashes():
 
 def test_source_identities_distinct():
     from competitor_intel.execution import SOURCES
-    assert 'jettools_ru' in SOURCES and 'jet_online' in SOURCES and 'rustan' in SOURCES and len(SOURCES)==11
+    assert 'jettools_ru' in SOURCES and 'jet_online' in SOURCES and 'rustan' in SOURCES and 'lasercut_ru' in SOURCES and len(SOURCES)==12
 
 def test_capture_time_and_raw_reference_are_not_semantic_version_changes():
     html='<h1>Новинки</h1><div class="component-item-product"><a class="title" href="/catalog/new/a/">JET Станок</a><div class="component-catalog-price"><div>1000 ₽</div></div></div>'

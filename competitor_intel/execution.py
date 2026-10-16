@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import json, logging, os, time, uuid
 from logging.handlers import RotatingFileHandler
 
-SOURCES={'kuvalda_nnov','metalmaster','jet_online','stanki_ru','titaniumgroup','youmet','jettools_ru','rustan','belmash','harvey_rus','amur_stan'}
+SOURCES={'kuvalda_nnov','metalmaster','jet_online','stanki_ru','titaniumgroup','youmet','jettools_ru','rustan','belmash','harvey_rus','amur_stan','lasercut_ru'}
 ORIGINS={'OPERATOR_UI','CLI_MANUAL','SCHEDULED'}
 EXIT_CODES={'COMPLETED':0,'PARTIAL':1,'FAILED':2,'SKIP_ALREADY_RUNNING':3,'CONFIG_ERROR':4}
 ROOT=Path(__file__).resolve().parents[1]
