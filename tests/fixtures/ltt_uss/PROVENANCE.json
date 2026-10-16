@@ -1,0 +1,189 @@
+[
+  {
+    "source": "ltt_msk",
+    "filename": "ltt_msk__machine_numeric_price.html",
+    "source_url": "https://ltt-msk.ru/katalog/stolyarnoe-oborudovanie/rejsmusovyie-stanki/rejsmusovyij-stanok-mv1013a,-1300-mm/ml9326cm",
+    "charset": "utf-8",
+    "original_sha256": "9c873ee4f9f08df83419d100a2c862bda7de7dcfa8b60beea658e2af32784bb9",
+    "fixture_sha256": "c0ccf16b91a135ddbe9afd1d671271b4bdc75ca938271f1a273265829e8ba66c",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_msk",
+    "filename": "ltt_msk__spare_accessory.html",
+    "source_url": "https://ltt-msk.ru/katalog/zapasnyie-chasti/dlya-avtopodatchikov/roliki-dlya-avtopodatchikov",
+    "charset": "utf-8",
+    "original_sha256": "15f73e6d071bebb5eb27992d9a385438499c25735fdde78fa78781b0f8af9847",
+    "fixture_sha256": "f8c7c81d5f597e5024fda26b54b88413878dce71a5b18a7adb0c0aadb6942de6",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_msk",
+    "filename": "ltt_msk__tool_blade.html",
+    "source_url": "https://ltt-msk.ru/katalog/instrument/dlya-kruglopalochnyix-stankov/freza-radiusnaya-f40-dlya-skrugleniya-torczov-cherenka",
+    "charset": "utf-8",
+    "original_sha256": "78e8767af60e042a3207b1137531bb271e6d4f79e4d49d62871d78f0f91c9a03",
+    "fixture_sha256": "82fb5fbd1ccdb31c2b5c3269c2e6f17e182e6d5271ad37011cb52b938c586110",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_msk",
+    "filename": "ltt_msk__compressor.html",
+    "source_url": "https://ltt-msk.ru/katalog/kompressoryi/kompressor-vintovoj-vozdushnyij-hs-20hp",
+    "charset": "utf-8",
+    "original_sha256": "230f7cc6f76361812367ea49e9d1c74d322debdf5a46aa78a096def70dae750d",
+    "fixture_sha256": "8dbba44512c2202f550312659b90ac5d77af2f42e94b56cac4006478e324c21a",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_sib",
+    "filename": "ltt_sib__machine_por_outofstock.html",
+    "source_url": "https://lttsib.ru/katalog/stolyarnoe-oborudovanie/rejsmusovyie-stanki/rejsmusovyij-stanok-mv104n",
+    "charset": "utf-8",
+    "original_sha256": "493bde375000302767749a18e3afb645b5b2bc18f9bdec38805d767b75f097cb",
+    "fixture_sha256": "99f62c438dbc05e05c5410326ff203d9dbf59dc1c94303edf62803eff1767a7b",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_sib",
+    "filename": "ltt_sib__machine_numeric_mb203c.html",
+    "source_url": "https://lttsib.ru/katalog/stolyarnoe-oborudovanie/rejsmusovyie-stanki/dvuxstoronnij-rejsmusovyij-stanok-mb203c,-(300mm)",
+    "charset": "utf-8",
+    "original_sha256": "f919ba5083b3caf69497b18661a5bccb45e6a8451422cc00b361a186dd83369f",
+    "fixture_sha256": "8585de5700ce7aeea3c7ad480ee695ddc2a911dceddf034a43c5b2e384e885a2",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_sib",
+    "filename": "ltt_sib__consumable_drill.html",
+    "source_url": "https://lttsib.ru/katalog/instrument/sverla/dlya-gluxix-otverstij-(czelnaya-napajka)/gluxoe-sverlo-d04-l58-s10x28-l-s-czelnyimi-napajkami",
+    "charset": "utf-8",
+    "original_sha256": "35a6b3db0c7b99937d4f27a37e330413b4408f27867954fc5f901d6942ab5423",
+    "fixture_sha256": "59eb9bd37031ec013c5d189ebd393f9259765f80194ee34df616080320e0bba1",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_sib",
+    "filename": "ltt_sib__metal_bandsaw.html",
+    "source_url": "https://lttsib.ru/katalog/metalloobrabatyivayushhee-oborudovanie/lentochnopilnyie-stanki/lentochnopilnyij-stanok-po-metallu-712",
+    "charset": "utf-8",
+    "original_sha256": "f6dc59dd7df922cae621739e5ccb3975c62a825b74157d88c8f58c0c5550123e",
+    "fixture_sha256": "e47034f77fd66dbfae03d309d71908cb54df2a238e5fd15e2ff1cc6707b22946",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_yug",
+    "filename": "ltt_yug__machine_used_qty1.html",
+    "source_url": "https://ltt-yug.ru/catalog/mebelnoe-i-stolyarnoe-oborudovanie/kromkooblitsovochnye/avtomaticheskiy-kromkooblitsovochnyy-stanok-ltt-230-rub.html",
+    "charset": "utf-8",
+    "original_sha256": "d5d9deb2d0e25a5c0ef3741bb16211c5eaed9998f85f48974a0efcc9be486176",
+    "fixture_sha256": "42a6db6c4c0ebe627103653b934e2875784acdca01a563d56329eeaaa7f5dd6a",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_yug",
+    "filename": "ltt_yug__machine_fugoval_jp801.html",
+    "source_url": "https://ltt-yug.ru/catalog/stolyarnoe-oborudovanie-1/fugovalnye/fugovalnyy-stanok-jp801.html",
+    "charset": "utf-8",
+    "original_sha256": "2dc1cfcab7d3a97ed65ef796093ef00e5d381fdf8d84849c1669854d6bb8020f",
+    "fixture_sha256": "81a15887d66a93fdff461d7822694ea7d7ff50c3724daf09a1f30d34ef61459a",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_yug",
+    "filename": "ltt_yug__machine_numeric_mf362.html",
+    "source_url": "https://ltt-yug.ru/catalog/mebelnoe-i-stolyarnoe-oborudovanie/kromkooblitsovochnye/kromkooblitsovochnyy-stanok-mf362.html",
+    "charset": "utf-8",
+    "original_sha256": "f8df085794888d4aa50598e5d4b1dbb6d37c023812d33c4a2d7dfa8e85650f8a",
+    "fixture_sha256": "a4f8d0b3fdbee250f7edbfef5523b748058b596ceaa8c37d5d11e0ff66ecd1a0",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "ltt_yug",
+    "filename": "ltt_yug__machine_nonrub_slug_variant.html",
+    "source_url": "https://ltt-yug.ru/catalog/mebelnoe-i-stolyarnoe-oborudovanie/kromkooblitsovochnye/avtomat-kromkoobl-stanok-ltt-360.html",
+    "charset": "utf-8",
+    "original_sha256": "aa7493309bd7b82193cc08c7b4a47cf779d283ee6674da90dc426b673f8b11ab",
+    "fixture_sha256": "097668d97a5790f03c0f5147728bbd85031abf3f6e8f481888b81a120f46af47",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "uss_stanko",
+    "filename": "uss_stanko__category_radial_drilling_operator_example.html",
+    "source_url": "https://uss-stanko.com/mach/sver/radialno_sverlilnie_stanki.htm",
+    "charset": "cp1251",
+    "original_sha256": "166cfd9a4d079b82ebdb3b9fda57639c49b20a9f9f3bec5ca4232732bd9dd300",
+    "fixture_sha256": "11635dbfb8979e67459987b8f70bb9af3db577b6176c32185a86477c9a153730",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "uss_stanko",
+    "filename": "uss_stanko__dmtg_detail.html",
+    "source_url": "https://uss-stanko.com/dmtg/5-osevye-obrabatyvayushchie-tsentry/vdwa50.htm",
+    "charset": "cp1251",
+    "original_sha256": "127734183371fca3d8ec68fc01637c98e0cbee523ffdb46c0577cf61d287cad9",
+    "fixture_sha256": "4856f53fd16b68839a6fb67db1aca06fb7b89dfd821516e6500ff416c25e489e",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "uss_stanko",
+    "filename": "uss_stanko__mrcm_detail.html",
+    "source_url": "https://uss-stanko.com/mrcm/rezba_manipulator/mr-ds16.htm",
+    "charset": "cp1251",
+    "original_sha256": "a0cd83b9fff060cfd67f8ab99ad44eb3e41e4a791bc63f45485d88b6e6ba28a1",
+    "fixture_sha256": "fa92ee221ed57aefe5f3e5d34c7eec27d1e02820606117619dd0937d8b74a54c",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "source": "uss_stanko",
+    "filename": "uss_stanko__unikraft_accessory.html",
+    "source_url": "https://uss-stanko.com/unikraft/domkrat/hmh.htm",
+    "charset": "cp1251",
+    "original_sha256": "a5c56d84d22eadab122df453fcaf488118e88fc9124e5ab66e878610c91b1365",
+    "fixture_sha256": "52ca364bc1e54e8566d8b4e73147498981e992d74be7097a85d62725b264bdf5",
+    "evidence_class": "PACKAGED-EVIDENCE",
+    "transform": "minimized sanitized DOM; original audit retained locally"
+  },
+  {
+    "filename": "ltt_yug__saved_312.html",
+    "charset": "utf-8",
+    "source_url": "https://ltt-yug.ru/catalog/chetyrehstoronnie-stanki/chetyrehstoronniy-stanok-hjd-m623a.html",
+    "original_response_sha256": "7fba0684677e844c5d5ef9cb48c5113f55ec30c0ef24d5444e19905364d3298d",
+    "original_saved_evidence_sha256": "844417dfb9a5cdfe91b197f694a8be1cb3a53022c44e3e51b44fd083ff145d86",
+    "fixture_sha256": "269a4557684b8a3cd73ff8f9b857fa4392802320b94e79f6b07b0560e3c520f2",
+    "derivation": "Exact saved HTML; scripts and token inputs/metadata removed; entity DOM preserved"
+  },
+  {
+    "filename": "ltt_yug__saved_297.html",
+    "charset": "utf-8",
+    "source_url": "https://ltt-yug.ru/catalog/chetyrehstoronnie-stanki/chetyrehstoronniy-stanok-hjd-m623a-rub.html",
+    "original_response_sha256": "c5469326c998da56f403142366caf37ac3eac6d0b3d22de27e1bdc3d09a80f7e",
+    "original_saved_evidence_sha256": "2bd78643b44abf019cbb907ea5e1e57747617ecea6381414975af72b4d3a94aa",
+    "fixture_sha256": "9c7b47973a0648460c40ee25cbddf72726f9a49140f16ee42964d8cd35f444c3",
+    "derivation": "Exact saved HTML; scripts and token inputs/metadata removed; entity DOM preserved"
+  },
+  {
+    "filename": "ltt_yug__saved_empty_category_id1.html",
+    "charset": "utf-8",
+    "source_url": "https://ltt-yug.ru/catalog/derevoobrabatyvayuschee-oborudovanie.html",
+    "original_response_sha256": "80e4eacf76631cc655337a6d46cdac8d8cef00f4a96001f46ca332e676236708",
+    "original_saved_evidence_sha256": "65b502ef9cf65b6303cf3f21d4d710eccbf117b42960905cfca56e4ddae87593",
+    "fixture_sha256": "5a7d4a079023ac8c889a024bcee0e51175a26e2099d75e22e61555e88f780f3b",
+    "derivation": "Exact saved HTML; scripts and token inputs/metadata removed; entity DOM preserved"
+  }
+]

@@ -1,0 +1,114 @@
+[
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row1.html",
+    "index": 1,
+    "observed_at": "2026-10-14 14:33:20.584760+00:00",
+    "raw_sha256": "7323b75be0daa041aee8dd89e3384f500013ae677acf2d47ce9c83a6a86b1b32",
+    "sha256": "9e8b1a2d7628ea9d9ada7cd995a0d3d198cf62f7d68b30819e9c70e997e604d4",
+    "url": "https://uss-stanko.com/compressor/pneumo/drill.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row12.html",
+    "index": 12,
+    "observed_at": "2026-10-14 14:34:38.430839+00:00",
+    "raw_sha256": "640d5b9027ce274044e627333e39cf1472262da83068ab48bd536b56f2a1dca0",
+    "sha256": "0538c085b72406568494b4fcf53b6790ad4e636315bcdc5b2afd98d9037cfc83",
+    "url": "https://uss-stanko.com/compressor/pneumo/pistolet.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row17.html",
+    "index": 17,
+    "observed_at": "2026-10-14 14:35:10.371567+00:00",
+    "raw_sha256": "61ddd0cbc311e3881b1319bf1504b3a54cf10278468f68b72e873740b8f6e1fa",
+    "sha256": "8f4755b8aaabcc15c23c529521112054ca69e0d1ad0b0cb6174977d1f699ed4a",
+    "url": "https://uss-stanko.com/compressor/pneumo/shlif_z.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row20.html",
+    "index": 20,
+    "observed_at": "2026-10-14 14:35:28.746584+00:00",
+    "raw_sha256": "4fadd609489073e9444d9226d2a49cbaeee1eea764f6de52e0ec515a36effd94",
+    "sha256": "1089e15d7acb82ef8ef3718da70fb1390e329f8deed75f0250ae69199eaf1634",
+    "url": "https://uss-stanko.com/compressor/pneumo/smazka.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row53.html",
+    "index": 53,
+    "observed_at": "2026-10-14 14:39:18.758245+00:00",
+    "raw_sha256": "8500650f7bb601b74206e699ab630df284b260b57de5226e9deb6b741956e628",
+    "sha256": "815a279cb7782f4c785a767406e0f94b23e9c1bc328674522dd5c98a2530140e",
+    "url": "https://uss-stanko.com/derevo/prinadlejnosti/fix.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row61.html",
+    "index": 61,
+    "observed_at": "2026-10-14 14:40:10.833745+00:00",
+    "raw_sha256": "ad50a696c334d3573e27813388d2f3449d39f4904bc6a4c075be30df8bce3615",
+    "sha256": "7ab3af50b113958854f2b510936e1b6369a9a4bcbdf737f9c3b957b1d56b1ef9",
+    "url": "https://uss-stanko.com/derevo/prinadlejnosti/tbm.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row64.html",
+    "index": 64,
+    "observed_at": "2026-10-14 14:40:26.577910+00:00",
+    "raw_sha256": "cc116eba6c4e8a26521a56ece517747bee7c2ada96edfcbce0980b85e2036b6f",
+    "sha256": "7b73c15960520bef8decc62655fae20d467039cbac29977c738a43ba75b725c2",
+    "url": "https://uss-stanko.com/derevo/prinadlejnosti/wm180.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row65.html",
+    "index": 65,
+    "observed_at": "2026-10-14 14:40:31.081074+00:00",
+    "raw_sha256": "dbf7dfcea128aa8be0fbccf5632f5f35ec0ecee95d4e3adaf931fa47568d01e1",
+    "sha256": "bd36eb7a476e005036ea8aee30c6b4a2d3d6813cc9d9b4680ff7fa3aa27f13b2",
+    "url": "https://uss-stanko.com/derevo/prinadlejnosti/ws360.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row297.html",
+    "index": 297,
+    "observed_at": "2026-10-15 07:29:19.273797+00:00",
+    "raw_sha256": "dbc73869483ad3ec3cbdc4dd065ee9e8cf57d3e6b2be7337db33e7a8739285ec",
+    "sha256": "5a0a6ee190645337f8e0b6594e2a54183b63e351426dab1970396b8fc4a364b0",
+    "url": "https://uss-stanko.com/mach/zat/ub_gu.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row305.html",
+    "index": 305,
+    "observed_at": "2026-10-15 07:30:16.823593+00:00",
+    "raw_sha256": "ebcb5131ed37612755529425c9e82d33e96f0402fda2d465afa5cafed7a8f59c",
+    "sha256": "5a48b8b18100afc2a4d8d468af98774b42f117d579276ab0fd1a3d86851f880c",
+    "url": "https://uss-stanko.com/mach/zubehor/bohr_ub.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row306.html",
+    "index": 306,
+    "observed_at": "2026-10-15 07:30:23.010144+00:00",
+    "raw_sha256": "082e0bc16c63b01af85179e5a24690ed176f28d702da395f3440678fea44f570",
+    "sha256": "f7b3bef6cff50c0d2d4de141a47b47428fc1f522c2a6a5e88306828a580b140b",
+    "url": "https://uss-stanko.com/mach/zubehor/dpa21.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row307.html",
+    "index": 307,
+    "observed_at": "2026-10-15 07:30:30.293325+00:00",
+    "raw_sha256": "7cd1c9400e304e78fe146eabe75ec4dd486d13e0b53a8f9fda84805dfed2a8a0",
+    "sha256": "e354ce5c82e5d274881cd5b110282b5002d0f3cc8d5c98f45a1ae766ed107e9f",
+    "url": "https://uss-stanko.com/mach/zubehor/dpa22.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row318.html",
+    "index": 318,
+    "observed_at": "2026-10-15 07:31:54.915391+00:00",
+    "raw_sha256": "1316eab9c93126627c965792b1ce13915a3e8f16ad6f4b1041242d8f12484daa",
+    "sha256": "5f1a2b5aaec45d33fcfda46e20d567409f08237e53cd3ab53f7694e8bf856d1d",
+    "url": "https://uss-stanko.com/mach/zubehor/dro5.htm"
+  },
+  {
+    "fixture": "tests\\fixtures\\uss_terminal_batch\\row405.html",
+    "index": 405,
+    "observed_at": "2026-10-15 07:41:52.168953+00:00",
+    "raw_sha256": "488bbd368fef878ccbe55feed3e4b0774b34ebb8ee036ddba26f448987ea71ba",
+    "sha256": "3c3e30a46847147b492be8b342941d50b0ea3129cc1f34b1a948f7cd8565489f",
+    "url": "https://uss-stanko.com/unikraft/peskostruika/ssk2.htm"
+  }
+]

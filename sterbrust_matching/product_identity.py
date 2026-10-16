@@ -69,7 +69,28 @@ PRODUCT_TAXONOMY: tuple[Taxon, ...] = (
 )
 
 TAXON_BY_KIND = {taxon.kind: taxon for taxon in PRODUCT_TAXONOMY}
-ACCESSORY_FAMILIES = {"accessory", "tooling", "consumable"}
+ACCESSORY_FAMILIES = {"accessory", "tooling", "consumable", "component"}
+
+# Additional sold-object concepts do not reorder established taxonomy aliases.
+# They resolve a machine-family claim only when the own sold noun proves that
+# the machine token describes a host or application instead of the sold object.
+SOLD_OBJECT_TAXONOMY = (
+    Taxon("cutting_attachment", (), "component"),
+    Taxon("reading_lens", (), "component"),
+    Taxon("chuck_nut", (), "component"),
+    Taxon("controller_interface", (), "component"),
+    Taxon("brush_strip", (), "component"),
+    Taxon("inductive_sensor", (), "component"),
+    Taxon("power_feeder", (), "accessory"),
+    Taxon("glue_supply_station", (), "accessory"),
+    Taxon("knife", (), "tooling"),
+    Taxon("saw_blade", (), "tooling"),
+    Taxon("cutting_tool", (), "tooling"),
+    Taxon("hand_edge_trimmer", (), "tooling"),
+    Taxon("vacuum_pump", (), "equipment"),
+    Taxon("chiller", (), "equipment"),
+)
+TAXON_BY_KIND.update({taxon.kind: taxon for taxon in SOLD_OBJECT_TAXONOMY})
 
 COMPATIBILITY_MARKERS = (
     r"\bсовместим\w*\s+с\b", r"\bподходит\s+для\b", r"\bдля\s+модел\w*\b",
@@ -104,6 +125,11 @@ def _first_taxon(text: str) -> tuple[Taxon | None, str]:
         for alias in taxon.aliases:
             match = re.search(alias, text, re.I)
             if match:
+                # A woodworking adjective is not a sold table. Preserve the
+                # original witness when an actual table/workbench corroborates it.
+                if (taxon.kind == "table" and match.group(0).startswith("столяр")
+                        and not re.search(r"\b(?:стол(?:а|у|ом|е|ы|ов|ам|ами|ах)?|верстак\w*)\b", text)):
+                    continue
                 return taxon, match.group(0)
     return None, ""
 
@@ -167,7 +193,7 @@ def execution_class_marks(text: object) -> frozenset[str]:
     return frozenset(marks)
 
 
-def classify_product_kind(name: object, category: object = "") -> ProductKindEvidence:
+def _title_category_kind(name: object, category: object = "") -> ProductKindEvidence:
     title = normalize_text(name)
     category_text = normalize_text(category)
     relation = compatibility_relation(title)
@@ -201,6 +227,180 @@ def classify_product_kind(name: object, category: object = "") -> ProductKindEvi
     if taxon:
         return ProductKindEvidence(taxon.kind, alias, "category", "MEDIUM")
     return ProductKindEvidence("unknown", "", "none", "UNKNOWN")
+
+
+def _complete_processing_machine_head(title: str, category: str) -> str:
+    """Specific owned processing constructions, never a bare machine-like noun.
+
+    A named execution corroborates these constructions; it is not source identity.
+    An earlier part/compatibility head prevents a host from becoming the product.
+    """
+    rack_press = re.match(r"^ручн\w*\s+реечн\w*\s+пресс\b", title)
+    if rack_press and re.search(r"(?:^|/)gibka(?:/|$)|\bгибочн\w*|\bпресс\w*", category):
+        return rack_press.group(0)
+    execution = re.search(r"\b(?:[a-zа-я][\w/-]*[ -]?\d[\w/-]*|\d+[a-zа-я][\w/-]*)\b", title)
+    if not execution:
+        return ""
+    patterns = (
+        r"\b\d+[- ]осев\w*\s+обрабатывающ\w*\s+центр\b",
+        r"\b(?:сверлильно-присадочн\w*|фрезерн\w*\s+обрабатывающ\w*|форматно-раскроечн\w*|пильн\w*|торцев\w*\s+обрабатывающ\w*)\s+центр\b",
+        r"\bсверлильно-долбежн\w*\b",
+        r"\b(?:горяч\w*|холодн\w*|гидравлическ\w*|автоматическ\w*|ручн\w*\s+реечн\w*)\s+пресс\b",
+        r"\bпресс\s+для\s+сращиван\w*\b",
+        r"\bоптоволоконн\w*\s+установк\w*\s+лазерн\w*\s+раскроя\b",
+        r"\bстреппинг\s+машина\b",
+        r"\bгильотина\s+(?:для\s+резки\s+шпона|[a-zа-я]+[\w/-]*\d[\w/-]*)\b",
+        r"\b(?:ленточн\w*|радиальн\w*|циркулярн\w*|торцовочн\w*(?:[- ]усорезн\w*)?)\s+пила\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, title)
+        if not match:
+            continue
+        prefix = title[:match.start()].strip()
+        # Permit a leading execution/brand/adjective prefix, but never a sold
+        # component or a relation that introduces somebody else's machine.
+        if prefix and (compatibility_relation(prefix) or _first_taxon(prefix)[0]):
+            continue
+        if prefix and not (re.match(r"(?=[\w/-]*\d)[a-zа-я][\w/-]*\b", prefix)
+                               or re.fullmatch(r"(?:\d+[- ]осев\w*|вертикальн\w*|горизонтальн\w*|настольн\w*)", prefix)):
+            continue
+        return match.group(0)
+    # A disc blade's dimensional name is not a metal-cutting saw execution.
+    # The complete-saw category corroborates the owned, named machine head.
+    if (re.search(r"(?:^|/)sagen(?:/|$)|\bдисков\w*\s+пил\w*\s+стан\w*", category)
+            and re.match(r"^дисков(?:ая|ые)\s+пил(?:а|ы)\s+(?:[a-zа-я]+\s+)?[a-zа-я]+[ -]?\d", title)):
+        return re.match(r"^дисков(?:ая|ые)\s+пил(?:а|ы)\b", title).group(0)
+    return ""
+
+
+def _disk_sold_object_evidence(prior: ProductKindEvidence, name: object) -> ProductKindEvidence:
+    """A disk alias must describe the sold object, not shape or its host.
+
+    Preserve established disk/blade, CBN and SDC readings. Only an existing
+    disk claim is disambiguated; unrelated taxonomy priorities stay intact.
+    """
+    if prior.product_kind != "disk":
+        return prior
+    title = normalize_text(name)
+    if re.match(r"^(?:рекомендуем\w*\s+)?(?:режим\w*\s+(?:резан\w*|обработ\w*)|рекомендаци\w*\s+по\s+(?:резан\w*|обработ\w*))\b", title):
+        return ProductKindEvidence("unknown", "", "none", "UNKNOWN")
+    # Genuine circle nouns and their inflections retain their exact evidence.
+    # Productive compounds/adjectives (круглый, круглопильный...) do not.
+    alias = normalize_text(prior.matched_alias)
+    if not alias.startswith("круг") or re.fullmatch(r"круг(?:а|у|ом|е|и|ов|ам|ами|ах)?", alias):
+        return prior
+    relation = compatibility_relation(title)
+    head = title[:relation[0]] if relation else title
+    for kind, pattern in (
+        ("spare", r"^(?:тэн\b|нагревательн\w*\s+элемент\w*\b)"),
+        ("spare", r"^(?:подающ\w*\s+)?(?:колесо|валец)\b"),
+        ("spare", r"^втулк\w*\b"),
+        ("accessory", r"^лазерн\w*\s+указател\w*\b"),
+        ("knife", r"^нож(?:и|а|ей)?\b"),
+    ):
+        match = re.search(pattern, head)
+        if match:
+            return ProductKindEvidence(kind, match.group(0), "sold_object_head", "HIGH")
+    # Removing a misleading category alias must not expose the host's machine
+    # type as a new positive claim. Unproven sold-object specificity stays open.
+    return ProductKindEvidence("unknown", "", "none", "UNKNOWN")
+
+
+def _owned_functional_kind(prior: ProductKindEvidence, name: object,
+                           category: object) -> ProductKindEvidence:
+    """Resolve strong own functional heads without a machine-family prior."""
+    if prior.source not in {"none", "category"}:
+        return prior
+    if TAXON_BY_KIND.get(prior.product_kind, Taxon("", (), "")).family == "machine":
+        return prior
+    title = normalize_text(name)
+    relation = compatibility_relation(title)
+    head = title[:relation[0]] if relation else title
+    for kind, pattern in (("power_feeder", r"\bавтоподатчик(?:и)?\b"),
+                          ("chiller", r"\bчиллер(?:ы)?\b")):
+        # This chiller repair resolves the contradictory mixed-category claim;
+        # it does not promote unrelated unknown/operator-review coverage.
+        if kind == "chiller" and prior.product_kind != "consumable":
+            continue
+        match = re.search(pattern, head)
+        if not match:
+            continue
+        prefix = head[:match.start()]
+        prefix = re.sub(r"\b\d+\s*[-xх]?\s*(?:х|ми)?\s*(?:ролик\w*|скоростн\w*)\b", " ", prefix)
+        prefix = re.sub(r"\b(?:универсальн\w*|роликов\w*|мод(?:ель)?|[a-zа-я][\w/-]*\d[\w/-]*|[a-z]+)\b", " ", prefix)
+        if not re.sub(r"[\s().,:-]+", "", prefix):
+            return ProductKindEvidence(kind, match.group(0), "sold_object_head", "HIGH")
+    # Do not extend these weaker category repairs to stronger owned kinds.
+    if prior.product_kind == "unknown" and re.search(r"\bстоляр\w*\b", normalize_text(category)):
+        for kind, pattern in (
+            ("knife", r"^(?:сменн\w*\s+)?(?P<own>нож(?:и|а|ей)?)(?:\s|$)"),
+            ("fixture", r"^(?:универсальн\w*\s+)?(?:эксцентриков\w*\s+)?(?P<own>прижим\w*)(?:\s|$)"),
+        ):
+            match = re.search(pattern, head)
+            if match:
+                return ProductKindEvidence(kind, match.group("own"), "sold_object_head", "HIGH")
+        guide = re.match(r"^(?P<own>направляющ\w*)(?:\s|$)", head)
+        if (guide and re.search(r"\bдля\s+пил\w*\b", title)
+                and re.search(r"\bшариков\w*\s+подшипник\w*\b", title)):
+            return ProductKindEvidence("spare", guide.group("own"), "sold_object_head", "HIGH")
+    return prior
+
+
+def classify_product_kind(name: object, category: object = "", *,
+                          own_description: object = "") -> ProductKindEvidence:
+    """Resolve the sold object without treating host-machine wording as identity.
+
+    Optional own description corroborates ambiguous head nouns; its absence is
+    never replaced with model, price, weight or neighboring-product inference.
+    Existing non-machine specificity and full-machine head precedence survive.
+    """
+    prior = _disk_sold_object_evidence(_title_category_kind(name, category), name)
+    prior = _owned_functional_kind(prior, name, category)
+    if TAXON_BY_KIND.get(prior.product_kind, Taxon("", (), "")).family != "machine":
+        complete = _complete_processing_machine_head(normalize_text(name), normalize_text(category))
+        if complete:
+            return ProductKindEvidence("machine", complete, "owned_complete_processing_head", "HIGH")
+        return prior
+    title = normalize_text(name)
+    description = normalize_text(own_description)
+    machine = re.search(r"\bстан(?:ок|ки|ка|ком|ке)\b", title)
+
+    def sold(pattern: str):
+        match = re.search(pattern, title)
+        # A machine mentioned before the component processes/contains it; do
+        # not downgrade a complete machine merely for mentioning its tooling.
+        return match if match and (not machine or match.start() < machine.start()) else None
+
+    rules = (
+        ("fixture", r"\b(?:пневмобалк\w*|моноприжим\w*|упор\s+флажков\w*|электромагнитн\w*\s+плит\w*|линейк\w*)\b"),
+        ("reading_lens", r"\bлинз\w*\b"),
+        ("chuck_nut", r"\bгайк\w*\b(?=.*\bпатрон\w*)"),
+        ("controller_interface", r"\bинтерфейсн\w*\s+(?:nc|нс)[ -]?карт\w*\b"),
+        ("brush_strip", r"\bбахром\w*\b"),
+        ("inductive_sensor", r"\bиндуктивн\w*\s+датчик\w*\b"),
+        ("power_feeder", r"\bавтоподатчик\w*\b"),
+        ("glue_supply_station", r"\bpur\s+станци\w*\b"),
+        ("knife", r"\bнож\b"),
+        ("saw_blade", r"\bпила\s+узла\b"),
+        ("cutting_tool", r"\bрез(?:ец|цы|цов|цами|цах|цу|цом)\b"),
+        ("chiller", r"\bчиллер\w*\b"),
+    )
+    for kind, pattern in rules:
+        match = sold(pattern)
+        if match:
+            return ProductKindEvidence(kind, match.group(0), "sold_object_head", "HIGH")
+    pump = sold(r"\bнасос\w*\b")
+    if pump and re.search(r"\bвакуум\w*|\b(?:роторно-пластинчат|пластинчато-ротор)\w*", title + " " + description):
+        return ProductKindEvidence("vacuum_pump", pump.group(0), "sold_object_head", "HIGH")
+    guillotine = sold(r"\bгильотин\w*\b")
+    if guillotine and re.search(r"\bна\s+\w*кромкооблицовочн\w*\s+стан\w*", title):
+        return ProductKindEvidence("cutting_attachment", guillotine.group(0), "sold_object_host_relation", "HIGH")
+    trimmer = sold(r"\bподрезател\w*\s+кромк\w*\b")
+    manual = re.search(r"\bручн\w*\s+приспособлен\w*", description)
+    snipping_body = re.search(r"\bперекусить\b", description) and re.search(r"\bпластик\w*\b", description)
+    if trimmer and (manual or snipping_body):
+        return ProductKindEvidence("hand_edge_trimmer", trimmer.group(0), "sold_object_own_description", "HIGH")
+    return prior
 
 
 def _marker_span(text: object) -> tuple[int, int, str] | None:
