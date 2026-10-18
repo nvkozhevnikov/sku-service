@@ -92,6 +92,12 @@ services:
       postgres:
         condition: service_healthy
     command: ["sh", "-c", "python scripts/docker_postgres_migrate.py && exec python -m universal_supplier.control_plane.scheduler_main"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "universal_supplier.control_plane.heartbeat", "orchestrator"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
     networks:
       - universal_supplier_internal
       - universal_supplier_egress

@@ -4,6 +4,7 @@ import threading
 import os
 
 from universal_supplier.postgres import PostgresConfig
+from .heartbeat import HeartbeatRecorder
 from .orchestrator import Orchestrator
 from .queue import PostgresJobQueue
 from .scheduler import Scheduler
@@ -42,7 +43,11 @@ def main() -> None:
         queue=queue,
         max_parallel_supplier_jobs=maximum,
     )
-    if os.environ.get("SCHEDULER_ENABLED", "NO").upper() == "YES":
+    orchestrator.heartbeat = HeartbeatRecorder(config, "orchestrator", orchestrator.poll_seconds)
+    scheduler.heartbeat = HeartbeatRecorder(config, "scheduler", scheduler.policy.poll_seconds)
+    if os.environ.get("SCHEDULER_ENABLED", "NO").upper() != "YES":
+        scheduler.heartbeat.clear()  # report not_running instead of a stale row from an earlier enabled run
+    else:
         thread = threading.Thread(target=scheduler.run_forever, name="cron-scheduler", daemon=True)
         thread.start()
     orchestrator.run_forever()

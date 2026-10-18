@@ -24,6 +24,7 @@ class AuthUser:
     display_name: str
     role: str
     is_active: bool = True
+    session_version: int = 1
 
 
 def normalize_username(value: str) -> str:
@@ -86,6 +87,38 @@ class LoginThrottle:
         with self._lock: self._failures.pop(key, None)
 
 
+def throttle_digest(key) -> str:
+    """sha256 of (username, client address); the shared throttle never stores either raw."""
+    username, address = key
+    return hashlib.sha256(f"{username}\0{address}".encode("utf-8")).hexdigest()
+
+
+class PostgresLoginThrottle:
+    """Same contract as LoginThrottle, shared by all web workers via login_failures (migration 017)."""
+
+    def __init__(self, config, *, max_failures: int = 5, window_seconds: float = 900.0) -> None:
+        self.config, self.max_failures, self.window_seconds = config, max_failures, window_seconds
+
+    def _connect(self):
+        import psycopg
+        return psycopg.connect(**self.config.kwargs(), autocommit=True)
+
+    def locked(self, key) -> bool:
+        with self._connect() as c, c.cursor() as q:
+            q.execute("SELECT count(*) FROM login_failures WHERE throttle_key=%s AND failed_at > now() - make_interval(secs => %s)",
+                      (throttle_digest(key), self.window_seconds))
+            return int(q.fetchone()[0]) >= self.max_failures
+
+    def failure(self, key) -> None:
+        with self._connect() as c, c.transaction(), c.cursor() as q:
+            q.execute("DELETE FROM login_failures WHERE failed_at <= now() - make_interval(secs => %s)", (self.window_seconds,))
+            q.execute("INSERT INTO login_failures(throttle_key) VALUES (%s)", (throttle_digest(key),))
+
+    def reset(self, key) -> None:
+        with self._connect() as c, c.cursor() as q:
+            q.execute("DELETE FROM login_failures WHERE throttle_key=%s", (throttle_digest(key),))
+
+
 PLACEHOLDER_SECRET_MARKERS = ("CHANGE_ME", "REPLACE_WITH")
 
 
@@ -109,7 +142,7 @@ class SessionSigner:
 
     def issue(self, user: AuthUser) -> tuple[str, str]:
         csrf = secrets.token_urlsafe(24)
-        payload = {"uid": user.id, "role": user.role, "csrf": csrf, "exp": int(time.time()) + self.ttl_seconds}
+        payload = {"uid": user.id, "role": user.role, "sv": user.session_version, "csrf": csrf, "exp": int(time.time()) + self.ttl_seconds}
         raw = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
         signature = hmac.new(self.secret, raw, hashlib.sha256).digest()
         return (raw + b"." + base64.urlsafe_b64encode(signature).rstrip(b"=")).decode(), csrf

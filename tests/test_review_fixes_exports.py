@@ -209,10 +209,10 @@ def test_failed_migration_is_not_recorded(monkeypatch):
 
 # 7/8. schema.sql and migration baseline ----------------------------------------
 
-def test_schema_sql_is_concatenation_of_all_migrations_including_016():
+def test_schema_sql_is_concatenation_of_all_migrations():
     schema = (ROOT / "schema.sql").read_text(encoding="utf-8")
     paths = sorted((ROOT / "migrations").glob("[0-9][0-9][0-9]_*.sql"))
-    assert paths[-1].name.startswith("016_")
+    assert any(path.name.startswith("016_") for path in paths)
     for path in paths:
         assert f"-- ===== {path.name} =====\n" + path.read_text(encoding="utf-8") in schema
     assert "CREATE INDEX IF NOT EXISTS review_decisions_source_product_idx ON review_decisions (source_product_id);" in schema

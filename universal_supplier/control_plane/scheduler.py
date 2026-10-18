@@ -85,10 +85,11 @@ class SchedulerPolicy:
 
 class Scheduler:
     def __init__(self, config: PostgresConfig, queue: PostgresJobQueue,
-                 policy: SchedulerPolicy | None = None) -> None:
+                 policy: SchedulerPolicy | None = None, *, heartbeat=None) -> None:
         self.config = config
         self.queue = queue
         self.policy = policy or SchedulerPolicy()
+        self.heartbeat = heartbeat
 
     def _connect(self):
         import psycopg
@@ -120,6 +121,9 @@ class Scheduler:
         while True:
             try:
                 self.tick()
-            except Exception:
+            except Exception as error:
                 LOGGER.exception("scheduler tick failed; retrying after %ss", self.policy.poll_seconds)
+                if self.heartbeat: self.heartbeat.record(error)
+            else:
+                if self.heartbeat: self.heartbeat.record()
             time.sleep(self.policy.poll_seconds)

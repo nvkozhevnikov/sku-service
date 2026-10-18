@@ -9,6 +9,7 @@ from typing import Callable
 
 from universal_supplier.postgres import PostgresConfig
 from .adapter_registry import AdapterRegistry, default_adapter_registry
+from .heartbeat import HeartbeatRecorder
 from .queue import CrawlJob, PostgresDomainLease, PostgresJobQueue
 
 LOGGER = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 class Orchestrator:
     def __init__(self, config: PostgresConfig, *, queue: PostgresJobQueue | None = None,
                  registry: AdapterRegistry | None = None, max_parallel_supplier_jobs: int = 2,
-                 poll_seconds: float = 2.0, lease_factory: Callable | None = None) -> None:
+                 poll_seconds: float = 2.0, lease_factory: Callable | None = None, heartbeat=None) -> None:
         if max_parallel_supplier_jobs < 1:
             raise ValueError("max_parallel_supplier_jobs must be positive")
         self.config = config
@@ -29,6 +30,7 @@ class Orchestrator:
         self.pool = ThreadPoolExecutor(max_workers=max_parallel_supplier_jobs, thread_name_prefix="supplier-job")
         self.active: set[Future] = set()
         self.recover_interval_seconds = 60.0; self._last_recover: float | None = None
+        self.heartbeat = heartbeat
 
     def recover(self) -> int:
         self._last_recover = time.monotonic()
@@ -91,15 +93,20 @@ class Orchestrator:
         while True:
             try:
                 self.tick()
-            except Exception:
+            except Exception as error:
                 LOGGER.exception("orchestrator tick failed; retrying")
+                if self.heartbeat: self.heartbeat.record(error)
+            else:
+                if self.heartbeat: self.heartbeat.record()
             time.sleep(self.poll_seconds)
 
 
 def main() -> None:
     config = PostgresConfig.from_env()
     maximum = int(os.environ.get("MAX_PARALLEL_SUPPLIER_JOBS", "2"))
-    Orchestrator(config, max_parallel_supplier_jobs=maximum).run_forever()
+    orchestrator = Orchestrator(config, max_parallel_supplier_jobs=maximum)
+    orchestrator.heartbeat = HeartbeatRecorder(config, "orchestrator", orchestrator.poll_seconds)
+    orchestrator.run_forever()
 
 
 if __name__ == "__main__":

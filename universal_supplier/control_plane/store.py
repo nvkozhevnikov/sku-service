@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from universal_supplier.postgres import PostgresConfig
+from .heartbeat import read_components
 from .scheduler import next_occurrences
 
 
@@ -111,9 +112,17 @@ class PostgresControlPlaneStore:
             with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute("SELECT 1 AS ok,current_setting('server_version') AS version")
                 row = cursor.fetchone()
-            return {"application": "ok", "postgresql": "ok", "version": row["version"]}
         except Exception as error:
             return {"application": "ok", "postgresql": "error", "error": str(error)[:200]}
+        status = {"application": "ok", "postgresql": "ok", "version": row["version"]}
+        # Background loops are reported, not enforced: their state never changes the web status code.
+        try:
+            with self._connect() as connection, connection.cursor() as cursor:
+                components = read_components(cursor)
+        except Exception as error:
+            return {**status, "components": "unavailable", "components_error": str(error)[:200]}
+        return {**status, "components": components,
+                "degraded": any(item["status"] in {"stale", "failing"} for item in components.values())}
 
     def dashboard(self) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:

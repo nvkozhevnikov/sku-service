@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -53,6 +55,8 @@ def test_scheduler_main_reads_global_parallelism(monkeypatch, configured, expect
     queue = object()
 
     class FakeOrchestrator:
+        poll_seconds = 2.0
+
         def __init__(self, received_config, *, queue, max_parallel_supplier_jobs):
             captured.update(
                 config=received_config,
@@ -67,10 +71,22 @@ def test_scheduler_main_reads_global_parallelism(monkeypatch, configured, expect
     monkeypatch.setenv("SCHEDULER_ENABLED", "NO")
     monkeypatch.setattr(scheduler_main.PostgresConfig, "from_env", lambda: config)
     monkeypatch.setattr(scheduler_main, "PostgresJobQueue", lambda received: queue)
-    monkeypatch.setattr(scheduler_main, "Scheduler", lambda *args: object())
+    monkeypatch.setattr(scheduler_main, "Scheduler", lambda *args: SimpleNamespace(policy=SimpleNamespace(poll_seconds=15.0)))
     monkeypatch.setattr(scheduler_main, "Orchestrator", FakeOrchestrator)
+    cleared = []
+
+    class FakeHeartbeat:
+        def __init__(self, received_config, component, poll_seconds):
+            self.component = component
+
+        def clear(self):
+            cleared.append(self.component)
+
+    monkeypatch.setattr(scheduler_main, "HeartbeatRecorder", FakeHeartbeat)
 
     scheduler_main.main()
+
+    assert cleared == ["scheduler"]
 
     assert captured == {
         "config": config,

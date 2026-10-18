@@ -133,7 +133,7 @@ class PostgresAdminStore:
 
     @staticmethod
     def _user(row: dict | None) -> AuthUser | None:
-        return AuthUser(int(row["id"]), row["username"], row["display_name"], row["role"], row["is_active"]) if row else None
+        return AuthUser(int(row["id"]), row["username"], row["display_name"], row["role"], row["is_active"], int(row["session_version"])) if row else None
 
     def users_exist(self) -> bool:
         with self._connect() as c, c.cursor() as q:
@@ -142,14 +142,23 @@ class PostgresAdminStore:
 
     def user_by_username(self, username: str) -> tuple[AuthUser, str] | None:
         with self._connect() as c, c.cursor() as q:
-            q.execute("SELECT id,username,display_name,role,is_active,password_hash FROM app_users WHERE username=%s", (username.strip().lower(),))
+            q.execute("SELECT id,username,display_name,role,is_active,session_version,password_hash FROM app_users WHERE username=%s", (username.strip().lower(),))
             row = q.fetchone()
         return (self._user(row), row["password_hash"]) if row else None
 
     def user_by_id(self, user_id: int) -> AuthUser | None:
         with self._connect() as c, c.cursor() as q:
-            q.execute("SELECT id,username,display_name,role,is_active FROM app_users WHERE id=%s", (user_id,))
+            q.execute("SELECT id,username,display_name,role,is_active,session_version FROM app_users WHERE id=%s", (user_id,))
             return self._user(q.fetchone())
+
+    def revoke_sessions(self, user_id: int, actor_id: int | None, reason: str) -> None:
+        """Invalidate every outstanding session cookie of the user (they carry the old session_version)."""
+        with self._connect() as c, c.transaction(), c.cursor() as q:
+            q.execute("UPDATE app_users SET session_version=session_version+1,updated_at=now() WHERE id=%s RETURNING session_version", (user_id,))
+            row = q.fetchone()
+            if not row:
+                raise KeyError("Пользователь не найден")
+            self._audit(q, actor_id, "USER_SESSIONS_REVOKED", "user", user_id, None, {"session_version": row["session_version"], "reason": reason}, None)
 
     def touch_login(self, user_id: int) -> None:
         with self._connect() as c, c.cursor() as q:
@@ -178,7 +187,7 @@ class PostgresAdminStore:
             before = q.fetchone()
             if not before:
                 raise KeyError("Пользователь не найден")
-            q.execute("UPDATE app_users SET is_active=%s,updated_at=now() WHERE id=%s", (active, user_id))
+            q.execute("UPDATE app_users SET is_active=%s,session_version=session_version+(%s AND is_active)::int,updated_at=now() WHERE id=%s", (active, not active, user_id))
             after = dict(before); after["is_active"] = active
             self._audit(q, actor_id, "USER_ACTIVE_CHANGED", "user", user_id, dict(before), after, None)
 
@@ -498,16 +507,20 @@ class InMemoryAdminStore:
     def users_exist(self): return bool(self._users)
     def user_by_username(self, username):
         row = next((u for u in self._users if u["username"] == username.lower()), None)
-        return (AuthUser(row["id"], row["username"], row["display_name"], row["role"], row.get("is_active", True)), row["password_hash"]) if row else None
+        return (AuthUser(row["id"], row["username"], row["display_name"], row["role"], row.get("is_active", True), row.get("session_version", 1)), row["password_hash"]) if row else None
     def user_by_id(self, user_id):
         row = next((u for u in self._users if u["id"] == user_id), None)
-        return AuthUser(row["id"], row["username"], row["display_name"], row["role"], row.get("is_active", True)) if row else None
+        return AuthUser(row["id"], row["username"], row["display_name"], row["role"], row.get("is_active", True), row.get("session_version", 1)) if row else None
+    def revoke_sessions(self, user_id, actor_id, reason):
+        row=next(u for u in self._users if u["id"]==user_id); row["session_version"]=row.get("session_version",1)+1; self.audit(actor_id,"USER_SESSIONS_REVOKED","user",user_id,None,{"session_version":row["session_version"],"reason":reason})
     def touch_login(self, user_id): pass
     def list_users(self): return [{k:v for k,v in u.items() if k != "password_hash"} for u in self._users]
     def create_user(self, username, display_name, password_hash, role, actor_id=None):
         uid = max([u["id"] for u in self._users] or [0]) + 1; self._users.append({"id":uid,"username":normalize_username(username),"display_name":display_name,"password_hash":password_hash,"role":role,"is_active":True}); self.audit(actor_id,"USER_CREATED","user",uid,None,{"role":role}); return uid
     def set_user_active(self, user_id, active, actor_id):
-        row=next(u for u in self._users if u["id"]==user_id); row["is_active"]=active; self.audit(actor_id,"USER_ACTIVE_CHANGED","user",user_id,None,{"is_active":active})
+        row=next(u for u in self._users if u["id"]==user_id)
+        if row.get("is_active", True) and not active: row["session_version"]=row.get("session_version",1)+1
+        row["is_active"]=active; self.audit(actor_id,"USER_ACTIVE_CHANGED","user",user_id,None,{"is_active":active})
     def audit(self,user_id,action,entity_type,entity_id,before,after,comment=None,correlation_id=None): self._audit_events.append({"id":len(self._audit_events)+1,"user_id":user_id,"action":action,"entity_type":entity_type,"entity_id":str(entity_id),"before_state":deepcopy(before),"after_state":deepcopy(after),"comment":comment})
     def audit_events(self,limit=200): return list(reversed(self._audit_events[-limit:]))
     def generate_review_cases(self): return {"inserted":0,"unchanged":len(self._cases),"reopened":0}

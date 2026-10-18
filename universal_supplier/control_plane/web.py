@@ -24,7 +24,7 @@ from .commercial_qa import CommercialQaService, CommercialQaUnavailable
 from .queue import InMemoryJobQueue, PostgresJobQueue
 from .rate_control import DomainRatePolicy, OPTIMUM_DEFAULT_RATE_POLICY, PARTNER_ST_DEFAULT_RATE_POLICY
 from .scheduler import controls_to_schedule, schedule_to_controls, validate_schedule
-from .security import AuthUser, LoginThrottle, SessionSigner, dummy_password_hash, hash_password, verify_password
+from .security import AuthUser, LoginThrottle, PostgresLoginThrottle, SessionSigner, dummy_password_hash, hash_password, verify_password
 from .store import PostgresControlPlaneStore, ProductFilters, SnapshotControlPlaneStore, UnavailableControlPlaneStore
 
 PACKAGE = Path(__file__).resolve().parent
@@ -43,7 +43,7 @@ RU_LABELS = {
     "MANUAL_CONFIRMED":"Подтверждено вручную", "MANUAL_CONFIRMED_NEW":"Подтверждён новый товар",
     "MANUAL_ACCESSORY":"Подтверждён аксессуар", "MARKED_REVIEWED":"Просмотрено",
     "ADMIN":"Администратор", "OPERATOR":"Оператор", "VIEWER":"Наблюдатель",
-    "USER_CREATED":"Создан пользователь", "USER_ACTIVE_CHANGED":"Изменено состояние пользователя",
+    "USER_CREATED":"Создан пользователь", "USER_ACTIVE_CHANGED":"Изменено состояние пользователя", "USER_SESSIONS_REVOKED":"Завершены сессии пользователя",
     "SUPPLIER_ENABLED_CHANGED":"Изменено состояние поставщика", "SCHEDULE_CHANGED":"Изменено расписание",
     "MANUAL_CRAWL_ENQUEUED":"Ручной сбор поставлен в очередь", "CANDIDATE_REJECTED":"Кандидат отклонён",
     "REVIEW_REQUIRED_SOURCE_CHANGED":"Требуется повторная проверка после изменения",
@@ -155,7 +155,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
     app.state.store = store; app.state.queue = queue; app.state.admin_store = admin_store; app.state.stage6e_service = stage6e_service
     app.state.auth_required = auth_required; app.state.direct_crawl_executions = 0
-    app.state.commercial_qa_service = commercial_qa_service; login_throttle = app.state.login_throttle = LoginThrottle()
+    app.state.commercial_qa_service = commercial_qa_service
+    login_throttle = app.state.login_throttle = PostgresLoginThrottle(admin_store.config) if isinstance(admin_store, PostgresAdminStore) else LoginThrottle()
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE / "templates")
     templates.env.filters["ru"] = russian_label
@@ -169,7 +170,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         if not data: return None
         if not auth_required: return AuthUser(0, "test", "Тестовый администратор", "ADMIN")
         user = admin_store.user_by_id(int(data["uid"]))
-        return user if user and user.is_active and user.role == data.get("role") else None
+        # A session is valid only while its session_version matches the user's (bumped on logout/revocation).
+        return user if user and user.is_active and user.role == data.get("role") and data.get("sv") == user.session_version else None
     def guard(request: Request, roles: set[str] | None = None):
         user = current_user(request)
         if not user: raise HTTPException(401, "Требуется вход")
@@ -237,7 +239,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.post("/logout")
     async def logout(request: Request):
-        guard(request); values = await form_values(request); check_csrf(request, values)
+        user = guard(request); values = await form_values(request); check_csrf(request, values)
+        if auth_required: admin_store.revoke_sessions(user.id, user.id, "logout")
         response = RedirectResponse("/login", 303); response.delete_cookie(signer.cookie_name, path="/"); return response
 
     @app.get("/", response_class=HTMLResponse)
@@ -846,6 +849,13 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         try: admin_store.set_user_active(user_id, values.get("active") == "true", user.id)
         except (ValueError, KeyError) as error: return page_error(request, str(error))
         return RedirectResponse("/settings", 303)
+
+    @app.post("/settings/users/{user_id}/revoke-sessions")
+    async def user_revoke_sessions(request: Request, user_id: int):
+        user = guard(request, {"ADMIN"}); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
+        try: admin_store.revoke_sessions(user_id, user.id, "admin")
+        except (ValueError, KeyError) as error: return page_error(request, str(error))
+        return RedirectResponse("/login" if user_id == user.id else "/settings", 303)
 
     def final_release_store():
         from .final_release_store import FinalReleaseStore
