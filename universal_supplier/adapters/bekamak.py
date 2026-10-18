@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from html import unescape
+from html import escape, unescape
 import re
 
 from universal_supplier.commercial import ReadOnlySupplierProduct, extract_public_price
@@ -41,9 +41,9 @@ def parse_bekamak_detail(source: str, *, source_url: str | None = None) -> ReadO
     detail = source[:source.find("Похожее оборудование")] if "Похожее оборудование" in source else source
     numeric = re.search(r'class=["\']price["\']\s+data-currency=["\']RUB["\']\s+data-value=["\']([^"\']+)', detail, re.I)
     if numeric:
-        synthetic = f'<main data-product-identity="{identity}"><span class="price-current">{numeric.group(1)} RUB</span></main>'
+        synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"><span class="price-current">{numeric.group(1)} RUB</span></main>'
     else:
-        synthetic = f'<main data-product-identity="{identity}"></main>'
+        synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"></main>'
     price = extract_public_price(synthetic, product_identity=identity, source_url=url)
     price = replace(price, source_path=".prices_block .price[data-currency=RUB][data-value]", context_path="detail product before similar-products slider")
     availability = "InStock" if re.search(r'itemprop=["\']availability["\'][^>]+InStock', detail, re.I) else None

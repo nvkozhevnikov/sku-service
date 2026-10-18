@@ -187,6 +187,24 @@ def _parse_number(value: str | None) -> Decimal | None:
     return result if result >= 0 else None
 
 
+def _parse_machine_number(value: str | None) -> Decimal | None:
+    """Parse a machine-format amount (microdata content / JSON-LD price).
+
+    Schema.org values use a dot decimal mark, so "12990.000" is 12990, not a
+    grouped 12 990 000.  Anything non-canonical falls back to the visible-text
+    heuristic.
+    """
+
+    raw = (value or "").strip()
+    if not re.fullmatch(r"\d+(?:\.\d+)?", raw):
+        return _parse_number(raw)
+    try:
+        result = Decimal(raw)
+    except InvalidOperation:
+        return None
+    return result.quantize(Decimal(1)) if result == result.to_integral_value() else result
+
+
 def _nodes(node: _Node):
     yield node
     yield from node.descendants()
@@ -231,8 +249,10 @@ def _microdata(scope: _Node) -> list[_Candidate]:
     candidates: list[_Candidate] = []
     for node in _nodes(scope):
         if node.attrs.get("itemprop", "").lower() == "price":
-            raw = node.attrs.get("content") or node.attrs.get("value") or node.text()
-            candidates.append(_Candidate(_parse_number(raw), currency or None,
+            machine = node.attrs.get("content") or node.attrs.get("value")
+            raw = machine or node.text()
+            parsed = _parse_machine_number(raw) if machine else _parse_number(raw)
+            candidates.append(_Candidate(parsed, currency or None,
                                          raw, PriceSourceKind.MICRODATA, "itemprop:price"))
     return candidates
 
@@ -282,7 +302,7 @@ def _json_ld(root: _Node, identity: str) -> tuple[list[_Candidate], tuple[str, .
                     continue
                 raw = str(offer.get("price") or "")
                 currency = str(offer.get("priceCurrency") or "").upper() or None
-                candidates.append(_Candidate(_parse_number(raw), currency, raw,
+                candidates.append(_Candidate(_parse_machine_number(raw), currency, raw,
                                              PriceSourceKind.JSON_LD, f"json_ld_product[{index}]"))
         if product_records and not candidates:
             diagnostics.append("json_ld_product_identity_mismatch")

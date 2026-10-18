@@ -7,6 +7,8 @@ import re
 import unicodedata
 from typing import Mapping
 
+from .normalization import MODEL_CONFUSABLES
+
 
 PROPERTY_IDENTITY_CONFLICT = "PROPERTY_IDENTITY_CONFLICT"
 PROPERTY_FORMAT_VARIATION = "PROPERTY_FORMAT_VARIATION"
@@ -120,6 +122,20 @@ def _text(value: object) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", "" if value is None else str(value)).strip().lower())
 
 
+def _fold_model_token(token: str) -> str:
+    """Fold Cyrillic look-alikes only in a code-like token (``МТ3`` -> ``mt3``).
+
+    A token qualifies when it carries a digit or a Latin letter and every
+    Cyrillic letter in it has a visual Latin twin. Ordinary Russian words stay.
+    """
+    cyrillic = [char for char in token if "а" <= char <= "я"]
+    if not cyrillic or not re.search(r"[a-z0-9]", token):
+        return token
+    if any(ord(char) not in MODEL_CONFUSABLES for char in cyrillic):
+        return token
+    return token.translate(MODEL_CONFUSABLES)
+
+
 def normalize_property(value: object, property_type: str) -> NormalizedProperty:
     raw = "" if value is None else str(value)
     text = _text(value).replace("ё", "е")
@@ -139,7 +155,8 @@ def normalize_property(value: object, property_type: str) -> NormalizedProperty:
     if kind in {"dimension", "range"}:
         compact = text.replace("×", "x").replace("х", "x").replace("–", "-").replace("—", "-")
         numbers = re.findall(r"\d+(?:[.,]\d+)?", compact)
-        unit_match = re.search(r"(?:^|\s)(mm|cm|m|мм|см|м)(?:\s|$)", compact, re.I)
+        # A unit may follow a digit directly (``50x30cm``) or be space-separated.
+        unit_match = re.search(r"(?:^|\s|(?<=\d))(mm|cm|m|мм|см|м)(?![a-zа-я0-9])", compact, re.I)
         if numbers:
             unit = _UNIT_ALIASES.get((unit_match.group(1).lower() if unit_match else "mm"), "mm")
             factor = {"mm": Decimal("1"), "cm": Decimal("10"), "m": Decimal("1000")}.get(unit)
@@ -162,7 +179,7 @@ def normalize_property(value: object, property_type: str) -> NormalizedProperty:
             return NormalizedProperty(raw, number, None, text, f"{kind}:unknown_unit", raw_unit)
         canonical_value = number * factors[unit]
         return NormalizedProperty(raw, canonical_value, canonical, None, f"{kind}:{unit}_to_{canonical.lower()}", raw_unit)
-    normalized = "".join(re.findall(r"[a-zа-я0-9]+", text)) or None
+    normalized = "".join(_fold_model_token(token) for token in re.findall(r"[a-zа-я0-9]+", text)) or None
     return NormalizedProperty(raw, None, None, normalized, f"{kind or 'string'}:identity_token")
 
 

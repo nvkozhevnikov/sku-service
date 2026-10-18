@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+import logging
 import os
 import threading
 import time
@@ -9,6 +10,8 @@ from typing import Callable
 from universal_supplier.postgres import PostgresConfig
 from .adapter_registry import AdapterRegistry, default_adapter_registry
 from .queue import CrawlJob, PostgresDomainLease, PostgresJobQueue
+
+LOGGER = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -25,8 +28,10 @@ class Orchestrator:
         self.lease_factory = lease_factory or (lambda domain: PostgresDomainLease(config, domain))
         self.pool = ThreadPoolExecutor(max_workers=max_parallel_supplier_jobs, thread_name_prefix="supplier-job")
         self.active: set[Future] = set()
+        self.recover_interval_seconds = 60.0; self._last_recover: float | None = None
 
     def recover(self) -> int:
+        self._last_recover = time.monotonic()
         return self.queue.recover_stale()
 
     def _run_job(self, job: CrawlJob) -> None:
@@ -52,14 +57,26 @@ class Orchestrator:
             try:
                 runner = self.registry.resolve(job.adapter_name)
                 result = runner(job, self.config)
-                self.queue.complete(job.id, result.get("status", "succeeded"), crawl_run_id=result.get("crawl_run_id"))
             except Exception as error:
-                self.queue.complete(job.id, "failed", error_message=f"{type(error).__name__}: {str(error)[:2000]}")
+                self._complete(job, "failed", error_message=f"{type(error).__name__}: {str(error)[:2000]}")
+            else:
+                self._complete(job, result.get("status", "succeeded"), crawl_run_id=result.get("crawl_run_id"))
             finally:
                 stop.set()
                 heart.join(timeout=1)
 
+    def _complete(self, job: CrawlJob, status: str, **kwargs) -> None:
+        try:
+            self.queue.complete(job.id, status, **kwargs)
+        except RuntimeError:
+            # Usually the lease expired and recover_stale() already marked the job stale_failed;
+            # keep that verdict but record the result we could not store.
+            LOGGER.error("job %s finished as %s but could not be completed (already stale?): %s",
+                         job.id, status, kwargs, exc_info=True)
+
     def tick(self) -> int:
+        if self._last_recover is None or time.monotonic() - self._last_recover >= self.recover_interval_seconds:
+            self.recover()
         self.active = {future for future in self.active if not future.done()}
         submitted = 0
         while len(self.active) < self.max_parallel:
@@ -71,9 +88,11 @@ class Orchestrator:
         return submitted
 
     def run_forever(self) -> None:
-        self.recover()
         while True:
-            self.tick()
+            try:
+                self.tick()
+            except Exception:
+                LOGGER.exception("orchestrator tick failed; retrying")
             time.sleep(self.poll_seconds)
 
 

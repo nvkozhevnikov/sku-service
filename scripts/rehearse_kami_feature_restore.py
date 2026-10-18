@@ -9,9 +9,9 @@ from scripts.verify_kami_canary import digest
 
 ROOT=Path(__file__).resolve().parents[1];BASE=ROOT/'reports/KAMI_INTEGRATION_2026-10-05'
 OUT=BASE/'RESTORE_REHEARSAL';DB='universal_supplier_kami_restore_20261006'
-BIN=Path(os.environ['LOCALAPPDATA'])/'Temp/universal_supplier_stage4_pg17_runtime/bin'
+BIN=Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset')/'Temp/universal_supplier_stage4_pg17_runtime/bin'
 DUMP=ROOT/'release/database/universal_supplier_kami_rc_2026-10-06.dump'
-PRIVATE=Path(os.environ['LOCALAPPDATA'])/'UniversalSupplier/kami-rc-20261005'
+PRIVATE=Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset')/'UniversalSupplier/kami-rc-20261005'
 FINAL=False
 
 def connection(database):

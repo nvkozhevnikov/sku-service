@@ -186,7 +186,7 @@ def tables(rows, payloads, *, selection_state=None):
         if row["classification"] == "EXISTING_CONFIRMED":
             quantity,quantity_state,quantity_role=quantity_view(row)
             data["Existing"].append(dict(base,identity_evidence=blocker(row)))
-            data["Offers"].append(dict(base,numeric_price=float(price_value(row)) if price_value(row) is not None else None,
+            data["Offers"].append(dict(base,numeric_price=price_value(row),
                 price_state=row.get("price_state"),currency=row.get("currency"),availability=row.get("availability"),
                 price_basis=row.get('price_basis'),
                 quantity=quantity,quantity_state=quantity_state,quantity_role=quantity_role,

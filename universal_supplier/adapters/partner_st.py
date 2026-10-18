@@ -33,10 +33,12 @@ def normalize_currency(value: object) -> str:
 
 def normalize_availability(value: object) -> str:
     text = str(value or "").lower()
-    if "instock" in text or "в наличии" in text:
-        return "in_stock"
+    # Negative markers first: "нет в наличии" contains "в наличии" and
+    # "outofstock" contains "instock".
     if "outofstock" in text or "нет в наличии" in text:
         return "out_of_stock"
+    if "instock" in text or "в наличии" in text:
+        return "in_stock"
     if "preorder" in text or "предзаказ" in text:
         return "preorder"
     if "backorder" in text or "под заказ" in text:
@@ -183,7 +185,10 @@ class PartnerStAdapter:
         if quantity is None:
             stock_node = soup.select_one(f"#qty_in_stock_{external_id}")
             quantity = parse_decimal(stock_node.get_text(" ", strip=True)) if stock_node else None
-        old_price_node = soup.select_one(f"#old_price_update_{external_id} .ty-list-price, .ty-list-price")
+        # Prefer the product-scoped old price; the global selector may hit a
+        # related-products card earlier in the document.
+        old_price_node = (soup.select_one(f"#old_price_update_{external_id} .ty-list-price")
+                          or soup.select_one(".ty-list-price"))
 
         return ProductCard(
             supplier_code=self.code, external_id=external_id, sku=sku, name=name,

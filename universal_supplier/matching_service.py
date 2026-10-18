@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sterbrust_matching.matching import Product, match_product
 from sterbrust_matching.normalization import (
-    brand_evidenced_by_name, model_identity_evidence, normalize_brand, normalize_model,
+    brand_evidenced_by_name, model_identity_evidence, normalize_article, normalize_brand, normalize_model,
     normalized_name, model_tokens,
 )
 from sterbrust_matching.product_identity import classify_model_role
@@ -82,7 +82,7 @@ def _optimum_title_articles(name: str) -> tuple[str, ...]:
         return ()
     values: list[str] = []
     for raw in re.findall(r"(?<!\d)(\d{5,10})(?!\d)", name or ""):
-        normalized = normalize_model(raw)
+        normalized = normalize_article(raw)
         if normalized and normalized not in values:
             values.append(normalized)
     return tuple(values)
@@ -98,7 +98,8 @@ def load_registry_from_postgres(connection) -> RegistryContext:
             """SELECT sterbrust_product_id, name, coalesce(brand_raw,''),
                       coalesce(model_raw,''), coalesce(article_raw,''),
                       coalesce(category_path,''), properties
-               FROM sterbrust_products WHERE active IS DISTINCT FROM false"""
+               FROM sterbrust_products WHERE active IS DISTINCT FROM false
+               ORDER BY sterbrust_product_id"""
         )
         for product_id, name, brand, model, article, category, properties in cursor.fetchall():
             key = str(product_id)
@@ -120,15 +121,26 @@ def load_registry_from_postgres(connection) -> RegistryContext:
                 title_identifier_index[("optimum", inferred_article)].append(key)
         cursor.execute(
             """SELECT sterbrust_product_id, supplier_code, raw_value, normalized_value
-               FROM sterbrust_product_supplier_identifiers WHERE active"""
+               FROM sterbrust_product_supplier_identifiers WHERE active
+               ORDER BY sterbrust_product_id, supplier_code, raw_value"""
         )
         for product_id, supplier_code, raw_value, normalized_value in cursor.fetchall():
             key = str(product_id)
             if key not in products:
                 continue
             products[key]["supplier_identifiers"][supplier_code].append(raw_value)
-            identifier_index[(supplier_code, normalized_value)].append(key)
+            # Rebuild the key from raw_value with the same article normalizer
+            # that lookup uses. The stored normalized_value is a legacy key
+            # that merges digit groups (10-100 == 101-00), so it is not used.
+            article_key = normalize_article(raw_value)
+            if article_key:
+                identifier_index[(supplier_code, article_key)].append(key)
     return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index)
+
+
+def _id_order(key: object) -> tuple[int, int, str]:
+    text = str(key or "")
+    return (0, int(text), text) if text.isdigit() else (1, 0, text)
 
 
 def _candidate(row: dict) -> Product:
@@ -150,7 +162,7 @@ def _source(card: ProductCard) -> Product:
 
 
 def _candidates(source: Product, registry: RegistryContext) -> list[dict]:
-    article = normalize_model(source.supplier_article)
+    article = normalize_article(source.supplier_article)
     ids = sorted(set(registry.identifier_index.get((source.supplier_code, article), [])), key=int) if article else []
     if not ids and article:
         # Safe fallback for legacy Sterbrust cards where the supplier-specific
@@ -172,7 +184,7 @@ def _candidates(source: Product, registry: RegistryContext) -> list[dict]:
             score = SequenceMatcher(None, normalized_name(source.name), normalized_name(row["name"])).ratio()
             if score >= 0.60:
                 scored.append((score, product_id))
-        ids = [product_id for _, product_id in sorted(scored, reverse=True)[:10]]
+        ids = [product_id for _, product_id in sorted(scored, key=lambda item: (-item[0], _id_order(item[1])))[:10]]
     return [registry.products[product_id] for product_id in ids]
 
 

@@ -370,6 +370,35 @@ PRODUCT_COLUMNS = (
 )
 
 
+XML_ILLEGAL_CHARS_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+SPREADSHEET_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def strip_xml_illegal(text: str) -> str:
+    """Remove characters that XML 1.0 (and therefore XLSX) cannot represent."""
+    return XML_ILLEGAL_CHARS_RE.sub("", text)
+
+
+def sanitize_xml_tree(root: Any) -> Any:
+    """Strip XML-illegal characters from every text, tail and attribute of an ElementTree."""
+    for node in root.iter():
+        if node.text:
+            node.text = strip_xml_illegal(node.text)
+        if node.tail:
+            node.tail = strip_xml_illegal(node.tail)
+        if node.attrib:
+            node.attrib = {strip_xml_illegal(str(key)): strip_xml_illegal(str(value))
+                           for key, value in node.attrib.items()}
+    return root
+
+
+def spreadsheet_safe_text(text: str) -> str:
+    """Neutralise CSV/XLSX formula injection for string cells only."""
+    if text.startswith(SPREADSHEET_FORMULA_PREFIXES):
+        return "'" + text
+    return text
+
+
 def _cell(value: Any) -> Any:
     if value is None:
         return ""
@@ -379,7 +408,9 @@ def _cell(value: Any) -> Any:
         return value
     if isinstance(value, (dict, list, tuple)):
         import json
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    if isinstance(value, str):
+        return spreadsheet_safe_text(strip_xml_illegal(value))
     return value
 
 

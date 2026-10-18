@@ -17,4 +17,6 @@ COPY migrations ./migrations
 
 COPY config ./config
 RUN test -f /app/config/yml_feed.json
+RUN useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin app
+USER app
 CMD ["python", "-m", "pytest", "-q"]

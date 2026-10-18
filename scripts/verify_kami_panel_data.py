@@ -8,7 +8,7 @@ from universal_supplier.postgres import PostgresConfig
 from universal_supplier.control_plane.store import PostgresControlPlaneStore, ProductFilters
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE = Path(os.environ['LOCALAPPDATA']) / 'UniversalSupplier/kami-rc-20261005'
+PRIVATE = Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset') / 'UniversalSupplier/kami-rc-20261005'
 
 
 def main():

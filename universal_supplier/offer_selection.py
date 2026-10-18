@@ -11,6 +11,16 @@ from typing import Any, Iterable
 from .effective_identity import effective_identity_mapping_sql
 
 
+IMPLEMENTED_POLICY_BEHAVIOUR: dict[str, Any] = {
+    "ranking_order": ("availability", "supplier_priority", "valid_price", "freshness",
+                      "deterministic_tie_break"),
+    "deterministic_tie_break": ("supplier_code", "offer_id"),
+    "unknown_price_behavior": "eligible_not_preferred",
+    "zero_price_behavior": "invalid_commercial_evidence",
+    "unknown_availability_behavior": "eligible",
+}
+
+
 @dataclass(frozen=True)
 class OfferSelectionPolicy:
     version: str
@@ -44,6 +54,15 @@ class OfferSelectionPolicy:
             raise ValueError("Policy version must be non-empty")
         if value["price_strategy"] != "lowest_valid_price":
             raise ValueError("Unsupported price strategy")
+        # evaluate_offers() hard-codes these behaviours. A policy that declares
+        # anything else would be silently ignored, so it is rejected at load.
+        for key, implemented in IMPLEMENTED_POLICY_BEHAVIOUR.items():
+            declared = value[key]
+            if isinstance(implemented, tuple):
+                declared = tuple(declared) if isinstance(declared, (list, tuple)) else declared
+            if declared != implemented:
+                raise ValueError(f"Unsupported offer-selection policy {key}: {value[key]!r}; "
+                                 f"implemented: {implemented!r}")
         return cls(
             version=str(value["version"]),
             ranking_order=tuple(value["ranking_order"]),

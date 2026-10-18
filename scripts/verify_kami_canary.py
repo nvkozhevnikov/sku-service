@@ -15,7 +15,7 @@ from universal_supplier.postgres import PostgresConfig, PostgresRepository
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'reports/KAMI_INTEGRATION_2026-10-05'
 CAPTURES = ROOT / 'reports/KAMI_SOURCE_AUDIT_2026-10-05/CONTROLLED_SAMPLE'
-PRIVATE = Path(os.environ['LOCALAPPDATA']) / 'UniversalSupplier/kami-rc-20261005'
+PRIVATE = Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset') / 'UniversalSupplier/kami-rc-20261005'
 
 
 def digest(value):

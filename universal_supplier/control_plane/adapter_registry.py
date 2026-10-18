@@ -217,6 +217,15 @@ def run_optimum_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
                                           error_type=error.get("error_type") or "FETCH_ERROR",
                                           message=error.get("error") or "fetch failed",
                                           http_status=error.get("http_status") or None)
+        # A stale 404 is confirmed-missing evidence; record it as HTTP_404 so
+        # the missing-product logic sees it instead of NOT_DISCOVERED.
+        for stale in (row for row in result.rows if row.get("classification") == "STALE_404"):
+            repository.record_crawl_error(run_id, url=stale.get("source_url") or job.base_url,
+                                          error_type="HTTP_404", message="stale URL returned HTTP 404",
+                                          http_status=404)
+        if result.metadata.get("category_page_failures"):
+            # Unread category pages mean discovery may be incomplete.
+            health = replace(health, deactivation_allowed=False)
         termination_reason = result.metadata.get("termination_reason")
         deadline_exceeded = bool(
             result.metadata.get("max_run_duration_exceeded")

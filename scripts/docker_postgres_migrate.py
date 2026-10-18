@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -17,6 +18,29 @@ MIGRATIONS = tuple(sorted((ROOT / "migrations").glob("[0-9][0-9][0-9]_*.sql")))
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+OUTER_BEGIN = re.compile(r"\A(?:\s*--[^\n]*\n)*\s*BEGIN\s*;", re.IGNORECASE)
+OUTER_COMMIT = re.compile(r"COMMIT\s*;\s*\Z", re.IGNORECASE)
+TOP_LEVEL_TRANSACTION_CONTROL = re.compile(
+    r"^\s*(?:BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION)\s*;", re.IGNORECASE | re.MULTILINE
+)
+
+
+def migration_body(sql: str) -> str:
+    """Return the migration SQL without its own outer BEGIN;/COMMIT; wrapper.
+
+    The runner executes the body and its schema_migrations INSERT inside one
+    transaction, so a crash can never leave an applied-but-unrecorded file.
+    The file on disk (and its checksum) is unchanged.
+    """
+    begin = OUTER_BEGIN.match(sql)
+    commit = OUTER_COMMIT.search(sql)
+    if begin and commit and begin.end() <= commit.start():
+        sql = sql[begin.end():commit.start()]
+    if TOP_LEVEL_TRANSACTION_CONTROL.search(sql):
+        raise RuntimeError("Migration contains transaction control outside its outer BEGIN;/COMMIT; wrapper")
+    return sql
 
 
 def expected_hashes() -> dict[str, str]:
@@ -60,11 +84,13 @@ def main() -> None:
                         if applied[path.name] != digest:
                             raise RuntimeError(f"Applied migration checksum mismatch: {path.name}")
                         continue
-                    cursor.execute(path.read_text(encoding="utf-8"))
-                    cursor.execute(
-                        "INSERT INTO schema_migrations(filename, sha256) VALUES (%s,%s)",
-                        (path.name, digest),
-                    )
+                    body = migration_body(path.read_text(encoding="utf-8"))
+                    with connection.transaction():
+                        cursor.execute(body)
+                        cursor.execute(
+                            "INSERT INTO schema_migrations(filename, sha256) VALUES (%s,%s)",
+                            (path.name, digest),
+                        )
             finally:
                 cursor.execute("SELECT pg_advisory_unlock(%s)", (390011,))
     print(f"MIGRATIONS_APPLIED_OR_VERIFIED = {len(MIGRATIONS)}")

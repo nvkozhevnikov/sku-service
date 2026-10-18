@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -12,6 +13,7 @@ from .queue import PostgresJobQueue
 
 
 DEFAULT_TIMEZONE = "UTC"
+LOGGER = logging.getLogger(__name__)
 
 
 def schedule_to_controls(expression: str | None) -> dict[str, object]:
@@ -116,5 +118,8 @@ class Scheduler:
 
     def run_forever(self) -> None:
         while True:
-            self.tick()
+            try:
+                self.tick()
+            except Exception:
+                LOGGER.exception("scheduler tick failed; retrying after %ss", self.policy.poll_seconds)
             time.sleep(self.policy.poll_seconds)

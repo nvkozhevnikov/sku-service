@@ -93,6 +93,26 @@ def structural_marks(title):
                                     ('CANTILEVER',r'маятников|консольн|\bcantilever\b|\bpendulum\b')] if re.search(pattern,text)}
     return {'orientation':sorted(orientation),'frame':sorted(frame)}
 
+def _negative_guards(result,source,target):
+    """Structural/automation/blade guards; run for every confirmed result.
+
+    Returns (blocking reasons, automation contexts, structural marks). They
+    only remove confirmation, never add it, so V2.1 acceptance cannot widen.
+    """
+    reasons=[]
+    contexts=[automation_context(r) for r in (source,target)]
+    if (any(c['self_contradiction'] for c in contexts) or
+            all(c['mode'] for c in contexts) and contexts[0]['mode']!=contexts[1]['mode']):
+        reasons.append('V22_EXPLICIT_CATEGORY_AUTOMATION_CONTRADICTION')
+    structures=[structural_marks(r.get('name','')) for r in (source,target)]
+    for key in ('orientation','frame'):
+        if structures[0][key] and structures[1][key] and set(structures[0][key]).isdisjoint(structures[1][key]):
+            reasons.append('V22_EXPLICIT_'+key.upper()+'_CONTRADICTION')
+    uncertain=((result.get('evidence') or {}).get('characteristics') or {}).get('uncertain') or []
+    if any(p.get('reason')=='blade_vector_component_order_not_proven' for p in uncertain):
+        reasons.append('V22_DIFFERENT_BLADE_VECTOR_REQUIRES_ORDER_EVIDENCE')
+    return reasons,contexts,structures
+
 def assess_pair_v22(source,target, *, allow_category=True):
     base=assess_pair(source,target)
     proofs=[kind_proof(row,allow_category=allow_category) for row in (source,target)]
@@ -100,7 +120,17 @@ def assess_pair_v22(source,target, *, allow_category=True):
     modes=[automation_mode(r.get('name','')) for r in (source,target)]
     mode_conflict=all(modes) and modes[0]!=modes[1]
     if base['confirmed'] and not primary_component and not mode_conflict:
-        return {**base,'rule_id':'V21_RETAINED','new_rule_applied':False}
+        # The negative guards apply to retained V2.1 acceptance too.
+        guard_reasons,contexts,structures=_negative_guards(base,source,target)
+        if not guard_reasons:
+            return {**base,'rule_id':'V21_RETAINED','new_rule_applied':False}
+        blocked={**base,'confirmed':False,'blocking_reasons':[*base['blocking_reasons'],guard_reasons[0]],
+                 'evidence':{**base['evidence'],'kind_evidence':proofs,'rule_version':RULE_VERSION},
+                 'rule_id':'V21_RETAINED_V22_NEGATIVE_GUARD','new_rule_applied':True}
+        blocked['evidence']['negative_guard_result']={'blocking_reasons':list(blocked['blocking_reasons']),
+            'automation_modes':modes,'automation_context':contexts,'all_current_guards_pass':False,
+            'structural_execution':structures}
+        return blocked
     result=assess_pair(source,target,kind_resolver=lambda row:kind_proof(row,allow_category=allow_category)['kind'])
     rules=sorted({p['rule_id'] for p in proofs if p['rule_id'] and p['kind']!=p['old_kind']})
     result['evidence']['kind_evidence']=proofs
@@ -110,20 +140,11 @@ def assess_pair_v22(source,target, *, allow_category=True):
         result['confirmed']=False
         result['blocking_reasons'].append('V22_EXPLICIT_AUTOMATION_CONTRADICTION')
         result['rule_id']='V22_EXPLICIT_AUTOMATION_CONTRADICTION'
-    contexts=[automation_context(r) for r in (source,target)]
-    if result['confirmed'] and (any(c['self_contradiction'] for c in contexts) or
-            all(c['mode'] for c in contexts) and contexts[0]['mode']!=contexts[1]['mode']):
+    guard_reasons,contexts,structures=_negative_guards(result,source,target)
+    if result['confirmed'] and guard_reasons:
         result['confirmed']=False
-        result['blocking_reasons'].append('V22_EXPLICIT_CATEGORY_AUTOMATION_CONTRADICTION')
-    structures=[structural_marks(r.get('name','')) for r in (source,target)]
-    for key in ('orientation','frame'):
-        if result['confirmed'] and structures[0][key] and structures[1][key] and set(structures[0][key]).isdisjoint(structures[1][key]):
-            result['confirmed']=False
-            result['blocking_reasons'].append('V22_EXPLICIT_'+key.upper()+'_CONTRADICTION')
-    uncertain=result['evidence']['characteristics']['uncertain']
-    if result['confirmed'] and any(p['reason']=='blade_vector_component_order_not_proven' for p in uncertain):
-        result['confirmed']=False
-        result['blocking_reasons'].append('V22_DIFFERENT_BLADE_VECTOR_REQUIRES_ORDER_EVIDENCE')
+        # First failing guard only, as the sequential V2.2 checks always did.
+        result['blocking_reasons'].append(guard_reasons[0])
     if result['confirmed'] and not rules:
         raise AssertionError('No new evidence rule may silently change V2.1 acceptance')
     result['evidence']['negative_guard_result']={'blocking_reasons':list(result['blocking_reasons']),

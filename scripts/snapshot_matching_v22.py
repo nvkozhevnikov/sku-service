@@ -13,7 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'reports/MATCHING_V2_2_AI_REVIEW'
 SOURCES=('partner_st','optimum','intervesp','beka_mak','beka_mak_tr','kami')
 EXPECTED={'partner_st':1225,'optimum':1353,'intervesp':1642,'beka_mak':109,'beka_mak_tr':78,'kami':5264}
-PRIVATE=Path(os.environ['LOCALAPPDATA'])/'UniversalSupplier/kami-rc-20261005'
+PRIVATE=Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset')/'UniversalSupplier/kami-rc-20261005'
 
 def save(name,value):
     path=OUT/name

@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
+from universal_supplier.stage6e import spreadsheet_safe_text, strip_xml_illegal
 from universal_supplier.effective_identity import (
     ACCEPTED_MATCH_STATUSES, effective_manual_mapping_sql, effective_identity_accepted,
 )
@@ -329,9 +330,9 @@ def _expected_offer_values(row: FeedRow, policy: FeedPolicy) -> dict[str, Any]:
         "price": _decimal_text(row.price),
         "currencyId": str(row.currency),
         "categoryId": str(row.sterbrust_category_id),
-        "name": str(row.sterbrust_name),
+        "name": strip_xml_illegal(str(row.sterbrust_name)),
         "stb_1c_bitrix_id": feed_id,
-        "vendor": str(row.sterbrust_brand) if row.sterbrust_brand else None,
+        "vendor": strip_xml_illegal(str(row.sterbrust_brand)) if row.sterbrust_brand else None,
         "vendorCode": _vendor_code(row),
         "sterbrust_article": _sterbrust_own_article(row),
         "oldprice": _decimal_text(row.old_price) if row.old_price is not None and row.old_price > row.price else None,
@@ -342,7 +343,7 @@ def _expected_offer_values(row: FeedRow, policy: FeedPolicy) -> dict[str, Any]:
 
 
 def _clean_article(value: Any) -> str | None:
-    text = str(value or "").strip()
+    text = strip_xml_illegal(str(value or "")).strip()
     return text or None
 
 
@@ -377,7 +378,7 @@ def build_yml(snapshot: FeedSnapshot, policy: FeedPolicy) -> FeedArtifact:
     category_conflicts: list[str] = []
     for row in rows:
         category_id = str(row.sterbrust_category_id)
-        category_name = str(row.sterbrust_category_name)
+        category_name = strip_xml_illegal(str(row.sterbrust_category_name))
         previous = categories.setdefault(category_id, category_name)
         if previous != category_name:
             category_conflicts.append(
@@ -740,7 +741,10 @@ def csv_bytes(rows: Iterable[dict[str, Any]], fields: list[str]) -> bytes:
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore", lineterminator="\n")
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows(
+        {key: spreadsheet_safe_text(value) if isinstance(value, str) else value for key, value in row.items()}
+        for row in rows
+    )
     return ("\ufeff" + buffer.getvalue()).encode("utf-8")
 
 

@@ -15,7 +15,7 @@ ROOT=Path(__file__).resolve().parents[1]
 BASE=ROOT/'reports/KAMI_INTEGRATION_2026-10-05'
 PRIOR=BASE/'SELECTION_PRE_DELETE_RECOVERY_2026-10-06'
 OUT=BASE/'POST_CRASH_REVERIFY_2026-10-06'
-PRIVATE=Path(os.environ['LOCALAPPDATA'])/'UniversalSupplier/kami-rc-20261005'
+PRIVATE=Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset')/'UniversalSupplier/kami-rc-20261005'
 
 
 def digest(value):

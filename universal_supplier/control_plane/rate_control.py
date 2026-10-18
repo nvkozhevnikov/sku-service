@@ -254,6 +254,9 @@ class CircuitBreaker:
             self.metrics.circuit_breaker_cooldown_seconds += self.policy.cooldown_seconds
 
 
+RETRY_AFTER_MAX_SECONDS = 300.0  # hostile/broken Retry-After must not park a worker for hours
+
+
 def retry_after_seconds(headers: Any, *, now_epoch: float | None = None) -> float | None:
     raw = None
     if headers is not None:
@@ -261,11 +264,12 @@ def retry_after_seconds(headers: Any, *, now_epoch: float | None = None) -> floa
     if raw in (None, ""):
         return None
     try:
-        return max(0.0, float(raw))
+        value = float(raw)
+        return min(RETRY_AFTER_MAX_SECONDS, max(0.0, value)) if value == value else None
     except (TypeError, ValueError):
         try:
             value = parsedate_to_datetime(str(raw)).timestamp() - (time.time() if now_epoch is None else now_epoch)
-            return max(0.0, value)
+            return min(RETRY_AFTER_MAX_SECONDS, max(0.0, value))
         except (TypeError, ValueError, OverflowError):
             return None
 

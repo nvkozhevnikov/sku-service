@@ -7,7 +7,7 @@ implemented here.  Selectors are limited to the observed detail-price block.
 from __future__ import annotations
 
 from dataclasses import replace
-from html import unescape
+from html import escape, unescape
 import re
 
 from universal_supplier.commercial import (
@@ -52,10 +52,10 @@ def _price(source: str, identity: str, url: str | None) -> PriceExtraction:
     price_block = _raw_match(source, r'<div\s+id=["\']elPrice["\'][^>]*>(.*?)</div>\s*</div>') or ""
     numeric = re.search(r'itemprop=["\']price["\']\s+content=["\']([^"\']+)', price_block, re.I)
     if numeric:
-        synthetic = f'<main data-product-identity="{identity}"><span class="price-current">{numeric.group(1)} RUB</span></main>'
+        synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"><span class="price-current">{numeric.group(1)} RUB</span></main>'
         result = extract_public_price(synthetic, product_identity=identity, source_url=url)
         return replace(result, source_path="#elPrice [itemprop=price]", context_path="#elPrice")
-    synthetic = f'<main data-product-identity="{identity}">{price_block}</main>'
+    synthetic = f'<main data-product-identity="{escape(identity, quote=True)}">{price_block}</main>'
     result = extract_public_price(synthetic, product_identity=identity, source_url=url)
     return replace(result, source_path="#elPrice", context_path="#elPrice")
 

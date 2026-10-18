@@ -82,7 +82,8 @@ class LegacyCompatibilityTests(unittest.TestCase):
 
     def test_decimal_scale_semantics_pass(self):
         args=self.payload();args[4]['price']='7093124.0000';args[4]['old_price']=Decimal('9190015.0000')
-        self.proof(args)
+        result=self.proof(args)
+        self.assertIn(result['external_id'],LEGACY_CANARIES); self.assertFalse(result['hash_written'])
 
     def test_unknown_fifth_missing_hash_fail(self):
         args=self.payload(); raw=deepcopy(args[0].raw_data);raw['site_internal_id']='999999'

@@ -8,7 +8,7 @@ from collections import defaultdict
 from decimal import Decimal
 import re
 
-from sterbrust_matching.normalization import normalize_brand, normalize_model, normalize_text, extract_model
+from sterbrust_matching.normalization import normalize_brand, normalize_model, normalize_model_strict, normalize_text, extract_model
 from sterbrust_matching.product_identity import classify_product_kind, classify_model_role, OWN_MODEL
 from sterbrust_matching.product_identity import execution_class_marks
 from .characteristic_evidence import features, equipment_scope, _same, IDENTITY_CRITICAL, normalize_characteristic, unit_from_label
@@ -71,10 +71,12 @@ def normalize_identity_model(model,brand=''):
     """
     text=str(model or '')
     marked=''.join('+' if e['kind']=='EXECUTION_PLUS' else '' for e in plus_evidence(text))
-    if not marked: return normalize_model(text,brand)
+    # Strict key also keeps a decimal point between digits (BF-1.5 != BF 15).
+    # Descriptive PUNCTUATION_PLUS is still dropped, as before.
+    if not marked: return normalize_model_strict(text.replace('+',' '),brand)
     parts=re.split(r'\+',text)
     # Brand prefix belongs only to the first component, never an option code.
-    return '+'.join(normalize_model(p,brand if i==0 else '') for i,p in enumerate(parts))
+    return '+'.join(normalize_model_strict(p,brand if i==0 else '') for i,p in enumerate(parts))
 
 
 def identity_model(row):

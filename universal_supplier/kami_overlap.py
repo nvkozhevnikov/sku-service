@@ -5,6 +5,7 @@ from sterbrust_matching.matching import Product, classify_identity_quality
 from sterbrust_matching.normalization import normalize_brand, normalize_model
 from sterbrust_matching.product_identity import OWN_MODEL, classify_model_role, classify_product_kind
 from .execution_evidence import axis_execution_guard, condition_execution_guard
+from .matching_policy_v2 import NON_MACHINE
 from .offline_review_resolution import compare_typed, clean_observed_model, source_title_model
 
 
@@ -32,7 +33,8 @@ def equivalence(left, right):
         if not row.get('evidence_ref'):
             reasons.append('SOURCE_PROVENANCE_MISSING')
     kinds = [classify_product_kind(r.get('name', ''), r.get('source_category', '')).product_kind for r in (left, right)]
-    if kinds[0] != kinds[1] or kinds[0] in {'unknown', 'accessory', 'jaw', 'handle', 'controller'}:
+    # Reuse the policy's complete non-machine kind set, not a partial copy.
+    if kinds[0] != kinds[1] or kinds[0] == 'unknown' or kinds[0] in NON_MACHINE:
         reasons.append('PRODUCT_KIND_NOT_EXACT')
     products = [Product(str(i), r.get('name', ''), normalize_brand(r.get('brand')),
                         clean_observed_model(r)['model'], category=r.get('source_category', ''))

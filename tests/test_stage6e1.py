@@ -96,8 +96,14 @@ def test_normal_ingest_writes_quality_provenance_and_property_reconciliation():
         assert f"self.{call}" in source
 
 
-def test_migrations_001_014_remain_the_only_migrations():
-    assert [p.name for p in sorted((ROOT/"migrations").glob("[0-9][0-9][0-9]_*.sql"))][-1].startswith("014_")
+def test_migrations_001_014_bytes_remain_unchanged():
+    import hashlib, json
+    expected=json.loads((ROOT/"stage6e_migration_baseline_sha256.json").read_text(encoding="utf-8"))["files"]
+    first_014={name:digest for name,digest in expected.items() if int(name[:3])<=14}
+    assert sorted(first_014)==sorted(p.name for p in (ROOT/"migrations").glob("[0-9][0-9][0-9]_*.sql") if int(p.name[:3])<=14)
+    assert len(first_014)==14
+    for name,digest in first_014.items():
+        assert hashlib.sha256((ROOT/"migrations"/name).read_bytes()).hexdigest()==digest, name
 
 
 def test_price_provenance_never_guesses_price_type():
@@ -270,7 +276,8 @@ def test_xlsx_write_only_and_csv_streaming_are_wired():
     assert "Workbook(write_only=True)" in source and "csv_chunks" in web and "iter_export_rows" in store and "fetchmany(chunk_size)" in store
 
 
-def test_no_apply_route_and_no_migration_015():
+def test_no_apply_route_and_no_stage6e_migration_015():
     client,_=make_client()
     assert not any("apply" in getattr(route,"path","").lower() for route in client.app.routes)
-    assert not list((ROOT/"migrations").glob("015_*.sql"))
+    # 015 exists now, but it is the later commercial-capture migration, not a Stage 6E apply/ESOL table.
+    assert [p.name for p in (ROOT/"migrations").glob("015_*.sql")]==["015_commercial_capture_observations.sql"]

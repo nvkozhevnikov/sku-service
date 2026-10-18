@@ -22,7 +22,7 @@ from universal_supplier.kami_checkpoint import write_checkpoint
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'reports/KAMI_INTEGRATION_2026-10-05'
 INPUT = OUT / 'RECONCILED'
-PRIVATE = Path(os.environ['LOCALAPPDATA']) / 'UniversalSupplier/kami-rc-20261005'
+PRIVATE = Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset') / 'UniversalSupplier/kami-rc-20261005'
 
 
 def preflight(conn, marker):

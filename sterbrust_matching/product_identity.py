@@ -13,6 +13,7 @@ from .normalization import (
     MODEL_EXECUTION_QUALIFIERS,
     extract_model,
     model_tokens,
+    normalize_article,
     normalize_model,
     normalize_text,
 )
@@ -109,7 +110,10 @@ def _first_taxon(text: str) -> tuple[Taxon | None, str]:
 
 
 _MAINS_VOLTAGE = re.compile(r"(?<!\d)(220|230|380|400)\s*(?:v|в)\b", re.I)
-_MM_SIZE = re.compile(r"\b(\d{2,4})\s*мм\b", re.I)
+# Full AxB(xC) size before an mm unit. The lookbehind stops a match inside a
+# decimal (``1,25 мм`` is not ``25 мм``); Latin ``mm`` is accepted too.
+_MM_SIZE = re.compile(
+    r"(?<![\w.,])(\d{2,4}(?:[.,]\d+)?(?:\s*[xх×*]\s*\d+(?:[.,]\d+)?)*)\s*(?:мм|mm)\b", re.I)
 _EXECUTION_WORD = re.compile(r"\b(vario|premium|cnc|чпу)\b", re.I)
 SIZE_CRITICAL_KINDS = frozenset({"faceplate", "chuck", "chuck_jaw", "disk", "steady_rest"})
 
@@ -130,7 +134,10 @@ def mains_voltage_band(text: object) -> str:
 
 
 def primary_millimeters(text: object) -> str:
-    found = list(dict.fromkeys(_MM_SIZE.findall(normalize_text(text))))
+    found = list(dict.fromkeys(
+        re.sub(r"\s*[xх×*]\s*", "x", raw).replace(",", ".")
+        for raw in _MM_SIZE.findall(normalize_text(text))
+    ))
     return found[0] if len(found) == 1 else ""
 
 
@@ -152,7 +159,7 @@ def optimum_title_articles(name: object) -> frozenset[str]:
     if not _OPTIMUM_TITLE_BRAND.search(normalize_text(name)):
         return frozenset()
     return frozenset(
-        token for token in (normalize_model(raw) for raw in _TITLE_ARTICLE.findall(str(name or ""))) if token
+        token for token in (normalize_article(raw) for raw in _TITLE_ARTICLE.findall(str(name or ""))) if token
     )
 
 
@@ -359,19 +366,47 @@ def canonical_property_name(raw_name: object) -> str:
     return ""
 
 
-def canonical_properties(properties: Mapping[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
+def _render_canonical_value(canonical: str, raw_name: object, value: object) -> str:
+    rendered = str(value)
+    raw_text = normalize_text(raw_name)
+    if canonical == "voltage" and not re.search(r"(?:^|\s)(?:v|в)(?:\s|$)", normalize_text(rendered)):
+        rendered += " V"
+    elif canonical == "motor_power" and not re.search(r"(?:^|\s)(?:w|kw|вт|квт)(?:\s|$)", normalize_text(rendered)):
+        rendered += " kW" if "квт" in raw_text else " W"
+    return rendered
+
+
+def _canonical_value_groups(properties: Mapping[str, Any]) -> dict[str, list[str]]:
+    """All rendered values per canonical key, in input order."""
+    groups: dict[str, list[str]] = {}
     for raw_name, value in properties.items():
         canonical = canonical_property_name(raw_name)
-        if canonical and value not in (None, "") and canonical not in result:
-            rendered = str(value)
-            raw_text = normalize_text(raw_name)
-            if canonical == "voltage" and not re.search(r"(?:^|\s)(?:v|в)(?:\s|$)", normalize_text(rendered)):
-                rendered += " V"
-            elif canonical == "motor_power" and not re.search(r"(?:^|\s)(?:w|kw|вт|квт)(?:\s|$)", normalize_text(rendered)):
-                rendered += " kW" if "квт" in raw_text else " W"
-            result[canonical] = rendered
-    return result
+        if canonical and value not in (None, ""):
+            groups.setdefault(canonical, []).append(_render_canonical_value(canonical, raw_name, value))
+    return groups
+
+
+def _ambiguous(key: str, values: list[str]) -> bool:
+    first = values[0]
+    return any(not compare_property(first, other, key, PROPERTY_POLICIES).compatible
+               for other in values[1:])
+
+
+def canonical_properties(properties: Mapping[str, Any]) -> dict[str, Any]:
+    """One value per canonical key.
+
+    Several raw names can map to one canonical key. When their values agree,
+    the first is kept. When they contradict, the key is left out, so no
+    convenient scalar is picked; canonical_property_ambiguities() reports it.
+    """
+    return {key: values[0] for key, values in _canonical_value_groups(properties).items()
+            if not _ambiguous(key, values)}
+
+
+def canonical_property_ambiguities(properties: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Canonical keys whose raw source names carry contradicting values."""
+    return {key: values for key, values in _canonical_value_groups(properties).items()
+            if len(values) > 1 and _ambiguous(key, values)}
 
 
 def profile_for_kind(product_kind: str) -> tuple[str, ...]:
@@ -390,7 +425,20 @@ def compare_category_identity(
     candidate = canonical_properties(candidate_properties)
     comparisons: dict[str, Any] = {}
     conflicts: dict[str, Any] = {}
+    ambiguities = (canonical_property_ambiguities(source_properties),
+                   canonical_property_ambiguities(candidate_properties))
     for key in profile_for_kind(source_kind):
+        source_values = ambiguities[0].get(key) or ([source[key]] if key in source else [])
+        candidate_values = ambiguities[1].get(key) or ([candidate[key]] if key in candidate else [])
+        if (key in ambiguities[0] or key in ambiguities[1]) and source_values and candidate_values:
+            # One card carries contradicting values for the same canonical
+            # property. Never pick a convenient one: block automatic identity.
+            conflicts[f"category_property:{key}"] = {
+                "result": "PROPERTY_AMBIGUOUS_DUPLICATE_VALUES",
+                "source_values": source_values, "candidate_values": candidate_values,
+                "compatible": False,
+            }
+            continue
         if key not in source or key not in candidate:
             continue
         comparison = compare_property(source[key], candidate[key], key, PROPERTY_POLICIES)

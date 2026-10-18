@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict
+from decimal import Decimal
 from typing import Any
 
 from .models import ProductCard
@@ -11,6 +12,19 @@ from .models import ProductCard
 def stable_hash(value: Any) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _money(value: Any) -> Any:
+    """Give equal money values one textual form ("12990" == "12990.000").
+
+    Two decimal places matches the usual stored form, so hashes of already
+    two-place prices are unchanged.  A value that is not exactly
+    representable with two places is kept as-is to never hide a change.
+    """
+    if not isinstance(value, Decimal) or not value.is_finite():
+        return value
+    quantized = value.quantize(Decimal("0.01"))
+    return quantized if quantized == value else value
 
 
 def identity_value(card: ProductCard) -> dict[str, Any]:
@@ -32,7 +46,7 @@ def card_hashes(card: ProductCard) -> dict[str, str]:
         "documents": stable_hash([asdict(item) for item in card.media if item.media_type in {"document", "video"}]),
         "categories": stable_hash([asdict(item) for item in card.categories]),
         "options": stable_hash([asdict(item) for item in card.options]),
-        "commercial": stable_hash({"sku": card.sku, "price": card.price, "old_price": card.old_price, "currency": card.currency, "availability": card.availability_normalized, "quantity": card.quantity}),
+        "commercial": stable_hash({"sku": card.sku, "price": _money(card.price), "old_price": _money(card.old_price), "currency": card.currency, "availability": card.availability_normalized, "quantity": card.quantity}),
     }
 
 

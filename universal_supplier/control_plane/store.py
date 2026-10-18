@@ -197,9 +197,9 @@ class PostgresControlPlaneStore:
         return list(self.iter_export_rows(filters))
 
     def iter_export_rows(self, filters: ProductFilters, chunk_size: int = 500):
-        """Yield the exact filtered set in bounded retrieval chunks."""
+        """Yield the exact filtered set in bounded retrieval chunks via a server-side cursor."""
         where, params = product_where(filters)
-        with self._connect() as connection, connection.cursor() as cursor:
+        with self._connect() as connection, connection.transaction(), connection.cursor(name="export_rows") as cursor:
             cursor.execute(f"""SELECT sp.id AS source_product_id,s.code AS supplier_code,s.name AS supplier_name,
               sp.external_id,sp.external_id_is_stable,sp.sku,sp.name,sp.brand_raw,sp.manufacturer_raw,
               sp.source_url,sp.canonical_url,sp.description_text,sp.description_html,sp.active,

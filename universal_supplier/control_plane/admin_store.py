@@ -317,6 +317,7 @@ class PostgresAdminStore:
         if status: clauses.append("rc.lifecycle_status=%s"); params.append(status)
         if supplier: clauses.append("s.code=%s"); params.append(supplier)
         if decision: clauses.append("rc.automatic_decision=%s"); params.append(decision)
+        if assignee and not str(assignee).strip().isdigit(): raise ValueError("Некорректный исполнитель")
         if assignee: clauses.append("rc.assigned_to_user_id=%s"); params.append(int(assignee))
         if brand: clauses.append("sp.brand_raw ILIKE %s"); params.append(f"%{brand}%")
         if category: clauses.append("coalesce(pid.identity_characteristics->>'category','') ILIKE %s"); params.append(f"%{category}%")

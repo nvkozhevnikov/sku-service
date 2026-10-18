@@ -1,6 +1,6 @@
 {
   "source_checkpoint_sha256": "ca30e6f363dca9fe24251056224d0431c13eaa3cfcbd92cf120b8a51209d5794",
-  "immutable_through": "013_operator_admin_review.sql",
+  "immutable_through": "015_commercial_capture_observations.sql",
   "files": {
     "001_suppliers_and_crawls.sql": "9b2bf82bee42832615a6ed5dc0d4be5902c408963c5d77b683f08b3ef9b5a9f7",
     "002_products_and_offers.sql": "5fec752af623d3752dfddacfdf907fc6a53d5e7f527657986979be6567c50d15",
@@ -14,9 +14,8 @@
     "010_persistent_match_quality.sql": "978c7d621bd5575c20c127293c6a9062e67aeb9ce951e70ca3cdf88d4778db44",
     "011_sterbrust_optional_product_url.sql": "adb331386b3329773116b1ede0da24b0d450dd4d41ab3c0c5e1f3466d76bc8c8",
     "012_web_control_plane_scheduler.sql": "0fd73e079e826d985bed373357f056aff2e3ca23079d070680d24e0987aed56a",
-    "013_operator_admin_review.sql": "c6369548073445a356c064df0423292eb9fb54b446ce23e5d0326b346aaa3157"
-  },
-  "new_migration": {
-    "014_stage6e_operator_data_tools.sql": "a2ba58b2b19550b0c297f682fa8112d7cc23d7c5360d8f8ae57d4c21797cdf3d"
+    "013_operator_admin_review.sql": "c6369548073445a356c064df0423292eb9fb54b446ce23e5d0326b346aaa3157",
+    "014_stage6e_operator_data_tools.sql": "a2ba58b2b19550b0c297f682fa8112d7cc23d7c5360d8f8ae57d4c21797cdf3d",
+    "015_commercial_capture_observations.sql": "56d678d4f6b5a8d0b1b8001c09b20ea939db3b7d53d1f62c1a054ee14862a084"
   }
 }

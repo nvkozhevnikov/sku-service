@@ -19,6 +19,17 @@ class OptimumDiscovery:
     def __init__(self, fetcher: HttpFetcher):
         self.fetcher = fetcher
         self.parser = OptimumProductParser()
+        # Category/listing pages that could not be read.  Any entry means the
+        # discovered product set may be incomplete, so deactivation is unsafe.
+        self.category_page_failures: list[dict] = []
+
+    def _category_failure(self, url: str, fetched) -> None:
+        if isinstance(fetched, Exception):
+            self.category_page_failures.append({"url": url, "http_status": None,
+                                                "error_type": type(fetched).__name__})
+        else:
+            self.category_page_failures.append({"url": url, "http_status": fetched.status_code,
+                                                "error_type": f"HTTP_{fetched.status_code}"})
 
     async def sitemap_urls(self) -> tuple[list[str], list[str]]:
         root = etree.fromstring((await self.fetcher.get(SITEMAP_URL)).text.encode())
@@ -38,19 +49,26 @@ class OptimumDiscovery:
         """
         seeds = [CATALOG_URL] + list(seed_urls or ())[:24]
         navigation_doc = None
+        seed_failures: list[tuple[str, object]] = []
         for seed in seeds:
             try:
                 page = await self.fetcher.get(seed)
             except MaxRunDurationExceeded:
                 raise
-            except Exception:
+            except Exception as error:
+                seed_failures.append((seed, error))
                 continue
             if page.status_code != 200:
+                seed_failures.append((seed, page))
                 continue
             candidate = html.fromstring(page.text)
             if candidate.xpath("//a[contains(@class,'menu-submenu-section-header-wrapper')]"):
                 navigation_doc = candidate
                 break
+        if navigation_doc is None:
+            # Without a navigation seed the taxonomy is incomplete.
+            for seed, failure in seed_failures:
+                self._category_failure(seed, failure)
 
         candidates: dict[str, dict] = {
             CATALOG_URL: {"category_name": "Каталог товаров", "category_url": CATALOG_URL,
@@ -85,7 +103,10 @@ class OptimumDiscovery:
             for source_url, fetched in zip(batch, fetched_batch):
                 if isinstance(fetched, MaxRunDurationExceeded):
                     raise fetched
-                if isinstance(fetched, Exception) or fetched.status_code != 200 or not self.parser.is_category(fetched.text):
+                if isinstance(fetched, Exception) or fetched.status_code != 200:
+                    self._category_failure(source_url, fetched)
+                    continue
+                if not self.parser.is_category(fetched.text):
                     continue
                 doc = html.fromstring(fetched.text)
                 canonical = normalize_url(_first(doc.xpath(
@@ -126,7 +147,11 @@ class OptimumDiscovery:
             for page_url, fetched in zip(batch, fetched_batch):
                 if isinstance(fetched, MaxRunDurationExceeded):
                     raise fetched
-                if isinstance(fetched, Exception):
+                if isinstance(fetched, Exception) or fetched.status_code != 200:
+                    # The catalog root is known to reject ordinary GETs; its
+                    # products are reached through the child categories.
+                    if page_url != CATALOG_URL:
+                        self._category_failure(page_url, fetched)
                     continue
                 doc = html.fromstring(fetched.text)
                 category_url = normalize_url(page_url.split("?", 1)[0])

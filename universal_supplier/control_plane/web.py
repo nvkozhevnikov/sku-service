@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, quote, urlparse
+import tempfile
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request
@@ -23,7 +24,7 @@ from .commercial_qa import CommercialQaService, CommercialQaUnavailable
 from .queue import InMemoryJobQueue, PostgresJobQueue
 from .rate_control import DomainRatePolicy, OPTIMUM_DEFAULT_RATE_POLICY, PARTNER_ST_DEFAULT_RATE_POLICY
 from .scheduler import controls_to_schedule, schedule_to_controls, validate_schedule
-from .security import AuthUser, SessionSigner, hash_password, verify_password
+from .security import AuthUser, LoginThrottle, SessionSigner, dummy_password_hash, hash_password, verify_password
 from .store import PostgresControlPlaneStore, ProductFilters, SnapshotControlPlaneStore, UnavailableControlPlaneStore
 
 PACKAGE = Path(__file__).resolve().parent
@@ -99,6 +100,20 @@ def require_trusted_origin(request: Request) -> None:
             raise HTTPException(403, "Недоверенный источник запроса")
 
 
+def safe_next(value: str | None) -> str:
+    """Only same-site absolute paths; anything with scheme/netloc or protocol-relative goes to '/'."""
+    value = (value or "").strip()
+    if not value.startswith("/") or value.startswith(("//", "/\\")) or "\\" in value or any(ord(c) < 32 for c in value): return "/"
+    parsed = urlparse(value)
+    return "/" if parsed.scheme or parsed.netloc else value
+
+
+def optional_int(value: str | None, label: str) -> int | None:
+    if value in {None, ""}: return None
+    if not str(value).strip().isdigit(): raise HTTPException(400, f"Некорректное значение: {label}")
+    return int(value)
+
+
 def filters_from_request(request: Request, *, forced_decision: str = "") -> ProductFilters:
     q = request.query_params
     try:
@@ -140,7 +155,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
     app.state.store = store; app.state.queue = queue; app.state.admin_store = admin_store; app.state.stage6e_service = stage6e_service
     app.state.auth_required = auth_required; app.state.direct_crawl_executions = 0
-    app.state.commercial_qa_service = commercial_qa_service
+    app.state.commercial_qa_service = commercial_qa_service; login_throttle = app.state.login_throttle = LoginThrottle()
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE / "templates")
     templates.env.filters["ru"] = russian_label
@@ -204,11 +219,19 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.post("/login")
     async def login(request: Request):
-        require_trusted_origin(request); values = await form_values(request); found = admin_store.user_by_username(values.get("username", ""))
-        if not found or not found[0].is_active or not verify_password(values.get("password", ""), found[1]):
+        require_trusted_origin(request); values = await form_values(request)
+        throttle_key = (values.get("username", "").strip().lower(), request.client.host if request.client else "")
+        if login_throttle.locked(throttle_key):
+            return templates.TemplateResponse(request, "login.html", context(request, users_exist=admin_store.users_exist(), error="Слишком много неудачных попыток входа. Повторите позже", active=""), status_code=429)
+        found = admin_store.user_by_username(values.get("username", ""))
+        # Always run scrypt so unknown usernames cost the same as wrong passwords.
+        password_ok = verify_password(values.get("password", ""), found[1] if found else dummy_password_hash())
+        if not found or not found[0].is_active or not password_ok:
+            login_throttle.failure(throttle_key)
             return templates.TemplateResponse(request, "login.html", context(request, users_exist=admin_store.users_exist(), error="Неверное имя пользователя или пароль", active=""), status_code=401)
+        login_throttle.reset(throttle_key)
         user, _ = found; admin_store.touch_login(user.id); token, _ = signer.issue(user)
-        response = RedirectResponse(values.get("next") or "/", 303)
+        response = RedirectResponse(safe_next(values.get("next")), 303)
         response.set_cookie(signer.cookie_name, token, httponly=True, samesite="lax", secure=os.environ.get("HTTPS_ENABLED") == "YES", max_age=signer.ttl_seconds, path="/")
         return response
 
@@ -256,9 +279,13 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         admin_store.audit(user.id or None,"EXPORT_CREATED","products","xlsx",None,{"rows":total,"filters":dict(request.query_params),"write_only":True,"chunk_size":500})
         return Response(product_workbook(rows,details),media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":f'attachment; filename="{safe_export_filename("products","xlsx",filters.supplier)}"'})
 
+    def filtered_review_cases(request: Request):
+        q = request.query_params; optional_int(q.get("assignee"), "исполнитель")
+        return admin_store.review_cases(status=q.get("status", ""), supplier=q.get("supplier", ""), decision=q.get("decision", ""), assignee=q.get("assignee", ""), brand=q.get("brand", ""), category=q.get("category", ""), opened_from=q.get("opened_from", ""), opened_to=q.get("opened_to", ""))
+
     @app.get("/review", response_class=HTMLResponse)
     def review(request: Request):
-        guard(request); rows = admin_store.review_cases(status=request.query_params.get("status", ""), supplier=request.query_params.get("supplier", ""), decision=request.query_params.get("decision", ""), assignee=request.query_params.get("assignee", ""), brand=request.query_params.get("brand", ""), category=request.query_params.get("category", ""), opened_from=request.query_params.get("opened_from", ""), opened_to=request.query_params.get("opened_to", ""))
+        guard(request); rows = filtered_review_cases(request)
         return templates.TemplateResponse(request, "review_queue.html", context(request, rows=rows, counts=admin_store.review_counts(), suppliers=store.suppliers(), users=admin_store.list_users(), filters=request.query_params, active="review"))
 
     @app.get("/review/{case_id}", response_class=HTMLResponse)
@@ -296,7 +323,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     async def bulk_assign(request: Request):
         user = guard(request, MUTATING_ROLES); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
         case_ids = [int(x) for x in values.get("case_ids", "").split(",") if x.strip().isdigit()]
-        admin_store.assign(case_ids, int(values["assigned_to_user_id"]) if values.get("assigned_to_user_id") else None, user.id)
+        admin_store.assign(case_ids, optional_int(values.get("assigned_to_user_id"), "исполнитель"), user.id)
         return RedirectResponse("/review?bulk_saved=1", 303)
 
     @app.post("/review/bulk")
@@ -307,7 +334,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         action = values.get("bulk_action", "")
         try:
             if action == "assign":
-                admin_store.assign(case_ids, int(values["assigned_to_user_id"]) if values.get("assigned_to_user_id") else None, user.id)
+                admin_store.assign(case_ids, optional_int(values.get("assigned_to_user_id"), "исполнитель"), user.id)
             else:
                 admin_store.bulk_update(case_ids, action, user.id, values.get("comment", ""))
         except (ValueError, KeyError) as error: return page_error(request, str(error))
@@ -615,7 +642,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/sterbrust-preview", response_class=HTMLResponse)
     def sterbrust_preview(request: Request):
-        guard(request); result=stage6e_service.preview(page=int(request.query_params.get("page","1") or 1),page_size=100)
+        guard(request); result=stage6e_service.preview(page=max(1,optional_int(request.query_params.get("page"),"страница") or 1),page_size=100)
         return templates.TemplateResponse(request,"sterbrust_preview.html",context(request,result=result,active="preview"))
 
     def _xml_payload(request: Request):
@@ -673,7 +700,18 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         if mode == "full":
             filters = filters_from_request(request)
             from universal_supplier.xml_export import supplier_filename
-            return StreamingResponse(xml_service.iter_full(filters), media_type="application/xml; charset=utf-8",
+            # Materialize first (RAM up to 16 MiB, then disk) so a mid-export DB error is a 500, not a truncated 200.
+            spool = tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024)
+            try:
+                for chunk in xml_service.iter_full(filters): spool.write(chunk)
+                spool.seek(0)
+            except Exception as exc:
+                spool.close(); return page_error(request, f"XML не выдан: {type(exc).__name__}", status_code=500)
+            def spooled():
+                try:
+                    while chunk := spool.read(256 * 1024): yield chunk
+                finally: spool.close()
+            return StreamingResponse(spooled(), media_type="application/xml; charset=utf-8",
                 headers={"Content-Disposition": f'attachment; filename="{supplier_filename(filters.supplier)}"'})
         mode, filters, summary, stats, preview_text, error, data, filename = _xml_payload(request)
         if error or not data:
@@ -684,7 +722,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.get("/exports/{entity}.{extension}")
     def section_export(request: Request,entity:str,extension:str):
         user=guard(request)
-        if entity=="review": rows=admin_store.review_cases(status=request.query_params.get("status",""),supplier=request.query_params.get("supplier",""),decision=request.query_params.get("decision",""),assignee=request.query_params.get("assignee",""),brand=request.query_params.get("brand",""),category=request.query_params.get("category",""),opened_from=request.query_params.get("opened_from",""),opened_to=request.query_params.get("opened_to",""))
+        if entity=="review": rows=filtered_review_cases(request)
         elif entity=="suppliers": rows=store.suppliers()
         elif entity=="runs": rows=store.runs()
         elif entity=="quality": rows=stage6e_service.quality()
@@ -842,7 +880,22 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     return app
 
 
+def create_unavailable_app(message: str) -> FastAPI:
+    """Fail closed: no auth bypass when configuration is broken; only health probes answer."""
+    store = UnavailableControlPlaneStore(message)
+    app = FastAPI(title="Универсальный поставщик — недоступно", docs_url=None, redoc_url=None)
+    app.state.store = store; app.state.auth_required = True
+
+    @app.get("/health")
+    def health(): return JSONResponse(store.health(), status_code=503)
+    @app.get("/ready")
+    def ready(): return JSONResponse({"ready": False}, status_code=503)
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+    def unavailable(path: str): return PlainTextResponse("Сервис недоступен: конфигурация не загружена", status_code=503)
+    return app
+
+
 try:
     app = create_app()
 except RuntimeError as error:
-    app = create_app(store=UnavailableControlPlaneStore(str(error)), queue=InMemoryJobQueue(), auth_required=False)
+    app = create_unavailable_app(str(error))

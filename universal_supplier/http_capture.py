@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import codecs
 from enum import StrEnum
 import hashlib
+import http.client
 from pathlib import Path
 import re
 import time
@@ -54,6 +56,32 @@ _JS_SECRET_RE = re.compile(
     re.I,
 )
 _QUERY_SECRET_RE = re.compile(r"([?&](?:sessid|bitrix_sessid|access_token|api[_-]?key|token|cookie)=)[^&#\"'\s<]+", re.I)
+
+
+# Same ceiling as the sitemap size check in full_supplier_collection.
+MAX_RESPONSE_BYTES = 20_000_000
+
+
+class ResponseTooLargeError(OSError):
+    """The response body exceeds MAX_RESPONSE_BYTES; it is never buffered whole."""
+
+
+def _read_bounded(stream) -> bytes:  # type: ignore[no-untyped-def]
+    body = stream.read(MAX_RESPONSE_BYTES + 1)
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise ResponseTooLargeError(f"response body exceeds {MAX_RESPONSE_BYTES} bytes")
+    return body
+
+
+def _charset(content_type: str | None) -> str:
+    """Return the Content-Type charset when it is a known codec, else utf-8."""
+    match = re.search(r"charset\s*=\s*[\"']?([\w.:-]+)", content_type or "", re.I)
+    if match:
+        try:
+            return codecs.lookup(match.group(1)).name
+        except LookupError:
+            pass
+    return "utf-8"
 
 
 class CaptureStatus(StrEnum):
@@ -128,7 +156,7 @@ class UrllibPublicHttpClient:
                     final_url=response.geturl(),
                     status_code=response.status,
                     content_type=response.headers.get("Content-Type"),
-                    body=response.read(),
+                    body=_read_bounded(response),
                     redirects=tuple(redirects.redirects),
                 )
         except HTTPError as error:
@@ -136,7 +164,7 @@ class UrllibPublicHttpClient:
                 final_url=error.geturl() or url,
                 status_code=error.code,
                 content_type=error.headers.get("Content-Type") if error.headers else None,
-                body=error.read(),
+                body=_read_bounded(error),
                 redirects=tuple(redirects.redirects),
             )
 
@@ -163,9 +191,9 @@ def _validate_public_url(url: str) -> None:
         raise ValueError("URL must not contain credential or session material")
 
 
-def sanitise_html(body: bytes) -> bytes:
+def sanitise_html(body: bytes, content_type: str | None = None) -> bytes:
     """Redact known session-bearing input/query values without retaining raw bytes."""
-    text = body.decode("utf-8", errors="replace")
+    text = body.decode(_charset(content_type), errors="replace")
     text = _SENSITIVE_INPUT_RE.sub(r"\1\2[REDACTED]\2", text)
     text = _SENSITIVE_INPUT_VALUE_FIRST_RE.sub(r"\1\2[REDACTED]\2", text)
     text = _JS_SECRET_RE.sub(r"\1[REDACTED]\2", text)
@@ -257,7 +285,11 @@ def capture_public_html(
         except ValueError:
             return CaptureResult(CaptureStatus.UNSAFE_URL, url, None, None, None, observed_at, (), None, None, None,
                                  ("redirect_or_final_url_rejected",))
-        except (URLError, OSError, TimeoutError) as error:
+        except ResponseTooLargeError:
+            # Retrying cannot shrink the page; fail this URL only.
+            return CaptureResult(CaptureStatus.NETWORK_ERROR, url, None, None, None, observed_at, (), None, None, None,
+                                 tuple(errors + ["response_too_large"]))
+        except (URLError, OSError, TimeoutError, http.client.HTTPException) as error:
             errors.append(f"network_error:{type(error).__name__}")
             if attempt + 1 < max_attempts:
                 if retry_delay_seconds:
@@ -288,7 +320,7 @@ def capture_public_html(
             # Blocked/non-HTML/status responses remain evidence-free.
             if page_status is CaptureStatus.AMBIGUOUS:
                 response_sha256 = hashlib.sha256(response.body).hexdigest()
-                evidence = sanitise_html(response.body)
+                evidence = sanitise_html(response.body, response.content_type)
                 evidence_sha256 = hashlib.sha256(evidence).hexdigest()
                 evidence_ref = evidence_store.save(
                     evidence_dir=evidence_dir, final_url=response.final_url,
@@ -299,7 +331,7 @@ def capture_public_html(
                                      page_diagnostics, evidence_body=evidence)
             return CaptureResult(page_status, url, response.final_url, response.status_code, response.content_type, observed_at, response.redirects, None, None, None, page_diagnostics)
         response_sha256 = hashlib.sha256(response.body).hexdigest()
-        evidence = sanitise_html(response.body)
+        evidence = sanitise_html(response.body, response.content_type)
         evidence_sha256 = hashlib.sha256(evidence).hexdigest()
         evidence_ref = evidence_store.save(
             evidence_dir=evidence_dir, final_url=response.final_url,

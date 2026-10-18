@@ -16,9 +16,9 @@ from psycopg.adapt import Loader
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'reports/KAMI_INTEGRATION_2026-10-05/DATABASE'
-BIN = Path(os.environ['LOCALAPPDATA']) / 'Temp/universal_supplier_stage4_pg17_runtime/bin'
+BIN = Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset') / 'Temp/universal_supplier_stage4_pg17_runtime/bin'
 DATA = ROOT.parent / 'universal_supplier_kami_20261005_pg17_data'
-PRIVATE = Path(os.environ['LOCALAPPDATA']) / 'UniversalSupplier/kami-rc-20261005'
+PRIVATE = Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset') / 'UniversalSupplier/kami-rc-20261005'
 PORT = 55451
 DB = 'universal_supplier_kami_rc'
 DUMP_SHA = '27337c8a8e0b09924df8a2e160aa622c15e463ec8934614e6743dc2508caf8cc'
@@ -82,6 +82,8 @@ def verify_restored(evidence, kwargs):
 
 
 def main():
+    if not os.environ.get('LOCALAPPDATA'):
+        raise RuntimeError('LOCALAPPDATA is required: private runtime files live there')
     if sys.argv[1:] == ['--verify-only']:
         evidence = json.loads((OUT / 'RESTORE_VERIFICATION.json').read_text(encoding='utf-8'))
         if (evidence['database'] != DB or evidence['port'] != PORT

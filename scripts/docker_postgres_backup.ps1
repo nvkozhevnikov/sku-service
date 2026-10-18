@@ -17,7 +17,9 @@ $Docker = if (Get-Command docker -ErrorAction SilentlyContinue) {
 
 Push-Location $Root
 try {
-    & $Docker compose exec -T postgres sh -eu -c 'umask 077; pg_dump -U "$APP_DB_USER" -d "$APP_DB_NAME" -Fc -f "/backups/$1"' sh $Name
+    # Dump to a .partial file and rename only after pg_dump succeeded, so an
+    # interrupted dump never looks like a complete backup.
+    & $Docker compose exec -T postgres sh -eu -c 'umask 077; rm -f "/backups/$1.partial"; pg_dump -U "$APP_DB_USER" -d "$APP_DB_NAME" -Fc -f "/backups/$1.partial"; test -s "/backups/$1.partial"; mv "/backups/$1.partial" "/backups/$1"' sh $Name
     if ($LASTEXITCODE -ne 0) { throw "pg_dump failed" }
     $Path = Join-Path $BackupDirectory $Name
     if (-not (Test-Path -LiteralPath $Path) -or (Get-Item -LiteralPath $Path).Length -eq 0) {

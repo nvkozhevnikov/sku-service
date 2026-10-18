@@ -1,2 +1,14 @@
 # Preserve the frozen OFFLINE RUN2 runner's exact committed LF bytes on Windows.
 /scripts/run2_kami_products.py text eol=lf
+# Kami fixtures are pinned by sha256 in tests/fixtures/kami/manifest.json.
+# Keep checkout bytes identical on every OS: most fixtures are committed with
+# their original CRLF bytes (never convert them); the two below are stored
+# LF-normalised in git while the manifest pins their original CRLF bytes, so
+# git must check them out as CRLF everywhere.
+/tests/fixtures/kami/*.html -text
+/tests/fixtures/kami/spectr_variant_counterspindle.html text eol=crlf
+/tests/fixtures/kami/observed_price_on_request.html text eol=crlf
+# Migration checksums (stage6e_migration_baseline_sha256.json, schema_migrations)
+# are over the committed LF bytes; never let autocrlf rewrite them on checkout.
+/migrations/*.sql text eol=lf
+/schema.sql text eol=lf

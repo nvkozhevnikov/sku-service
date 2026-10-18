@@ -1,0 +1,9 @@
+# Test/development dependencies (runtime dependencies are in requirements.txt).
+-r requirements.txt
+pytest>=8,<10
+
+# Optional, only for specific operator QA scripts (not needed for `python -m pytest`):
+#   playwright   - browser/screenshot QA, e.g. scripts/qa_stage6e1_browser.py, scripts/qa_xml_screenshots.py
+#                  (also run `python -m playwright install chromium`)
+#   pypdf        - saved PDF document inspection, e.g. scripts/inspect_targeted_saved_documents.py
+#   pypdfium2    - PDF page rendering for the same document-inspection scripts

@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from .http_capture import MAX_RESPONSE_BYTES, ResponseTooLargeError
 from .models import FetchRecord
 from .control_plane.rate_control import (
     CircuitBreaker, DomainRateLimiter, DomainRatePolicy, RequestMetrics, SystemClock,
@@ -17,6 +18,22 @@ class RetryPolicy:
     max_attempts: int = 3
     backoff_seconds: float = 0.5
     retry_statuses: tuple[int, ...] = (429, 500, 502, 503, 504)
+
+
+def _bounded_text(response) -> str:  # type: ignore[no-untyped-def]
+    """Read a streamed body up to MAX_RESPONSE_BYTES, then decode it as requests does."""
+    if not isinstance(response, requests.Response):
+        return response.text  # injected test doubles carry a ready text
+    try:
+        body = bytearray()
+        for chunk in response.iter_content(chunk_size=65536):
+            body.extend(chunk)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise ResponseTooLargeError(f"response body exceeds {MAX_RESPONSE_BYTES} bytes")
+        response._content = bytes(body)
+    finally:
+        response.close()
+    return response.text
 
 
 class HttpTransport:
@@ -73,14 +90,14 @@ class HttpTransport:
         started = self.clock.monotonic()
         effective_deadline = self.deadline if deadline is None else deadline
         response, attempts = request_with_resilience(
-            lambda: self.session.get(url, timeout=self.timeout, allow_redirects=True),
+            lambda: self.session.get(url, timeout=self.timeout, allow_redirects=True, stream=True),
             self.policy, self.limiter, clock=self.clock, metrics=self.metrics, breaker=self.breaker,
             deadline=effective_deadline,
         )
         return FetchRecord(
             requested_url=url, final_url=response.url, status_code=response.status_code,
             redirects=tuple(item.url for item in response.history), attempts=attempts,
-            elapsed_ms=round((self.clock.monotonic() - started) * 1000), text=response.text,
+            elapsed_ms=round((self.clock.monotonic() - started) * 1000), text=_bounded_text(response),
         )
 
     def get_validated(self, url: str, validator, *, deadline: float | None = None,
@@ -93,7 +110,7 @@ class HttpTransport:
         total_attempts = 0
         for _ in range(max_redirects + 1):
             response, attempts = request_with_resilience(
-                lambda: self.session.get(current, timeout=self.timeout, allow_redirects=False),
+                lambda: self.session.get(current, timeout=self.timeout, allow_redirects=False, stream=True),
                 self.policy, self.limiter, clock=self.clock, metrics=self.metrics,
                 breaker=self.breaker, deadline=effective_deadline,
             )
@@ -103,11 +120,13 @@ class HttpTransport:
                 if not location:
                     raise ValueError("Redirect без Location")
                 redirects.append(current)
+                if isinstance(response, requests.Response):
+                    response.close()
                 current = validator(urljoin(current, location))
                 continue
             return FetchRecord(
                 requested_url=url, final_url=current, status_code=response.status_code,
                 redirects=tuple(redirects), attempts=total_attempts,
-                elapsed_ms=round((self.clock.monotonic() - started) * 1000), text=response.text,
+                elapsed_ms=round((self.clock.monotonic() - started) * 1000), text=_bounded_text(response),
             )
         raise ValueError("Слишком много перенаправлений")

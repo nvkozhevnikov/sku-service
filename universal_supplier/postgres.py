@@ -41,6 +41,35 @@ def should_quarantine_automatic_link(previous_auto_accepted: bool, new_status: s
     return bool(previous_auto_accepted and new_status in {"CONFLICT", "REVIEW", "NEW_CANDIDATE"})
 
 
+OPERATOR_NON_LINK_DECISIONS = frozenset({"MANUAL_CONFIRMED_NEW", "MANUAL_ACCESSORY"})
+
+
+def operator_decision_guard(decision: dict, evidence: dict, warnings: dict, conflicts: dict,
+                            conflict_class: str, *, rejected: bool,
+                            final_decision_class: str | None):
+    """Downgrade an automatic link that contradicts an operator decision.
+
+    Returns None when no operator decision applies. Otherwise returns the
+    REVIEW decision with the proposed target kept as evidence only.
+    """
+    if decision.get("auto_accepted") not in {True, "TRUE"}:
+        return None
+    if rejected:
+        reason, method = "OPERATOR_REJECTED_CANDIDATE", "REVIEW_OPERATOR_REJECTED_CANDIDATE"
+    elif final_decision_class in OPERATOR_NON_LINK_DECISIONS:
+        reason, method = "OPERATOR_FINAL_" + str(final_decision_class), "REVIEW_OPERATOR_FINAL_DECISION"
+    else:
+        return None
+    guarded_evidence = {"operator_decision_guard": {
+        "proposed_sterbrust_product_id": decision.get("sterbrust_product_id"),
+        "proposed_status": decision.get("status"), "candidate_rejected": bool(rejected),
+        "final_decision_class": final_decision_class},
+        "proposed_input_evidence": evidence}
+    return ({**decision, "status": "REVIEW", "match_method": method, "auto_accepted": False},
+            guarded_evidence, {**warnings, "operator_decision": reason},
+            {**conflicts, "operator_decision": reason}, "OPERATOR_DECISION_BLOCKED")
+
+
 def decision_data_quality_flags(decision: dict, evidence: dict) -> list[str]:
     flags = evidence.get("data_quality_flags", decision.get("data_quality_flags", []))
     if isinstance(flags, str):
@@ -311,15 +340,29 @@ class PostgresRepository:
             else:
                 offer_id = row[0]
                 if projection_updated:
+                    # Only a public numeric price or an explicit "price on
+                    # request" is evidence about the price.  A parse error,
+                    # missing/ambiguous/zero block keeps the last known price;
+                    # the observation ledger still records the failed state.
+                    from .commercial import PriceState
+                    price_known = observation.price_state in {PriceState.NUMERIC_PUBLIC, PriceState.PRICE_ON_REQUEST}
+                    availability_known = card.availability_normalized != "unknown"
                     cursor.execute(
-                        """UPDATE offers SET sku=%s,title=%s,price=%s,old_price=%s,currency=%s,
-                           availability_raw=%s,availability_normalized=%s,quantity=NULL,raw_data=%s::jsonb,
+                        """UPDATE offers SET sku=%s,title=%s,
+                           price=CASE WHEN %s THEN %s ELSE price END,
+                           old_price=CASE WHEN %s THEN %s ELSE old_price END,
+                           currency=CASE WHEN %s THEN %s ELSE currency END,
+                           availability_raw=CASE WHEN %s THEN %s ELSE availability_raw END,
+                           availability_normalized=CASE WHEN %s THEN %s ELSE availability_normalized END,
+                           quantity=NULL,raw_data=%s::jsonb,
                            last_seen_at=%s,last_success_at=%s,
                            last_changed_at=CASE WHEN %s THEN %s ELSE last_changed_at END,
                            active=false,missed_crawls=0,updated_at=now()
                            WHERE id=%s""",
-                        (card.sku, card.name, card.price, card.old_price, card.currency or None,
-                         card.availability_raw, card.availability_normalized, json.dumps(card.raw_data, ensure_ascii=False),
+                        (card.sku, card.name, price_known, card.price, price_known, card.old_price,
+                         price_known, card.currency or None,
+                         availability_known, card.availability_raw, availability_known, card.availability_normalized,
+                         json.dumps(card.raw_data, ensure_ascii=False),
                          observed_at, observed_at, card.supplier_code != 'kami' or kami_commercial_changed,
                          observed_at, offer_id),
                     )
@@ -1206,6 +1249,23 @@ class PostgresRepository:
                     conflicts={**conflicts,'manual_mapping':'AUTOMATIC_TARGET_DIFFERS_FROM_EFFECTIVE_MANUAL'}
                     conflict_class='MANUAL_MAPPING_OVERRIDE_BLOCKED'
                     decision={**decision,'status':'REVIEW','match_method':'REVIEW_MANUAL_TARGET_CHANGE','auto_accepted':False}
+            if decision.get('auto_accepted') in {True,'TRUE'} and catalog_id is not None:
+                # Read-only recheck under the same locks: an operator rejection
+                # of this exact pair, or a latest final NEW/ACCESSORY decision,
+                # forbids automatic linking. POSTPONED is scheduling only.
+                cursor.execute(
+                    """SELECT EXISTS (SELECT 1 FROM candidate_rejections cr
+                                      WHERE cr.source_product_id=%s AND cr.sterbrust_product_id=%s),
+                              (SELECT rd.decision_class FROM review_decisions rd
+                               WHERE rd.source_product_id=%s AND rd.decision_class<>'POSTPONED'
+                               ORDER BY rd.created_at DESC, rd.id DESC LIMIT 1)""",
+                    (source_id, candidate_key, source_id),
+                )
+                rejected, final_class = cursor.fetchone()
+                guarded = operator_decision_guard(decision, evidence, warnings, conflicts, conflict_class,
+                                                  rejected=bool(rejected), final_decision_class=final_class)
+                if guarded is not None:
+                    decision, evidence, warnings, conflicts, conflict_class = guarded
             decision_hash = decision_fingerprint(decision['status'],decision['match_method'],candidate_key,conflict_class)
             warning_hash = warning_fingerprint(warnings)
             cursor.execute(

@@ -8,7 +8,9 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
+from functools import lru_cache
 
 
 ROLES = ("ADMIN", "OPERATOR", "VIEWER")
@@ -52,12 +54,49 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
+@lru_cache(maxsize=1)
+def dummy_password_hash() -> str:
+    """Valid scrypt hash used to equalize login timing for unknown usernames."""
+    return hash_password(secrets.token_urlsafe(24))
+
+
+class LoginThrottle:
+    """In-process failure counter per (username, client IP); not shared across workers."""
+
+    def __init__(self, *, max_failures: int = 5, window_seconds: float = 900.0, clock=time.monotonic) -> None:
+        self.max_failures, self.window_seconds, self.clock = max_failures, window_seconds, clock
+        self._failures: dict[tuple, list[float]] = {}; self._lock = threading.Lock()
+
+    def _recent(self, key) -> list[float]:
+        cutoff = self.clock() - self.window_seconds
+        recent = [stamp for stamp in self._failures.get(key, ()) if stamp > cutoff]
+        if recent: self._failures[key] = recent
+        else: self._failures.pop(key, None)
+        return recent
+
+    def locked(self, key) -> bool:
+        with self._lock: return len(self._recent(key)) >= self.max_failures
+
+    def failure(self, key) -> None:
+        with self._lock:
+            if len(self._failures) > 10000: self._failures.clear()  # bound memory under username spraying
+            self._failures[key] = [*self._recent(key), self.clock()]
+
+    def reset(self, key) -> None:
+        with self._lock: self._failures.pop(key, None)
+
+
+PLACEHOLDER_SECRET_MARKERS = ("CHANGE_ME", "REPLACE_WITH")
+
+
 class SessionSigner:
     cookie_name = "universal_supplier_session"
 
     def __init__(self, secret: str, *, ttl_seconds: int = 8 * 60 * 60) -> None:
         if len(secret.encode("utf-8")) < 32:
             raise ValueError("SESSION_SIGNING_SECRET must contain at least 32 bytes")
+        if any(marker in secret.upper() for marker in PLACEHOLDER_SECRET_MARKERS):
+            raise ValueError("SESSION_SIGNING_SECRET still contains the .env.example placeholder")
         self.secret = secret.encode("utf-8")
         self.ttl_seconds = ttl_seconds
 

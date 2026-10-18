@@ -25,7 +25,7 @@ BIN = Path(r"C:\Users\man503\AppData\Local\Temp\universal_supplier_stage4_pg17_r
 DATA = ROOT.parent / "universal_supplier_rc_pg17_data"
 DUMP = ROOT / "work" / "tmp" / "rc_source_backups" / "main_supplier_snapshot_20260930.dump"
 DUMP_SHA = "E565BC5571328497FD6FE6034665D95CCAD907893E655247556E77316D9CC011"
-PASSFILE = Path(os.environ["LOCALAPPDATA"]) / "UniversalSupplier" / "rc-local" / "pgpass.conf"
+PASSFILE = Path(os.environ.get("LOCALAPPDATA") or "LOCALAPPDATA-unset") / "UniversalSupplier" / "rc-local" / "pgpass.conf"
 REPORT = ROOT / "reports" / "RC_LOCAL" / "historical_restore.json"
 SOURCE_IDS = {7689025282387590508, 7690591088719854484}
 

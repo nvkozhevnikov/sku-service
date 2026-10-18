@@ -60,14 +60,33 @@ def normalize_text(value: object) -> str:
     return text
 
 
+def _fold_mixed_script_word(match: re.Match) -> str:
+    word = match.group(0)
+    cyrillic = [char for char in word if "а" <= char <= "я"]
+    if (cyrillic and re.search(r"[a-z]", word)
+            and all(ord(char) in MODEL_CONFUSABLES for char in cyrillic)):
+        return word.translate(MODEL_CONFUSABLES)
+    return word
+
+
 def normalize_brand(value: object, aliases: dict[str, str] | None = None) -> str:
-    text = normalize_text(value)
+    # Fold Cyrillic look-alikes only inside a word that mixes Latin and
+    # Cyrillic letters (``JЕТ`` -> ``jet``). Pure Cyrillic brands stay intact.
+    text = re.sub(r"[a-zа-я0-9]+", _fold_mixed_script_word, normalize_text(value))
     merged = {**DEFAULT_BRAND_ALIASES, **(aliases or {})}
     return merged.get(text, text)
 
 
-def normalize_model_with_flags(value: object, brand: object = "") -> tuple[str, tuple[str, ...]]:
-    """Normalize model context and return deterministic data-quality flags."""
+def normalize_model_with_flags(value: object, brand: object = "", *,
+                               strict: bool = False) -> tuple[str, tuple[str, ...]]:
+    """Normalize model context and return deterministic data-quality flags.
+
+    ``strict=False`` is the legacy retrieval/persistence key: it is stored in
+    the database and used by index lookups, so it must not change.
+    ``strict=True`` is the identity-comparison key: it also keeps a decimal
+    point between digits (``BF-1.5`` is not ``BF 15``) and a semantic ``+``
+    (``JWL-1015+`` is not ``JWL-1015``; ANTIPATTERNS #2).
+    """
     text = normalize_text(value)
     flags: list[str] = []
     has_latin = bool(re.search(r"[a-z]", text))
@@ -75,7 +94,12 @@ def normalize_model_with_flags(value: object, brand: object = "") -> tuple[str, 
     if has_latin and has_cyrillic_confusable:
         flags.append("CYRILLIC_LATIN_MODEL_VARIATION")
     text = text.replace("×", "x").translate(MODEL_CONFUSABLES)
-    compact = "".join(re.findall(r"[a-zа-я0-9]+", text))
+    if strict:
+        text = re.sub(r"(?<=\d)[.,](?=\d)", ".", text)
+        compact = "".join(re.findall(r"[a-zа-я0-9]+|(?<=\d)\.(?=\d)|\+", text))
+        compact = re.sub(r"\++", "+", compact).lstrip("+")
+    else:
+        compact = "".join(re.findall(r"[a-zа-я0-9]+", text))
     brand_text = normalize_text(brand).translate(MODEL_CONFUSABLES)
     brand_compact = "".join(re.findall(r"[a-zа-я0-9]+", brand_text))
     if brand_compact and compact.startswith(brand_compact):
@@ -87,8 +111,30 @@ def normalize_model_with_flags(value: object, brand: object = "") -> tuple[str, 
 
 
 def normalize_model(value: object, brand: object = "") -> str:
-    """Preserve significant tokens while applying model-only canonicalization."""
+    """Legacy retrieval key. Persisted and indexed; do not change its output."""
     return normalize_model_with_flags(value, brand)[0]
+
+
+def normalize_model_strict(value: object, brand: object = "") -> str:
+    """Identity-comparison key: keeps decimal points and semantic plus."""
+    return normalize_model_with_flags(value, brand, strict=True)[0]
+
+
+def normalize_article(value: object) -> str:
+    """Exact article key that keeps digit-group boundaries.
+
+    ``10-100``, ``10 100`` and ``10.100`` stay one key; ``101-00`` and
+    ``10100`` are different keys. A separator next to a letter still
+    collapses (``JWL-1015`` == ``JWL1015``).
+    """
+    text = normalize_text(value).replace("×", "x").translate(MODEL_CONFUSABLES)
+    groups = re.findall(r"[a-zа-я0-9+]+", text)
+    result = ""
+    for group in groups:
+        if result and result[-1].isdigit() and group[0].isdigit():
+            result += "-"
+        result += group
+    return result
 
 
 def normalize_decimal(value: object) -> Decimal | None:
@@ -120,14 +166,18 @@ def _model_suffix(raw_token: str) -> str:
     return ""
 
 
-def model_tokens(value: object) -> tuple[str, ...]:
-    """Return model-like tokens from a title without fuzzy interpretation."""
+def model_tokens(value: object, *, strict: bool = False) -> tuple[str, ...]:
+    """Return model-like tokens from a title without fuzzy interpretation.
+
+    ``strict=True`` uses the identity-comparison key (decimal points kept).
+    """
+    normalize = normalize_model_strict if strict else normalize_model
     text = normalize_text(value)
     raw_tokens = _raw_title_tokens(value)
     tokens = [normalize_text(token) for token in raw_tokens]
     result = []
     for position, token in enumerate(tokens):
-        compact = normalize_model(token)
+        compact = normalize(token)
         if re.search(r"[a-zа-я]", compact) and re.search(r"\d", compact):
             if position + 1 < len(tokens):
                 compact += _model_suffix(raw_tokens[position + 1])
@@ -136,7 +186,7 @@ def model_tokens(value: object) -> tuple[str, ...]:
         spaced = re.finditer(r"(?iu)\b([a-zа-я]{1,12})[ -]+(\d{2,})(?:[ -]+([a-zа-я]{1,12}))?\b", text)
         for match in spaced:
             suffix = _model_suffix(match.group(3) or "")
-            result.append(normalize_model(match.group(1) + match.group(2) + suffix))
+            result.append(normalize(match.group(1) + match.group(2) + suffix))
     return tuple(dict.fromkeys(result))
 
 

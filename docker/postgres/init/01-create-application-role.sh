@@ -9,8 +9,10 @@ psql --set=ON_ERROR_STOP=1 \
   --username "$POSTGRES_USER" \
   --dbname postgres \
   --set=app_db_name="$APP_DB_NAME" \
-  --set=app_db_user="$APP_DB_USER" \
-  --set=app_db_password="$APP_DB_PASSWORD" <<'SQL'
+  --set=app_db_user="$APP_DB_USER" <<'SQL'
+-- The password is read from the environment (psql 15+ \getenv), never from argv,
+-- so it is not visible in the process list.
+\getenv app_db_password APP_DB_PASSWORD
 SELECT format(
   'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
   :'app_db_user', :'app_db_password'

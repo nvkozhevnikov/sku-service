@@ -100,7 +100,9 @@ def test_fully_proven_fixture_contract_is_ready():
 
 
 def test_import_key_uniqueness_passes():
-    validate_target_mapping(["1", "2"], {"1": 1, "2": 1})
+    assert validate_target_mapping(["1", "2"], {"1": 1, "2": 1}) is None
+    with pytest.raises(ContractValidationError, match="DUPLICATE_TARGET:1"):
+        validate_target_mapping(["1", "1"], {"1": 1})
 
 
 def test_missing_target_fails():

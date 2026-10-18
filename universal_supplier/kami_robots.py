@@ -28,9 +28,12 @@ class KamiRobots:
                 directives.append((name, value))
         if agents:
             groups.append((agents, directives))
-        applicable = [(max((len(a) for a in names if a != "*" and a in agent.lower()), default=0),
+        # RFC 9309: match the product token (before '/') case-insensitively and
+        # exactly; a substring such as "Universal" must not select our group.
+        token = agent.split("/", 1)[0].strip().lower()
+        applicable = [(max((len(a) for a in names if a != "*" and a == token), default=0),
                        names, rules) for names, rules in groups
-                      if "*" in names or any(a in agent.lower() for a in names)]
+                      if "*" in names or token in names]
         if not applicable:
             raise ValueError("No applicable robots group: manual verification required")
         specificity = max(g[0] for g in applicable)

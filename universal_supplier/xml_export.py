@@ -12,7 +12,7 @@ from typing import Any, Iterable, Iterator, Mapping
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
 
-from universal_supplier.stage6e import safe_export_filename
+from universal_supplier.stage6e import safe_export_filename, strip_xml_illegal
 from universal_supplier.yml_feed import (
     FeedArtifact, FeedGenerationError, FeedPolicy, FeedSnapshot, build_yml,
     selected_row_violations,
@@ -68,8 +68,8 @@ def _xml_text(value: Any) -> str:
     if isinstance(value, Decimal):
         return format(value, "f")
     if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return str(value)
+        return strip_xml_illegal(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return strip_xml_illegal(str(value))
 
 
 def _append(parent: ET.Element, tag: str, value: Any) -> ET.Element:
@@ -308,13 +308,13 @@ def iter_full_xml(rows: Iterable[Mapping[str, Any]],
         code = str(row.get("supplier_code") or "unknown")
         if current_supplier is None:
             current_supplier = code
-            yield f'<supplier code="{escape(code)}"><products>\n'.encode("utf-8")
+            yield f'<supplier code="{escape(strip_xml_illegal(code))}"><products>\n'.encode("utf-8")
         elif code != current_supplier:
             if batch:
                 yield from flush(batch); batch = []
             yield b"</products></supplier>\n"
             current_supplier = code
-            yield f'<supplier code="{escape(code)}"><products>\n'.encode("utf-8")
+            yield f'<supplier code="{escape(strip_xml_illegal(code))}"><products>\n'.encode("utf-8")
         batch.append(row)
         if len(batch) >= 200:
             yield from flush(batch); batch = []

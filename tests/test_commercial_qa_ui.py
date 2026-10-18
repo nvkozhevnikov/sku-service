@@ -26,6 +26,12 @@ from universal_supplier.control_plane.store import UnavailableControlPlaneStore
 from universal_supplier.control_plane.web import create_app
 from universal_supplier.stage6e import InMemoryStage6EService
 
+from conftest import require_evidence
+
+# Git-ignored Stage 5D evidence; tests that replay it skip on a clean checkout.
+STAGE5D_MANIFEST = "reports/STAGE5D_2026-09-24/candidate_manifest_http_dry_run.json"
+STAGE5D_XML = "reports/STAGE5D_2026-09-25/final_qa/STAGE5D_COMMERCIAL_QA_POST_RECOVERY.xml"
+
 
 class FakeCommercialQaService:
     enabled = True
@@ -188,6 +194,7 @@ def test_commercial_qa_is_disabled_without_explicit_operator_configuration(monke
 
 
 def test_commercial_qa_accepts_the_documented_explicit_ui_environment(monkeypatch):
+    require_evidence(STAGE5D_MANIFEST, STAGE5D_XML)
     root = Path(__file__).resolve().parents[1]
     monkeypatch.setenv("COMMERCIAL_QA_UI_ENABLED", "YES")
     monkeypatch.setenv("COMMERCIAL_QA_UI_MANIFEST_PATH", str(
@@ -200,6 +207,7 @@ def test_commercial_qa_accepts_the_documented_explicit_ui_environment(monkeypatc
 
 
 def test_write_option_requires_successful_preflight_for_both_sources(monkeypatch):
+    require_evidence(STAGE5D_MANIFEST, STAGE5D_XML)
     root = Path(__file__).resolve().parents[1]
     service = CommercialQaService(
         manifest_path=root / "reports/STAGE5D_2026-09-24/candidate_manifest_http_dry_run.json",
@@ -244,6 +252,7 @@ def test_write_mode_has_server_and_operator_confirmation_guards():
 
 
 def test_write_preflight_checks_exact_endpoint_role_and_passive_state():
+    require_evidence(STAGE5D_MANIFEST, STAGE5D_XML)
     class Cursor:
         def __init__(self, identity):
             self.answers = iter((identity, (False, False, False), (0,), (0,), (0,)))
@@ -311,6 +320,7 @@ def test_execute_closes_write_repository_even_when_collection_fails():
 
 
 def _offline_manual_service(directory: Path, collector, *, write_repository_factory=None):
+    require_evidence(STAGE5D_MANIFEST)
     root = Path(__file__).resolve().parents[1]
     xml_path = directory / "diagnostic.xml"
     xml_path.write_bytes(b'<supplier_export/>')
@@ -339,7 +349,7 @@ def _wait_for_manual_run(service, run_id):
 
 def test_manual_job_journal_survives_restart_and_keeps_progress():
     root = Path(__file__).resolve().parents[1]
-    with tempfile.TemporaryDirectory(dir=root / "reports") as temporary:
+    with tempfile.TemporaryDirectory() as temporary:
         location = Path(temporary)
 
         def collector(**kwargs):
@@ -362,7 +372,7 @@ def test_manual_job_journal_survives_restart_and_keeps_progress():
 
 def test_interrupted_job_is_not_restarted_and_errors_do_not_leak_secrets():
     root = Path(__file__).resolve().parents[1]
-    with tempfile.TemporaryDirectory(dir=root / "reports") as temporary:
+    with tempfile.TemporaryDirectory() as temporary:
         location = Path(temporary)
         calls = []
 
@@ -388,7 +398,7 @@ def test_interrupted_job_is_not_restarted_and_errors_do_not_leak_secrets():
 
 def test_qa_write_updates_diagnostic_xml_and_records_before_after_without_real_db(monkeypatch):
     root = Path(__file__).resolve().parents[1]
-    with tempfile.TemporaryDirectory(dir=root / "reports") as temporary:
+    with tempfile.TemporaryDirectory() as temporary:
         location = Path(temporary)
 
         class Repository:
@@ -428,7 +438,7 @@ def test_qa_write_updates_diagnostic_xml_and_records_before_after_without_real_d
 
 def test_diagnostic_xml_refresh_uses_current_qa_rows_and_keeps_identity_blank():
     root = Path(__file__).resolve().parents[1]
-    with tempfile.TemporaryDirectory(dir=root / "reports") as temporary:
+    with tempfile.TemporaryDirectory() as temporary:
         service = _offline_manual_service(Path(temporary), lambda **_kwargs: None)
 
         class Cursor:

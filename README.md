@@ -1,5 +1,14 @@
 # Universal Supplier Stage 6E
 
+## Current state
+
+The latest verified feature state is in [`CURRENT_STATE.md`](CURRENT_STATE.md); the stage sections below are history. Supported suppliers:
+
+- Scheduled web crawls (`default_adapter_registry`): `partner_st` (Partner-ST), `optimum` (Optimum).
+- Passive commercial/offline sources (no scheduler adapter): `intervesp` (Intervesp), `beka_mak` and `beka_mak_tr` (Beka-Mak), `kami` (KAMI / stanki.ru).
+
+Sterbrust/ESOL import stays disabled (`BLOCKED_IMPORT_CONTRACT_EVIDENCE`).
+
 Stage 6E adds authenticated CSV/XLSX exports, live data-quality drilldowns, deterministic anomaly and missing-product guards, product history/provenance/freshness structures, single-product parser inspection, persistent business rules, a typed canonical property registry, supplier/category-aware mappings, unit normalization, category filter profiles, field ownership and a read-only Sterbrust change preview. Stage 6E.1 wires these features through the normal PostgreSQL runtime, adds true one-product reparse and closes Stage 6E without enabling imports.
 
 Safety remains unchanged: no Sterbrust/ESOL mutation or preview-apply route exists. Parent Stage 6 remains `BLOCKED_IMPORT_CONTRACT_EVIDENCE`; Stage 6F and Stage 7 are not started.
@@ -27,7 +36,7 @@ The immutable policy captured when a job is enqueued reaches the actual Partner 
 
 ## Database and tests
 
-Services run `scripts/docker_postgres_migrate.py` before startup. Migrations 001–014 are immutable; Stage 6E.1 requires no migration 015. To test without live crawling:
+Services run `scripts/docker_postgres_migrate.py` before startup. Migrations 001–015 are immutable (checksums in `stage6e_migration_baseline_sha256.json`); Stage 6E.1 itself added no migration. Later additive migrations: 015 (commercial capture observations) and 016 (index on `review_decisions.source_product_id`). To test without live crawling:
 
 `docker compose --profile tools run --rm application`
 

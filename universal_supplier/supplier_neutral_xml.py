@@ -2,6 +2,8 @@
 from decimal import Decimal
 import xml.etree.ElementTree as ET
 
+from universal_supplier.stage6e import sanitize_xml_tree
+
 
 def neutral_snapshot_xml(records, *, matching=None, generated_at='', enrichment_complete=False):
     decisions={(r['source'],str(r['external_id'])):r for r in (matching or [])}
@@ -103,6 +105,7 @@ def neutral_snapshot_xml(records, *, matching=None, generated_at='', enrichment_
             any(d['readiness'].get('full_ready') for _,d in members) else 'READY_TO_CREATE_IDENTITY')})
         for (supplier,external),_ in members:
             ET.SubElement(group,'source_ref',{'supplier':supplier,'external_id':external})
+    sanitize_xml_tree(root)
     ET.indent(root,space='  ')
     return ET.tostring(root,encoding='utf-8',xml_declaration=True)
 
@@ -144,5 +147,6 @@ def neutral_new_groups_xml(records, *, matching, generated_at=''):
         node.append(snapshot.find('source_records'))
         emitted+=1
     root.set('canonical_new_group_count',str(emitted))
+    sanitize_xml_tree(root)
     ET.indent(root,space='  ')
     return ET.tostring(root,encoding='utf-8',xml_declaration=True)

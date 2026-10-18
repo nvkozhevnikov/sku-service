@@ -26,18 +26,49 @@ def normalize_url(value: str | None, base: str = BASE_URL) -> str | None:
     return urlunsplit(("https", "optimum.su", path, query, ""))
 
 
+_PRICE_RUN_RE = re.compile(r"(?<![\d.,])\d[\d .,]*")
+_CURRENCY_AFTER_RE = re.compile(r"\s*(?:₽|руб)", re.I)
+
+
+def _parse_price_run(run: str) -> Decimal | None:
+    run = run.strip(" .,")
+    if re.fullmatch(r"\d+\.0+", run):
+        # Machine format such as "12990.000"; never a grouped thousands value.
+        return Decimal(run.split(".")[0])
+    integer, fraction = run, "00"
+    split = re.fullmatch(r"(.*\d)[.,](\d{1,2})", run)
+    if split and not re.search(r"[.,]", split.group(1)):
+        integer, fraction = split.group(1), split.group(2)
+    separators = set(re.findall(r"[ .,]", integer))
+    if len(separators) > 1:
+        return None
+    groups = re.split(r"[ .,]", integer) if separators else [integer]
+    if len(groups) > 1 and (not 1 <= len(groups[0]) <= 3 or any(len(group) != 3 for group in groups[1:])):
+        # "12 990 15 000" is two adjacent amounts, not one glued number.
+        return None
+    try:
+        return Decimal("".join(groups) + "." + fraction)
+    except InvalidOperation:
+        return None
+
+
 def decimal_price(value: str | None) -> str | None:
     if not value:
         return None
-    raw = value.replace("\xa0", " ")
-    match = re.search(r"(?<!\d)(\d[\d\s]*)(?:[,.](\d{1,2}))?\s*(?:₽|руб(?:\.|лей)?)?", raw, re.I)
-    if not match:
+    raw = re.sub(r"[\xa0\u202f\s]+", " ", value)
+    runs = [match for match in _PRICE_RUN_RE.finditer(raw) if match.group(0).strip(" .,")]
+    if not runs:
         return None
-    try:
-        number = Decimal(match.group(1).replace(" ", "") + "." + (match.group(2) or "00"))
-    except InvalidOperation:
+    priced = [match for match in runs if _CURRENCY_AFTER_RE.match(raw, match.start() + len(match.group(0).rstrip(" .,")))]
+    if len(priced) == 1:
+        chosen = priced[0]
+    elif len(runs) == 1:
+        chosen = runs[0]
+    else:
+        # "от 3 шт. 12 990" without a currency marker is ambiguous.
         return None
-    if number <= 0:
+    number = _parse_price_run(chosen.group(0))
+    if number is None or number <= 0:
         return None
     return f"{number:.2f}"
 

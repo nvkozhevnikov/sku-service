@@ -33,8 +33,9 @@ from universal_supplier.postgres import PostgresRepository
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER_PATH = ROOT / 'reports/KAMI_INTEGRATION_2026-10-05/ROBOTS_SCOPE_BLOCKER.json'
 CHECKPOINT_PATH = ROOT / 'reports/KAMI_SOURCE_AUDIT_2026-10-05/PRODUCT_RECONCILIATION/CHECKPOINT.json'
+# Git-ignored local evidence: None when the checkout has no reports/ capture.
 ROBOTS_CAPTURE_PATH = next(
-    (ROOT / 'reports/KAMI_SOURCE_AUDIT_2026-10-05/SPECTR_VARIANT_SAMPLE').glob('d56f78af*.capture'))
+    (ROOT / 'reports/KAMI_SOURCE_AUDIT_2026-10-05/SPECTR_VARIANT_SAMPLE').glob('d56f78af*.capture'), None)
 
 DENIED_URLS = (
     'https://www.stanki.ru/catalog/tortsevaya_prisadka_s_chpu_new/'
@@ -122,6 +123,8 @@ class KamiIdentityGuards(unittest.TestCase):
 class KamiRobotsScopeGuards(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if ROBOTS_CAPTURE_PATH is None or not LEDGER_PATH.is_file():
+            raise unittest.SkipTest('git-ignored local evidence missing: reports/KAMI_* robots capture/ledger')
         cls.capture_text = ROBOTS_CAPTURE_PATH.read_text(encoding='utf-8')
         cls.ledger = json.loads(LEDGER_PATH.read_text(encoding='utf-8'))
 
