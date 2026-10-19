@@ -19,6 +19,7 @@ def deny_external():
     socket.socket.connect=connect
 
 def worker(engine,label):
+    sys.dont_write_bytecode=True
     sys.path.insert(0,str(engine))
     import psycopg
     from universal_supplier.identity_service import _load_cards

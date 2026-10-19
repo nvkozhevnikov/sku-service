@@ -10,10 +10,10 @@ in scope. Only new isolated database copies were populated.
 |---|---|---|---|---|---|
 | C0 inputs | YES | pinned input records | remote develop58152e4, source Git HEADs, actual dump bytes |55452 portable dump missing | owner-approved source recovery plan only |
 | C1 code | YES, scoped integration | own feature only | regression289PASS; GLM F01 review0blocking | live shared runners only Partner-ST/Optimum; other components not certified cron jobs | bounded runner completion after source gate |
-| C2 data | available sources YES | own PG17.11/55461, one runtime DB | complete-row/FK/history/namespace/sequence preservation; role isolation PASS | Vekprom + newer Intervesp missing | finish custom dump/restore receipt |
+| C2 data | available sources YES | own PG17.11/55461, one runtime DB | complete-row/FK/history/namespace/sequence preservation; role isolation PASS | Vekprom + newer Intervesp missing | dump/restore PASS; see receipt |
 | C3 panel | YES | existing FastAPI UI/single auth; native competitor tabs | real Edge browser PASS; shared offline dispatch/due replay PASS;22runnable+1blocked | no live crawl/scheduler certification | retain replay-only boundary |
 | Matching | offline comparison DONE | original patch + safe F3/doc F5 | Beka+F01 96PASS, targeted3.12Windows289PASS, exact frozen dry-run | Linux unavailable; churn needs review | no automatic reconcile/identity apply |
-| C4 delivery | IN_PROGRESS | local exports/draft docs | export readback in progress | full-release acceptance blocked | dump/restore + final receipt |
+| C4 delivery | DONE for available-data partial RC | versioned dump/exports/receipts | full logical restore + application readback + export reconciliation PASS | full-release acceptance blocked | owner reviews blockers and recovery scope |
 
 ## Actual data and acceptance
 
@@ -73,3 +73,13 @@ private-*.json. No .env/secret/dump/PGDATA is Git-tracked.
 
 NEEDS_OWNER_APPROVAL: source55452 recovery/backup scope; future Linux isolated
 test scope; final develop transfer after all mandatory gates. No transfer now.
+
+## Final portable artifact
+
+LIVE-VERIFIED custom dump:124142732bytes, SHA256`b6858888fd2d370d6973eb309891293e0e8c8e2da1a0d2b884fc63e935aa219e`. Full logical restore into new empty `sterbrust_unified_restore_20261019` in the same isolatedPG17.11 instance: everytable/sequence/constraint/migration-ledger equal. Restored shared-login and supplier/competitor/replay application readbackPASS. No source dumps were restored during this final own-RC dump rehearsal.
+
+Database assembly commit`f9a29bb46b70e13d9198e545edc5ac8464f0fa6e`; final UI-label/readback/receipt commit identified by Git HEAD. New runtime/UI shutdown receipt will state final process status; no source cluster shutdown authorized.
+
+Final display-only follow-up: Russian replay source/status/history labels; real DB page readback and timezone unit test PASS. No business data or identity decisions changed. The dump is the sealed snapshot at assembly time; later QA authentication metadata on the retained working copy is not a source-data refresh.
+
+Runtime final: own55461cluster CLEAN_SERVER_STOPPED; clients/prepared/pending jobs0, controlstate shut down, pidabsent, portclosed. Source clusters unchanged by task actions. RUNTIME_SHUTDOWN.json records the exact owned path/system ID.

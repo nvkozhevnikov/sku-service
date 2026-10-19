@@ -14,13 +14,13 @@ class FrozenDispatch:
 
     def sources(self):
         with self.connect() as c:
-            counts=dict(c.execute('SELECT s.code,count(sp.id) FROM suppliers s LEFT JOIN source_products sp ON sp.supplier_id=s.id GROUP BY s.code').fetchall())
-            competitors=[r[0] for r in c.execute('SELECT code FROM competitor.competitor_sources ORDER BY code')]
-        rows=[{'key':'supplier:'+x,'module':'supplier','source':x,'records':counts.get(x,0),
+            counts={code:(count,name) for code,count,name in c.execute('SELECT s.code,count(sp.id),s.name FROM suppliers s LEFT JOIN source_products sp ON sp.supplier_id=s.id GROUP BY s.code,s.name')}
+            competitors=c.execute('SELECT code,name FROM competitor.competitor_sources ORDER BY code').fetchall()
+        rows=[{'key':'supplier:'+x,'module':'supplier','source':x,'name':counts.get(x,(0,'Векпром'))[1],'records':counts.get(x,(0,''))[0],
                'snapshot_status':'BLOCKED_MISSING_VERIFIED_SOURCE_DATA' if x=='vekprom' else 'HISTORICAL_ONLY_NEW_SNAPSHOT_BLOCKED' if x=='intervesp' else 'AVAILABLE',
                'live_runner':'SHARED_JOB' if x in ('partner_st','optimum') else 'BOUNDED_COLLECTION_COMPONENT',
                'live_schedule_enabled':False} for x in SUPPLIERS]
-        rows += [{'key':'competitor:'+x,'module':'competitor','source':x,'snapshot_status':'AVAILABLE','live_runner':'MANUAL_CAPTURE' if x=='youmet' else 'DETACHED_WORKER','live_schedule_enabled':False} for x in competitors]
+        rows += [{'key':'competitor:'+x,'module':'competitor','source':x,'name':name,'snapshot_status':'AVAILABLE','live_runner':'MANUAL_CAPTURE' if x=='youmet' else 'DETACHED_WORKER','live_schedule_enabled':False} for x,name in competitors]
         return rows
 
     def enqueue(self,key,origin,slot=None):

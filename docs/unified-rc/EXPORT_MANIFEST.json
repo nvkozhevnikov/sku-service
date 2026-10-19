@@ -1,0 +1,79 @@
+{
+  "status": "PARTIAL_RC_NOT_IMPORT_AUTHORIZED",
+  "source_rows": 12120,
+  "existing_persisted_replay_consistent": 373,
+  "persisted_links_moved_to_review_export_only": 461,
+  "review": 11747,
+  "competitor_news": 53,
+  "operation_buckets": {
+    "NEW_PRODUCTS": {
+      "records": 0,
+      "reason": "NO_PERSISTED_FULL_NEW_APPROVAL_IN_UNIFIED_TARGET"
+    },
+    "PRICE_UPDATES": {
+      "records": 0,
+      "reason": "NO_VERIFIED_COMPARABLE_STERBRUST_PRICE_DELTA"
+    }
+  },
+  "snapshot_cutoff": "2026-10-19",
+  "source_dates_preserved": true,
+  "known_omissions": [
+    "vekprom: BLOCKED_MISSING_VERIFIED_SOURCE_DATA",
+    "intervesp newer source snapshot 55452: BLOCKED_MISSING_VERIFIED_SOURCE_DATA"
+  ],
+  "matching_gate": "NOT_VERIFIED",
+  "inactive_history": "All inactive records remain in database; human exports active only (12120).",
+  "files": [
+    {
+      "file": "COMPETITOR_NEWS_SNAPSHOT.csv",
+      "bytes": 26427,
+      "sha256": "08065dccd1244d407813efc221ecaa71c2565cb1c2cf7545f6f1cfcc0f268f2f"
+    },
+    {
+      "file": "EXISTING_CONFIRMED.csv",
+      "bytes": 1554971,
+      "sha256": "f8f647f2f4f841ab56515e505336606de9cfaa68f1cd3b4cd1b58c38d434eb49"
+    },
+    {
+      "file": "NEW_PRODUCTS.xlsx",
+      "bytes": 5189,
+      "sha256": "4407b7f981afa6f620765ccec1837c01ea6fbc173d216ae142b5765556efaf61"
+    },
+    {
+      "file": "NEW_PRODUCTS.xml",
+      "bytes": 216,
+      "sha256": "63d0bccfc30304924cacad2bd1c15e59abb5ca065ba026b887dd055c3c0f7364"
+    },
+    {
+      "file": "PRICE_UPDATES.xlsx",
+      "bytes": 5201,
+      "sha256": "4a2567f2541401851dda2557de592f76435dfb97d496250f6c0d85e388b7690d"
+    },
+    {
+      "file": "PRICE_UPDATES.xml",
+      "bytes": 213,
+      "sha256": "50022b0a112cde78cb76c0a527a0443dfbbd8b0d0e7a3208610a61b26f98edbc"
+    },
+    {
+      "file": "REVIEW_CONFLICT.csv",
+      "bytes": 29287957,
+      "sha256": "c641cfdeb848f3623458fe888a4ea31988cd467d5823af0370c498bd3b3dc1c4"
+    },
+    {
+      "file": "SOURCE_TRACE.csv",
+      "bytes": 30967620,
+      "sha256": "e49149dd38429836f83984d87547955b447de1690ffdb1d52d01ec5254b8c26c"
+    }
+  ],
+  "verification": {
+    "status": "PASS",
+    "csv_reconciliation": true,
+    "disjoint_confirmed_review": true,
+    "canonical_ids_preserved_separately": 461,
+    "xml_readback": true,
+    "xlsx_zip_and_cell_readback": true,
+    "xlsx_visual_review": "PASS: both sheets in both workbooks",
+    "matching_gate": "NOT_VERIFIED",
+    "import_authorized": false
+  }
+}

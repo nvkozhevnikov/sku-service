@@ -1,0 +1,11 @@
+{
+  "status": "PASS",
+  "csv_reconciliation": true,
+  "disjoint_confirmed_review": true,
+  "canonical_ids_preserved_separately": 461,
+  "xml_readback": true,
+  "xlsx_zip_and_cell_readback": true,
+  "xlsx_visual_review": "PASS: both sheets in both workbooks",
+  "matching_gate": "NOT_VERIFIED",
+  "import_authorized": false
+}
