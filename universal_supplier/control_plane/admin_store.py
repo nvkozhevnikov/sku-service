@@ -208,13 +208,16 @@ class PostgresAdminStore:
                          LEFT JOIN app_users u ON u.id=a.user_id ORDER BY a.created_at DESC,a.id DESC LIMIT %s""", (limit,))
             return list(q.fetchall())
 
-    def generate_review_cases(self, supplier_code: str | None = None) -> dict[str, int]:
+    def generate_review_cases(self, supplier_code: str | None = None, *, source_ids: list[int] | None = None) -> dict[str, int]:
         inserted = unchanged = reopened = synced = restored = 0
         where = "WHERE sp.active"
         params: tuple[Any, ...] = ()
         if supplier_code:
             where += " AND s.code=%s"
             params = (supplier_code,)
+        if source_ids is not None:
+            where += " AND sp.id=ANY(%s)"
+            params += (source_ids,)
         with self._connect() as c, c.transaction(), c.cursor() as q:
             q.execute(f"""SELECT sp.id AS source_product_id,s.code AS supplier,sp.external_id,sp.sku,sp.brand_raw,
                                  pid.decision,pid.own_model,pid.reference_model,pid.product_kind,pid.best_sterbrust_id,

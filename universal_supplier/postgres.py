@@ -1212,7 +1212,7 @@ class PostgresRepository:
         return result
 
     def persist_match(self, decision: dict, validated_at: str,
-                      supplier_code: str = PARTNER_CODE) -> str:
+                      supplier_code: str = PARTNER_CODE, *, preserve_existing_links: bool = False) -> str:
         """Persist one current decision without duplicating unchanged history."""
         evidence = json.loads(decision.get("evidence") or "{}") if isinstance(decision.get("evidence"), str) else decision.get("evidence", {})
         warnings = json.loads(decision.get("warnings") or "{}") if isinstance(decision.get("warnings"), str) else decision.get("warnings", {})
@@ -1239,6 +1239,11 @@ class PostgresRepository:
             if source_row is None:
                 raise RuntimeError(f"source product not ingested: {decision['source_external_id']}")
             source_id = source_row[0]
+            if preserve_existing_links and source_row[1] is not None:
+                # Recheck after acquiring the source lock. A plan made before
+                # a concurrent operator/automatic acceptance cannot replace,
+                # quarantine, or append history for that now-existing mapping.
+                return "PRESERVED_EXISTING_MAPPING"
             catalog_id = None
             if candidate_key:
                 cursor.execute("SELECT catalog_product_id FROM sterbrust_products WHERE sterbrust_product_id=%s", (candidate_key,))

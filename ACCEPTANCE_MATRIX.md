@@ -1,33 +1,27 @@
 # Matching Policy V2 acceptance
 
-## RC1_VI MATCHING HOLD — final proposal, awaiting operator confirmation
+## Automatic matching required — operator correction, 2026-10-19
 
-Proposed decision: **ACCEPTED_WITH_CONDITIONS**.
-Effective decision: **PENDING_OPERATOR_CONFIRMATION / not yet accepted**.
-OPERATOR-CONFIRMED scope is preparation of this proposal only. No existing
-acceptance entry below authorizes RC mutation or overrides the current STOP.
+OPERATOR-CONFIRMED: permanent MATCHING HOLD in the final system is
+**NOT_ACCEPTED**. The earlier ACCEPTED_WITH_CONDITIONS proposal is superseded.
+A temporary protective hold is permitted only during development, before an
+explicitly approved initial application, or in response to a critical defect.
 
-1. Existing supplier/external IDs, catalog links, Sterbrust Product IDs and manual
-   authority remain unchanged. No mass matching apply or automatic reconcile.
-2. REVIEW/CONFLICT remain unaccepted automatically.102promotion proposals and
-   9candidate switches are not applied;461stored-link risk/switch cases retain
-   their existing IDs and require evidence before any future identity change.
-3. The existing runtime hold for pinned RC1 or the explicit RC profile remains
-   enabled. New source wrappers do not call reconcile. Existing stored accepted
-   links are retained as historical authority; this is not fresh semantic proof.
-4. Operation exports and data snapshot remain RC1_VI. No new NEW/PRICE operation
-   is inferred from this policy, and no dump rebuild is needed without data change.
-5. Linux3.12QA remains BLOCKED until actually executed in an independent sandbox;
-   WindowsQA is not LinuxQA. Offline runnerREADY does not prove liveHTTP/SQL.
-6. Youmet remains manual capture. Live collection, cron, ESOL, deploy and develop
-   transfer require separate approval. Operator acceptance of HOLD alone does
-   not authorize any of these actions or removal of the hold.
+Required normal operation: shared parser queue -> existing F01/F03 matcher ->
+AUTO ACCEPT for proven exact identity; REVIEW for ambiguity; CONFLICT for proven
+contradiction; NEW CANDIDATE for an unlinked candidate absent identity proof in
+this canonical snapshot. NEW does not create a canonical product automatically.
+Preserve existing confirmed IDs, mappings and operator authority; no fuzzy
+retargeting of an existing link. No switch may bypass semantic guards.
 
-REPOSITORY-VERIFIED runtime/WindowsQA is reused from0d02027881817cd7009fe20dceb27f63b0501a09.
-PACKAGED-EVIDENCE: frozen churn and unchanged RC1_VI dump/exports.
-INFERENCE: conservative dispositions; no semantic identity acceptance claimed.
-The operator has **not yet confirmed this proposed acceptance**.
-See [final conditions and23-source matrix](docs/unified-rc/FINAL_ACCEPTANCE_CONDITIONS.md).
+Current task permits code, regressions and a complete 18,958-card offline replay.
+Bulk application to isolated RC PostgreSQL requires separate operator approval
+of the exact plan. It has not been performed. Linux QA remains a separate gate;
+Windows results do not close it. No live HTTP, source DB changes, ESOL,
+push/merge/deploy or scheduler activation is authorized.
+
+Evidence: reports/RC_AUTOMATIC_MATCHING_20261019 (workspace root).
+Acceptance remains PENDING; a permanently disabled matcher cannot satisfy it.
 
 ## F01/F03 isolated code correction — 2026-10-19
 

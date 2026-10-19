@@ -8,7 +8,7 @@ from universal_supplier.postgres import PostgresConfig, PostgresRepository
 from universal_supplier.crawl import run_partner_st_live
 from universal_supplier.adapters.optimum import run_optimum_live_sync
 from universal_supplier.state import discovery_health
-from universal_supplier.identity_service import reconcile_runtime_identity
+from universal_supplier.automatic_matching import run_post_ingest
 
 from .queue import CrawlJob
 from .progress import CrawlProgressTracker
@@ -100,14 +100,7 @@ def _policy_from_snapshot(
 
 def _post_ingest_identity(config: PostgresConfig, supplier_code: str) -> dict[str, Any]:
     """The only normal runtime path from successful ingest to review state."""
-    import os
-    pinned_rc = (getattr(config,'host',None)=='127.0.0.1' and getattr(config,'port',None)==55461
-                 and getattr(config,'dbname',None)=='sterbrust_unified_rc_20261019')
-    if os.environ.get('STERBRUST_UNIFIED_RC')=='YES' or pinned_rc:
-        return {'skipped':'RC_RELEASE_IDENTITY_HOLD','confirmed_links_preserved':True,'matching_applied':False}
-    if config is None:  # explicit unit-test adapter doubles use no database config
-        return {"skipped": "NO_DATABASE_CONFIG"}
-    return {"status": "succeeded", **reconcile_runtime_identity(config, supplier_code)}
+    return run_post_ingest(config, supplier_code)
 
 
 def _tracker(repository, run_id: int) -> CrawlProgressTracker:

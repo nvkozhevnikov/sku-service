@@ -193,6 +193,24 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             "release_replay_available": release_dispatch is not None,
             "control_plane_read_only": read_only_source, **values}
 
+    @app.get('/automatic-matching', response_class=HTMLResponse)
+    def automatic_matching(request: Request):
+        guard(request)
+        import json
+        from universal_supplier.automatic_matching import runtime_matching_policy, POLICY_VERSION
+        policy = runtime_matching_policy(config or vars(store).get('config'))
+        report = None
+        report_path = os.environ.get('AUTOMATIC_MATCHING_REPORT')
+        if report_path:
+            try:
+                report = json.loads(Path(report_path).read_text(encoding='utf-8'))
+                if report.get('policy_version') != POLICY_VERSION:
+                    report = None
+            except (OSError, ValueError):
+                report = None
+        return templates.TemplateResponse(request, 'automatic_matching.html', context(request,
+            title='Автоматическое сопоставление', active='automatic_matching', policy=policy, report=report))
+
     if competitor_service is not None:
         app.state.monitoring_templates = templates
         app.state.monitoring_template_context = context

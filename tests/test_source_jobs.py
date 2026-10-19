@@ -73,19 +73,23 @@ def test_registry_preserves_existing_runners():
     registry=default_adapter_registry()
     assert set(registry.names)==set(SOURCES)|{'partner_st','optimum'}
 
-def test_rc_existing_runners_cannot_apply_matching(monkeypatch):
+def test_rc_existing_runners_use_shared_safe_pipeline(monkeypatch):
     from universal_supplier.control_plane.adapter_registry import _post_ingest_identity
-    monkeypatch.setenv('STERBRUST_UNIFIED_RC','YES')
-    with patch('universal_supplier.control_plane.adapter_registry.reconcile_runtime_identity',deny):
-        result=_post_ingest_identity(object(),'partner_st')
-    assert result['skipped']=='RC_RELEASE_IDENTITY_HOLD' and result['matching_applied'] is False
+    calls=[]
+    monkeypatch.setattr('universal_supplier.control_plane.adapter_registry.run_post_ingest',
+        lambda cfg,code: calls.append(code) or {'automatic_matching':True,'matching_applied':False})
+    assert _post_ingest_identity(None,'partner_st')['automatic_matching']
+    assert _post_ingest_identity(None,'optimum')['automatic_matching']
+    assert calls==['partner_st','optimum']
 
-def test_pinned_rc_identity_hold_does_not_depend_on_environment(monkeypatch):
-    from universal_supplier.control_plane.adapter_registry import _post_ingest_identity
-    monkeypatch.delenv('STERBRUST_UNIFIED_RC',raising=False)
+
+def test_pinned_rc_calculates_before_initial_apply_approval(monkeypatch):
+    from universal_supplier.automatic_matching import runtime_matching_policy
+    monkeypatch.delenv('STERBRUST_RC_MATCHING_APPLY_APPROVED',raising=False)
     config=SimpleNamespace(host='127.0.0.1',port=55461,dbname='sterbrust_unified_rc_20261019')
-    with patch('universal_supplier.control_plane.adapter_registry.reconcile_runtime_identity',deny):
-        assert _post_ingest_identity(config,'optimum')['matching_applied'] is False
+    policy=runtime_matching_policy(config)
+    assert policy['automatic_matching'] and not policy['apply_allowed']
+    assert policy['mode']=='DRY_RUN_PENDING_INITIAL_APPROVAL'
 
 @pytest.mark.parametrize('code',SOURCES)
 def test_live_wrapper_uses_existing_client_contract_with_saved_response_only(tmp_path,monkeypatch,code):
@@ -186,9 +190,14 @@ def test_existing_passive_writer_receives_original_capture_and_replay_is_noop(tm
             return {'exact_noop':noop}
         def close(self):pass
     runner=make_source_runner(code,repository_factory=lambda cfg:Writer())
+    matching_calls=[]
+    monkeypatch.setattr('universal_supplier.automatic_matching.run_post_ingest',
+        lambda cfg,source,ids: matching_calls.append((source,ids)) or {'matching_applied':False,'automatic_matching':True})
     with patch.object(socket.socket,'connect',deny),patch('psycopg.connect',deny):
         first=runner(job,None);second=runner(job,None)
     assert first['status']==second['status']=='succeeded'
     assert first['rows'][0]['exact_noop'] is False and second['rows'][0]['exact_noop'] is True
     assert len(events)==1 and len(calls)==2
     assert first['matching_applied'] is False
+    assert len(matching_calls)==2 and all(source==code and ids==[first['rows'][0]['external_id']] for source,ids in matching_calls)
+    assert first['identity_post_processing']['automatic_matching']

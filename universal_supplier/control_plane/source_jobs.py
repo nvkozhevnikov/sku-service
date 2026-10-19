@@ -170,8 +170,17 @@ def make_source_runner(code,*,repository_factory=None,transport_factory=None,clo
         finally:
             if repository:repository.close()
             if transport and getattr(transport,'session',None):transport.session.close()
-        partial=bool(terminated or len(entries)<len(data['entries']) or any(r['status']=='REVIEW' for r in rows))
-        return {'status':'partial' if partial else 'succeeded','mode':mode,'supplier_code':code,'rows':rows,'manifest_sha256':settings['source_manifest_sha256'],'termination_reason':terminated,'source_scope':'BOUNDED_VERIFIED_MANIFEST','discovery_complete':False,'deactivation_allowed':False,'matching_applied':False,'source_writes':sum(r['status']=='PERSISTED' and r['exact_noop'] is not True for r in rows),'source_write_calls':sum(r['status']=='PERSISTED' for r in rows),'network_allowed':mode=='LIVE'}
+        identity = {'matching_applied': False, 'skipped': 'NO_PERSISTED_INPUT'}
+        persisted_ids = [r['external_id'] for r in rows if r['status']=='PERSISTED']
+        if persisted_ids:
+            from universal_supplier.automatic_matching import run_post_ingest
+            try:
+                identity = run_post_ingest(config, code, persisted_ids)
+            except Exception as error:
+                identity = {'status':'POST_PROCESSING_FAILED','matching_applied':False,
+                            'error_type':type(error).__name__}
+        partial=bool(terminated or len(entries)<len(data['entries']) or any(r['status']=='REVIEW' for r in rows) or identity.get('status')=='POST_PROCESSING_FAILED')
+        return {'status':'partial' if partial else 'succeeded','mode':mode,'supplier_code':code,'rows':rows,'manifest_sha256':settings['source_manifest_sha256'],'termination_reason':terminated,'source_scope':'BOUNDED_VERIFIED_MANIFEST','discovery_complete':False,'deactivation_allowed':False,'matching_applied':identity.get('matching_applied',False),'identity_post_processing':identity,'source_writes':sum(r['status']=='PERSISTED' and r['exact_noop'] is not True for r in rows),'source_write_calls':sum(r['status']=='PERSISTED' for r in rows),'network_allowed':mode=='LIVE'}
     return run
 
 def register_source_jobs(registry):

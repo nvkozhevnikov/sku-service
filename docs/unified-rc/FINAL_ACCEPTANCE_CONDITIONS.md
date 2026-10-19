@@ -1,15 +1,27 @@
-# RC1_VI — final acceptance proposal
+# RC1_VI - acceptance pending
 
-Proposed MATCHING HOLD decision: **ACCEPTED_WITH_CONDITIONS**.
-Operator confirmation: **PENDING**. Full RC acceptance: **PENDING**.
-The current task authorizes this proposal, not its acceptance or develop transfer.
+## Automatic matching required — operator correction, 2026-10-19
 
-The runtime remains the verified code at0d02027881817cd7009fe20dceb27f63b0501a09;
-this final supplement changes documentation only. Existing IDs/links remain;
-automatic reconcile, REVIEW/CONFLICT acceptance and matching apply are prohibited.
-461stored-link risk/switch cases and102promotions remain evidence-backed queues,
-not accepted semantic corrections. Operator acceptance of this restricted mode
-does not remove HOLD, waive LinuxQA, or authorize live writes/import/deployment.
+OPERATOR-CONFIRMED: permanent MATCHING HOLD in the final system is
+**NOT_ACCEPTED**. The earlier ACCEPTED_WITH_CONDITIONS proposal is superseded.
+A temporary protective hold is permitted only during development, before an
+explicitly approved initial application, or in response to a critical defect.
+
+Required normal operation: shared parser queue -> existing F01/F03 matcher ->
+AUTO ACCEPT for proven exact identity; REVIEW for ambiguity; CONFLICT for proven
+contradiction; NEW CANDIDATE for an unlinked candidate absent identity proof in
+this canonical snapshot. NEW does not create a canonical product automatically.
+Preserve existing confirmed IDs, mappings and operator authority; no fuzzy
+retargeting of an existing link. No switch may bypass semantic guards.
+
+Current task permits code, regressions and a complete 18,958-card offline replay.
+Bulk application to isolated RC PostgreSQL requires separate operator approval
+of the exact plan. It has not been performed. Linux QA remains a separate gate;
+Windows results do not close it. No live HTTP, source DB changes, ESOL,
+push/merge/deploy or scheduler activation is authorized.
+
+Evidence: reports/RC_AUTOMATIC_MATCHING_20261019 (workspace root).
+Acceptance remains PENDING; a permanently disabled matcher cannot satisfy it.
 
 ## Exact source matrix
 
@@ -49,11 +61,11 @@ boundary, not a request to run live collection in this task.
 
 ## Remaining gates
 
-- Operator must confirm or reject the MATCHING HOLD proposal.
+- Safe automatic matching code/offline replay and separately approved isolated SQL application must pass; permanent HOLD is NOT_ACCEPTED.
 - Actual Python3.12/LinuxQA is BLOCKED: only stopped docker-desktop is installed;
   Docker Linux Engine is unavailable. No user Docker/service/process was started.
 - Full live operation is NOT_VERIFIED and outside this offline acceptance proposal.
-  Authorizing HOLD does not convert offline tests into live acceptance.
+  Offline tests do not constitute live acceptance.
 - STOP before develop; no push, merge, deploy, cron activation or ESOL.
 
 ## One concrete Linux verification method

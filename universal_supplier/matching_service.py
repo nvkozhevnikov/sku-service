@@ -4,7 +4,7 @@ import json
 import csv
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -25,6 +25,7 @@ class RegistryContext:
     by_model: dict[str, list[str]]
     by_brand: dict[str, list[str]]
     title_identifier_index: dict[tuple[str, str], list[str]]
+    manufacturer_identifier_index: dict[str, list[str]] = field(default_factory=dict)
 
 
 def load_registry_from_csv(path: str | Path) -> RegistryContext:
@@ -64,7 +65,11 @@ def load_registry_from_csv(path: str | Path) -> RegistryContext:
                 by_brand[normalize_brand(brand)].append(key)
             for inferred_article in _optimum_title_articles(name):
                 title_identifier_index[("optimum", inferred_article)].append(key)
-    return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index)
+    manufacturer_index: dict[str, list[str]] = defaultdict(list)
+    for key, row in products.items():
+        if article_lookup_key(row['article']):
+            manufacturer_index[article_lookup_key(row['article'])].append(key)
+    return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index, manufacturer_index)
 
 
 
@@ -135,7 +140,11 @@ def load_registry_from_postgres(connection) -> RegistryContext:
             article_key = article_lookup_key(raw_value)
             if article_key:
                 identifier_index[(supplier_code, article_key)].append(key)
-    return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index)
+    manufacturer_index: dict[str, list[str]] = defaultdict(list)
+    for key, row in products.items():
+        if article_lookup_key(row['article']):
+            manufacturer_index[article_lookup_key(row['article'])].append(key)
+    return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index, manufacturer_index)
 
 
 def _id_order(key: object) -> tuple[int, int, str]:
@@ -156,6 +165,7 @@ def _source(card: ProductCard) -> Product:
     brand = (card.brand or "").strip() or brand_evidenced_by_name(card.name)
     return Product(key=card.external_id, name=card.name, brand=brand,
                    model=own_model_for_identity(card.name, category), supplier_article=card.sku,
+                   manufacturer_article=(card.sku if (card.raw_data.get("source_identity") or {}).get("manufacturer_article_explicit") is True else ""),
                    supplier_code=card.supplier_code,
                    category=category, properties=identity_properties(
                        (item.name, item.value, item.unit) for item in card.properties))
@@ -171,6 +181,11 @@ def _candidates(source: Product, registry: RegistryContext) -> list[dict]:
         # product-kind/model/property conflicts and does not treat this as a
         # persisted supplier identifier.
         ids = sorted(set(registry.title_identifier_index.get((source.supplier_code, article), [])), key=int)
+    if not ids:
+        # Candidate discovery only. The existing matcher checks article syntax,
+        # brand, model, execution and properties before any AUTO acceptance.
+        manufacturer_article = article_lookup_key(source.manufacturer_article)
+        ids = list(registry.manufacturer_identifier_index.get(manufacturer_article, [])) if manufacturer_article else []
     if not ids:
         model = normalize_model(source.model, source.brand)
         ids = list(registry.by_model.get(model, [])) if model else []

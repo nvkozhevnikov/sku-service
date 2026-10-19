@@ -1,5 +1,17 @@
 # STERBRUST unified RC — 2026-10-19
 
+## Automatic matching - CODE/OFFLINE VERIFIED, SQL approval pending - 2026-10-19
+
+OPERATOR-CONFIRMED: permanent HOLD NOT_ACCEPTED. DONE/APPLIED safe automatic
+pipeline on all 11 supplier queue adapters and existing panel; F01/F03 unchanged.
+VERIFIED 370 offline Python3.12/Windows PASS, full 18,958-card replay:
+798 AUTO / 6,246 REVIEW / 1,402 CONFLICT / 10,508 NEW / 4 inactive NOT_PROCESSED.
+448 proposed new links; all 834 existing IDs retained, including 484 review/risk
+warnings. Exact SQL plan prepared; zero apply/DB startup/HTTP/dump rebuild.
+Linux remains a separate BLOCKED gate. Actual SQL idempotency awaits separately
+approved isolated validation. Root report: reports/RC_AUTOMATIC_MATCHING_20261019/REPORT.md.
+STOP before SQL application/develop; prior permanent-HOLD proposal superseded.
+
 ## Final acceptance proposal — MATCHING HOLD / operator confirmation pending
 
 Proposed ACCEPTED_WITH_CONDITIONS applies only to restricted MATCHING HOLD;
