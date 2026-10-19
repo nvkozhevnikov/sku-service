@@ -1,5 +1,32 @@
 # STERBRUST unified RC — 2026-10-19
 
+## Latest: remaining release gates — offline bindings and churn containment
+
+DONE/APPLIED/VERIFIED: saved churn dispositions+identity hold;11supplier queue
+bindings,9new bounded wrappers reusing existing parsers;135uniqueWindows3.12
+testsPASS/1preexisting evidenceSKIP. Newsource54testsPASS; no SQL/HTTP/matching
+apply,DBcreation or dump rebuild. Existing RC1_VI30artifact seals retained.
+BLOCKED: actual Linux3.12 runtime unavailable (only stopped docker-desktop;
+Linux Engine pipe missing). Matching semantic adoption remains held; no fake
+AUTO acceptance. Live operation not verified by offline tests. Full RC remains
+NOT_ACCEPTED_FOR_DEVELOP. [Gate report](docs/unified-rc/RELEASE_GATES_2026-10-19.md).
+
+Older entries below retain their snapshot-specific context.
+
+## Latest: Vekprom/Intervesp INCLUDED — operator-approved continuation
+
+DONE/APPLIED/VERIFIED: VI source restore, pre-change rollback restore, scoped
+migration and idempotency PASS;18958products/18954active/19816history. New full
+dump+empty-DB restore PASS,133823099bytes/SHA256
+`a2c9e3fec764714f00648485dee7c72d7b158439a9863803a722b3080de083c2`.
+Source-data blocker below is now historical; both mandatory namespaces included.
+New delivery release/DELIVERY_2026-10-19_RC1_VI; older delivery remains sealed.
+Existing links/IDs/manual authority/other sources unchanged; no matching applied.
+OwnRC stopped. Full release NOT_ACCEPTED_FOR_DEVELOP: matching churn/Linux/live
+runner gates remain. [Details](docs/unified-rc/VI_INCLUSION_2026-10-19.md).
+
+The earlier partial-RC record below describes the previous sealed snapshot.
+
 **PARTIAL_RC / NOT_ACCEPTED_FOR_DEVELOP.** Owner: Codex.
 
 `OPERATOR-CONFIRMED`: V2/13_CODEX_NOW; no new collection, source DB writes or

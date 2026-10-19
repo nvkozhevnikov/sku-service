@@ -9,6 +9,12 @@ from psycopg import sql
 
 SUPPLIERS=('partner_st','optimum','beka_mak','beka_mak_tr','intervesp','kami','vekprom','ltt_msk','ltt_sib','ltt_yug','uss_stanko')
 
+def supplier_snapshot_status(code,records,verified_import_rows):
+    required={'vekprom':6834,'intervesp':1642}
+    if code not in required:return 'AVAILABLE'
+    if records==required[code] and verified_import_rows==required[code]:return 'AVAILABLE'
+    return 'BLOCKED_MISSING_VERIFIED_SOURCE_DATA' if code=='vekprom' else 'HISTORICAL_ONLY_NEW_SNAPSHOT_BLOCKED'
+
 class FrozenDispatch:
     def __init__(self,connect):self.connect=connect
 
@@ -16,9 +22,10 @@ class FrozenDispatch:
         with self.connect() as c:
             counts={code:(count,name) for code,count,name in c.execute('SELECT s.code,count(sp.id),s.name FROM suppliers s LEFT JOIN source_products sp ON sp.supplier_id=s.id GROUP BY s.code,s.name')}
             competitors=c.execute('SELECT code,name FROM competitor.competitor_sources ORDER BY code').fetchall()
+            imported=dict(c.execute("SELECT s.code,count(*) FROM rc_migration_map m JOIN source_products p ON p.id=m.new_pk JOIN suppliers s ON s.id=p.supplier_id WHERE m.source_db='recovered_vi_20261019_aa3708b4' AND m.source_schema='public' AND m.table_name='source_products' GROUP BY s.code"))
         rows=[{'key':'supplier:'+x,'module':'supplier','source':x,'name':counts.get(x,(0,'Векпром'))[1],'records':counts.get(x,(0,''))[0],
-               'snapshot_status':'BLOCKED_MISSING_VERIFIED_SOURCE_DATA' if x=='vekprom' else 'HISTORICAL_ONLY_NEW_SNAPSHOT_BLOCKED' if x=='intervesp' else 'AVAILABLE',
-               'live_runner':'SHARED_JOB' if x in ('partner_st','optimum') else 'BOUNDED_COLLECTION_COMPONENT',
+               'snapshot_status':supplier_snapshot_status(x,counts.get(x,(0,''))[0],imported.get(x,0)),
+               'live_runner':'SHARED_JOB' if x in ('partner_st','optimum') else 'SHARED_BOUNDED_MANIFEST_RUNNER_OFFLINE_VERIFIED',
                'live_schedule_enabled':False} for x in SUPPLIERS]
         rows += [{'key':'competitor:'+x,'module':'competitor','source':x,'name':name,'snapshot_status':'AVAILABLE','live_runner':'MANUAL_CAPTURE' if x=='youmet' else 'DETACHED_WORKER','live_schedule_enabled':False} for x,name in competitors]
         return rows
