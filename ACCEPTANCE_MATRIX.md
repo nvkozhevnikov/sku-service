@@ -1,5 +1,25 @@
 # Matching Policy V2 acceptance
 
+## F01/F03 isolated code correction — 2026-10-19
+
+OPERATOR-CONFIRMED: local feature only, base58152e4bd390361d3e97ee475bae78a91295e241;
+no push/PR/merge/deployment/DB changes or matching apply.
+REPOSITORY-VERIFIED criteria in tests/test_f01_f03_identity_inputs.py:
+
+- Both Product constructors preserve significant owned execution for strict checks;
+  broad candidate retrieval still uses legacy keys. With base/full candidates,
+  the wrong execution is never automatic. Reference tails do not become own models.
+- Distinct property values/units survive; critical ambiguity blocks auto in either
+  row/candidate order, even without an opposite value. Equal duplicates and
+  non-identity multiplicity do not require REVIEW merely because there are N rows.
+- Manual canonical IDs, supplier namespaces, numeric article compatibility,
+  legacy normalization and NEWC/NEWG recipes remain protected.
+- RED before patch and GREEN after patch are local code evidence, not persisted
+  matching or LIVE acceptance. Missing local historical evidence is an explicit SKIP.
+
+Compatibility design/source boundaries are maintained in docs/STRICT_IDENTITY_KEYS.md.
+F02/R04/R05, UI and PostgreSQL architecture remain outside this correction.
+
 ## Feature checkpoint permission — OPERATOR-CONFIRMED 2026-10-08 (`bf5d1d67`)
 
 The verified V2.1 matching state may now be packaged: fresh exact identity/hash

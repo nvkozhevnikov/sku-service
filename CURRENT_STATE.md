@@ -29,3 +29,15 @@ must remain untouched. No release tag, merge, supplier HTTP, live prices/availab
 update, NEW create, XML publication/import, ESOL, scheduler or deployment.
 Stage6 remains BLOCKED_IMPORT_CONTRACT_EVIDENCE. Prior dumps are historical,
 never overwrite them or restore over current RC. This is not production readiness.
+
+# Local F01/F03 code correction — 2026-10-19
+
+OPERATOR-CONFIRMED isolated feature:
+`feature/sterbrust-matching-f01-f03-20261019`, exact base
+`58152e4bd390361d3e97ee475bae78a91295e241`.
+REPOSITORY-VERIFIED: owned raw-title model retained for strict checks in both
+constructors; property duplicates/units retained with explicit critical ambiguity.
+See docs/STRICT_IDENTITY_KEYS.md for compatibility and FALSE_MATCH_CASES.md for
+regression scope. Local code only; no DB writes/matching apply/push/deployment.
+F02/R04/R05 remain separate. Exact feature HEAD and test receipts are in the
+operator handoff; previous checkpoints remain historical evidence.

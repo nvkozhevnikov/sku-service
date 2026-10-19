@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from itertools import combinations, product
 import re
 from typing import Any, Iterable
 
@@ -11,6 +12,8 @@ from .property_normalization import (
     PROPERTY_DATA_QUALITY_WARNING,
     PROPERTY_IDENTITY_CONFLICT,
     compare_property,
+    resolve_policy,
+    IDENTITY_CRITICAL,
 )
 from .product_identity import (
     OWN_MODEL,
@@ -27,6 +30,7 @@ from .product_identity import (
     mains_voltage_band,
     optimum_title_articles,
     primary_millimeters,
+    property_values,
 )
 
 
@@ -66,16 +70,28 @@ def _property_identity_quality(source: Product, candidate: Product) -> tuple[dic
     conflicts: dict[str, Any] = {}
     warnings: dict[str, Any] = {}
     evidence: dict[str, Any] = {}
-    for key in sorted(set(source.properties) & set(candidate.properties)):
-        left, right = source.properties[key], candidate.properties[key]
-        if left in (None, "") or right in (None, ""):
+    for key in sorted(set(source.properties) | set(candidate.properties)):
+        left = property_values(source.properties.get(key))
+        right = property_values(candidate.properties.get(key))
+        if resolve_policy(key).importance == IDENTITY_CRITICAL and any(
+            not comparison.compatible or comparison.classification == PROPERTY_DATA_QUALITY_WARNING
+            for values in (left, right) for a, b in combinations(values, 2)
+            for comparison in (compare_property(a, b, key),)
+        ):
+            conflicts[f"property:{key}"] = {
+                "result": "PROPERTY_AMBIGUOUS_DUPLICATE_VALUES",
+                "source_values": left, "candidate_values": right, "compatible": False,
+            }
+        if not left or not right:
             continue
-        comparison = compare_property(left, right, key)
-        evidence[key] = comparison.evidence()
-        if comparison.classification == PROPERTY_IDENTITY_CONFLICT:
-            conflicts[f"property:{key}"] = comparison.evidence()
-        elif comparison.classification == PROPERTY_DATA_QUALITY_WARNING:
-            warnings[f"PROPERTY_{key.upper()}_DATA_QUALITY_WARNING"] = comparison.evidence()
+        comparisons = [compare_property(a, b, key) for a, b in product(left, right)]
+        details = [comparison.evidence() for comparison in comparisons]
+        evidence[key] = details[0] if len(details) == 1 else {"values": details}
+        for comparison in comparisons:
+            if comparison.classification == PROPERTY_IDENTITY_CONFLICT:
+                conflicts.setdefault(f"property:{key}", comparison.evidence())
+            elif comparison.classification == PROPERTY_DATA_QUALITY_WARNING:
+                warnings[f"PROPERTY_{key.upper()}_DATA_QUALITY_WARNING"] = comparison.evidence()
     return conflicts, warnings, evidence
 
 

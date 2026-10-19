@@ -21,6 +21,8 @@ from sterbrust_matching.product_identity import (
     canonical_properties,
     classify_model_role,
     classify_product_kind,
+    identity_properties,
+    own_model_for_identity,
     profile_for_kind,
     safe_new_product_decision,
 )
@@ -41,42 +43,27 @@ def category_path(card: dict) -> str:
     return " / ".join(str(row.get("name") or "") for row in card.get("categories", []) if row.get("name"))
 
 
-def source_properties(card: dict) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for item in card.get("properties", []):
-        value = item.get("value")
-        unit = str(item.get("unit") or "").strip()
-        if value not in (None, "") and item.get("name"):
-            rendered = str(value)
-            if unit and unit.lower() not in rendered.lower():
-                rendered = f"{rendered} {unit}"
-            result[str(item["name"])] = rendered
-    return result
+def source_properties(card: dict) -> dict[str, Any]:
+    return identity_properties((item.get("name"), item.get("value"), item.get("unit"))
+                               for item in card.get("properties", []))
 
 
-def registry_properties(row: dict) -> dict[str, str]:
+def registry_properties(row: dict) -> dict[str, Any]:
     value = row.get("properties") or []
     items = value.get("items", []) if isinstance(value, dict) else value
-    result: dict[str, str] = {}
-    for item in items:
-        field = item.get("value_flat") if "value_flat" in item else item.get("value")
-        unit = str(item.get("unit") or "").strip()
-        name = item.get("property_name") or item.get("name")
-        if field not in (None, "") and name:
-            rendered = str(field)
-            if unit and unit.lower() not in rendered.lower():
-                rendered = f"{rendered} {unit}"
-            result[str(name)] = rendered
-    return result
+    return identity_properties(
+        (item.get("property_name") or item.get("name"),
+         item.get("value_flat") if "value_flat" in item else item.get("value"), item.get("unit"))
+        for item in items
+    )
 
 
 def source_product(card: dict) -> Product:
     path = category_path(card)
-    role = classify_model_role(card.get("name", ""), path)
     return Product(
         key=str(card.get("external_id") or ""), name=str(card.get("name") or ""),
         brand=str(card.get("brand") or "") or brand_evidenced_by_name(card.get("name", "")),
-        model=role.own_model,
+        model=own_model_for_identity(card.get("name", ""), path),
         supplier_article=str(card.get("sku") or ""), category=path,
         properties=source_properties(card), supplier_code=str(card.get("supplier_code") or ""),
     )

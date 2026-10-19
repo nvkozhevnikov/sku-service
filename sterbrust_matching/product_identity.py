@@ -6,7 +6,9 @@ profiles.  Fuzzy text similarity is not identity evidence here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 import re
+import unicodedata
 from typing import Any, Iterable, Mapping
 
 from .normalization import (
@@ -21,7 +23,10 @@ from .property_normalization import (
     IDENTITY_CRITICAL,
     SUPPORTING,
     PropertyPolicy,
+    PROPERTY_DATA_QUALITY_WARNING,
     compare_property,
+    normalize_property,
+    resolve_policy,
 )
 
 
@@ -294,6 +299,77 @@ def kinds_equivalent(left: str, right: str) -> bool:
     return bool(left and right and left != "unknown" and left == right)
 
 
+def own_model_for_identity(name: object, category: object = "") -> str:
+    """Raw title span for the existing own-model decision; never a lookup key.
+
+    Keep ModelRoleEvidence/legacy extraction stable. Select only spans whose
+    legacy key equals that decision, without borrowing a compatibility tail.
+    Attached plus and decimal punctuation survive; separate prose plus does not.
+    """
+    role = classify_model_role(name, category)
+    if not role.own_model:
+        return ""
+    text = unicodedata.normalize("NFKC", str(name or ""))
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", text)
+    relation = _marker_span(text)
+    if role.role == REFERENCE_MODEL and relation:
+        text = text[:relation[1]]
+    tokens = list(re.finditer(r"(?iu)[a-zа-я0-9]+(?:[-.,/×xх+][a-zа-я0-9]+)*\+*", text))
+    for start in range(len(tokens)):
+        for end in range(start, min(start + 3, len(tokens))):
+            raw = text[tokens[start].start():tokens[end].end()]
+            # Legacy tokenization can stop inside a decimal comma or an
+            # attached composite execution (6K+2). Recover that entire token,
+            # never an unrelated following word or compatibility model.
+            legacy_prefix = re.split(r"(?<=\d),(?=\d)|\+(?=[a-zа-я0-9])", raw, maxsplit=1, flags=re.I)[0]
+            if normalize_model(raw) == role.own_model or normalize_model(legacy_prefix) == role.own_model:
+                return raw
+    # Unrecognized layout is not permission to strip meaningful execution.
+    return ""
+
+
+def property_values(value: Any) -> tuple[str, ...]:
+    """Scalar consumer boundary for the matching view's optional multivalues."""
+    if isinstance(value, (list, tuple)):
+        return tuple(sorted({part for item in value for part in property_values(item)}))
+    return (str(value).strip(),) if value is not None and str(value).strip() else ()
+
+
+def identity_properties(rows: Iterable[tuple[object, object, object]]) -> dict[str, Any]:
+    """Preserve distinct values/units without changing Product's dict API.
+
+    Single values remain strings. Multiple values are sorted tuples; raw cards
+    retain row positions and repeated identical observations independently.
+    """
+    grouped: dict[str, set[str]] = {}
+    for name, value, unit in rows:
+        label = str(name or "").strip()
+        if not label:
+            continue
+        unit = str(unit or "").strip()
+        for rendered in property_values(value):
+            if unit:
+                canonical = canonical_property_name(label)
+                policy = PROPERTY_POLICIES.get(canonical) or resolve_policy(label)
+                parsed = normalize_property(rendered, policy.property_type)
+                equivalent_unit = False
+                if parsed.input_unit and parsed.canonical_unit:
+                    existing_unit = normalize_property(f"1 {parsed.input_unit}", policy.property_type)
+                    supplied_unit = normalize_property(f"1 {unit}", policy.property_type)
+                    equivalent_unit = bool(
+                        existing_unit.canonical_unit
+                        and existing_unit.canonical_unit == supplied_unit.canonical_unit
+                        and existing_unit.numeric_value == supplied_unit.numeric_value
+                    )
+                if not equivalent_unit and not re.search(
+                    rf"(?<![a-zа-я]){re.escape(unit)}(?![a-zа-я])", rendered, re.I,
+                ):
+                    rendered = f"{rendered} {unit}"
+            grouped.setdefault(label, set()).add(rendered)
+    return {name: values[0] if len(values) == 1 else tuple(values)
+            for name in sorted(grouped) if (values := sorted(grouped[name]))}
+
+
 PROPERTY_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("max_turning_diameter", (r"макс\w*.*диаметр.*(?:обработ|точен|над стан)", r"diameter over")),
     ("distance_between_centers", (r"расстояни\w*.*между центр", r"distance between centers")),
@@ -369,6 +445,9 @@ def canonical_property_name(raw_name: object) -> str:
 def _render_canonical_value(canonical: str, raw_name: object, value: object) -> str:
     rendered = str(value)
     raw_text = normalize_text(raw_name)
+    policy = PROPERTY_POLICIES.get(canonical)
+    if policy and normalize_property(rendered, policy.property_type).canonical_unit:
+        return rendered
     if canonical == "voltage" and not re.search(r"(?:^|\s)(?:v|в)(?:\s|$)", normalize_text(rendered)):
         rendered += " V"
     elif canonical == "motor_power" and not re.search(r"(?:^|\s)(?:w|kw|вт|квт)(?:\s|$)", normalize_text(rendered)):
@@ -377,19 +456,31 @@ def _render_canonical_value(canonical: str, raw_name: object, value: object) -> 
 
 
 def _canonical_value_groups(properties: Mapping[str, Any]) -> dict[str, list[str]]:
-    """All rendered values per canonical key, in input order."""
+    """Expand multivalues; retain legacy first-value rendering for scalar maps."""
     groups: dict[str, list[str]] = {}
     for raw_name, value in properties.items():
         canonical = canonical_property_name(raw_name)
         if canonical and value not in (None, ""):
-            groups.setdefault(canonical, []).append(_render_canonical_value(canonical, raw_name, value))
-    return groups
+            groups.setdefault(canonical, []).extend(
+                _render_canonical_value(canonical, raw_name, scalar) for scalar in property_values(value)
+            )
+    return {key: list(dict.fromkeys(values)) for key, values in groups.items() if values}
 
 
 def _ambiguous(key: str, values: list[str]) -> bool:
-    first = values[0]
-    return any(not compare_property(first, other, key, PROPERTY_POLICIES).compatible
-               for other in values[1:])
+    if key == "voltage":
+        for value in values:
+            item = normalize_property(value, "voltage")
+            if item.normalization_rule == "voltage:multi_value":
+                bands = {"220" if x in {"220", "230"} else "380" if x in {"380", "400"} else x
+                         for x in (item.normalized_text or "").split("|")}
+                if len(bands) > 1:
+                    return True
+    for left, right in combinations(values, 2):
+        comparison = compare_property(left, right, key, PROPERTY_POLICIES)
+        if not comparison.compatible or comparison.classification == PROPERTY_DATA_QUALITY_WARNING:
+            return True
+    return False
 
 
 def canonical_properties(properties: Mapping[str, Any]) -> dict[str, Any]:
@@ -406,7 +497,7 @@ def canonical_properties(properties: Mapping[str, Any]) -> dict[str, Any]:
 def canonical_property_ambiguities(properties: Mapping[str, Any]) -> dict[str, list[str]]:
     """Canonical keys whose raw source names carry contradicting values."""
     return {key: values for key, values in _canonical_value_groups(properties).items()
-            if len(values) > 1 and _ambiguous(key, values)}
+            if _ambiguous(key, values)}
 
 
 def profile_for_kind(product_kind: str) -> tuple[str, ...]:
@@ -427,10 +518,14 @@ def compare_category_identity(
     conflicts: dict[str, Any] = {}
     ambiguities = (canonical_property_ambiguities(source_properties),
                    canonical_property_ambiguities(candidate_properties))
-    for key in profile_for_kind(source_kind):
+    critical_ambiguities = {
+        key for side in ambiguities for key in side
+        if PROPERTY_POLICIES[key].importance == IDENTITY_CRITICAL
+    }
+    for key in sorted(set(profile_for_kind(source_kind)) | critical_ambiguities):
         source_values = ambiguities[0].get(key) or ([source[key]] if key in source else [])
         candidate_values = ambiguities[1].get(key) or ([candidate[key]] if key in candidate else [])
-        if (key in ambiguities[0] or key in ambiguities[1]) and source_values and candidate_values:
+        if key in critical_ambiguities:
             # One card carries contradicting values for the same canonical
             # property. Never pick a convenient one: block automatic identity.
             conflicts[f"category_property:{key}"] = {

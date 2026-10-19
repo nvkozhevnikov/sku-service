@@ -13,7 +13,7 @@ from sterbrust_matching.normalization import (
     article_lookup_key, brand_evidenced_by_name, model_identity_evidence, normalize_brand, normalize_model,
     normalized_name, model_tokens,
 )
-from sterbrust_matching.product_identity import classify_model_role
+from sterbrust_matching.product_identity import identity_properties, own_model_for_identity
 
 from .models import ProductCard
 
@@ -104,10 +104,10 @@ def load_registry_from_postgres(connection) -> RegistryContext:
         for product_id, name, brand, model, article, category, properties in cursor.fetchall():
             key = str(product_id)
             prop_items = properties.get("items", []) if isinstance(properties, dict) else []
-            product_properties = {
-                str(item.get("property_name") or ""): item.get("value_flat", "")
-                for item in prop_items if item.get("property_name") and item.get("value_flat") not in (None, "")
-            }
+            product_properties = identity_properties(
+                (item.get("property_name"), item.get("value_flat"), item.get("unit"))
+                for item in prop_items
+            )
             products[key] = {"sterbrust_product_id": key, "name": name, "brand": brand,
                              "model": model, "article": article, "category": category,
                              "properties": product_properties, "supplier_identifiers": defaultdict(list)}
@@ -152,13 +152,13 @@ def _candidate(row: dict) -> Product:
 
 def _source(card: ProductCard) -> Product:
     category = " / ".join(node.name for node in card.categories if node.name)
-    role = classify_model_role(card.name, category)
     # supplier_code is not a brand, and a compatibility model is not own_model.
     brand = (card.brand or "").strip() or brand_evidenced_by_name(card.name)
     return Product(key=card.external_id, name=card.name, brand=brand,
-                   model=role.own_model, supplier_article=card.sku,
+                   model=own_model_for_identity(card.name, category), supplier_article=card.sku,
                    supplier_code=card.supplier_code,
-                   category=category, properties={item.name: item.value for item in card.properties})
+                   category=category, properties=identity_properties(
+                       (item.name, item.value, item.unit) for item in card.properties))
 
 
 def _candidates(source: Product, registry: RegistryContext) -> list[dict]:
