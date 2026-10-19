@@ -1,5 +1,16 @@
 # STERBRUST unified RC — 2026-10-19
 
+## Final acceptance proposal — MATCHING HOLD / operator confirmation pending
+
+Proposed ACCEPTED_WITH_CONDITIONS applies only to restricted MATCHING HOLD;
+it is not accepted yet. Exact11supplier+12competitor matrix:offlineREADY,
+liveNOT_VERIFIED,YoumetMANUAL_CAPTURE. Runtime/data unchanged from prior gate
+work; final supplement is documentation only. Linux3.12 remains BLOCKED:
+no independent runtime,only stopped docker-desktop. One disposable-VM procedure
+prepared; no Docker/service startup. No new critical code,so no GLM dispatch.
+Existing RC1_VI dump retained; STOP before develop.
+[Final conditions](docs/unified-rc/FINAL_ACCEPTANCE_CONDITIONS.md).
+
 ## Latest: remaining release gates — offline bindings and churn containment
 
 DONE/APPLIED/VERIFIED: saved churn dispositions+identity hold;11supplier queue

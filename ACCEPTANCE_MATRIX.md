@@ -1,5 +1,34 @@
 # Matching Policy V2 acceptance
 
+## RC1_VI MATCHING HOLD — final proposal, awaiting operator confirmation
+
+Proposed decision: **ACCEPTED_WITH_CONDITIONS**.
+Effective decision: **PENDING_OPERATOR_CONFIRMATION / not yet accepted**.
+OPERATOR-CONFIRMED scope is preparation of this proposal only. No existing
+acceptance entry below authorizes RC mutation or overrides the current STOP.
+
+1. Existing supplier/external IDs, catalog links, Sterbrust Product IDs and manual
+   authority remain unchanged. No mass matching apply or automatic reconcile.
+2. REVIEW/CONFLICT remain unaccepted automatically.102promotion proposals and
+   9candidate switches are not applied;461stored-link risk/switch cases retain
+   their existing IDs and require evidence before any future identity change.
+3. The existing runtime hold for pinned RC1 or the explicit RC profile remains
+   enabled. New source wrappers do not call reconcile. Existing stored accepted
+   links are retained as historical authority; this is not fresh semantic proof.
+4. Operation exports and data snapshot remain RC1_VI. No new NEW/PRICE operation
+   is inferred from this policy, and no dump rebuild is needed without data change.
+5. Linux3.12QA remains BLOCKED until actually executed in an independent sandbox;
+   WindowsQA is not LinuxQA. Offline runnerREADY does not prove liveHTTP/SQL.
+6. Youmet remains manual capture. Live collection, cron, ESOL, deploy and develop
+   transfer require separate approval. Operator acceptance of HOLD alone does
+   not authorize any of these actions or removal of the hold.
+
+REPOSITORY-VERIFIED runtime/WindowsQA is reused from0d02027881817cd7009fe20dceb27f63b0501a09.
+PACKAGED-EVIDENCE: frozen churn and unchanged RC1_VI dump/exports.
+INFERENCE: conservative dispositions; no semantic identity acceptance claimed.
+The operator has **not yet confirmed this proposed acceptance**.
+See [final conditions and23-source matrix](docs/unified-rc/FINAL_ACCEPTANCE_CONDITIONS.md).
+
 ## F01/F03 isolated code correction — 2026-10-19
 
 OPERATOR-CONFIRMED: local feature only, base58152e4bd390361d3e97ee475bae78a91295e241;
