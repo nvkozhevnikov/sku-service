@@ -22,6 +22,18 @@ from .models import ProductCard
 
 _AVAILABILITY = {"InStock": "in_stock", "OutOfStock": "out_of_stock", "PreOrder": "preorder",
                  "Incoming": "incoming", "BackOrder": "backorder"}
+
+
+def normalize_availability(value: str | None) -> str:
+    """Canonical schema.org availability token -> storage vocabulary.
+
+    Single source of truth for how adapter availability values (``InStock``,
+    ``OutOfStock``, ...) are persisted to ``offers.availability_normalized`` /
+    ``offer_commercial_observations.availability_normalized``; anything missing
+    or unmapped persists as ``"unknown"``. QA gates must reuse this helper
+    instead of re-deriving expectations locally.
+    """
+    return _AVAILABILITY.get(value or "", "unknown")
 _SECRET_TEXT_RE = re.compile(r"(?:sessid|bitrix_sessid|cookie|authorization|access_token|api[_-]?key|token)", re.I)
 
 
@@ -179,7 +191,7 @@ def product_card_from_snapshot(product: ReadOnlySupplierProduct, capture: HttpCa
         _safe_text(diagnostic, "price extraction diagnostics")
     price = extraction.current_price if extraction.state == PriceState.NUMERIC_PUBLIC else None
     old_price = extraction.old_price if extraction.state == PriceState.NUMERIC_PUBLIC else None
-    availability = _AVAILABILITY.get(product.availability or "", "unknown")
+    availability = normalize_availability(product.availability)
     raw_data = {
         "source_identity": {
             "raw_model": _safe_text(product.raw_supplier_model or product.supplier_model or "", "raw_supplier_model"),

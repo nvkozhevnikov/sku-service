@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "checks": {
+    "positive_unified_role_schema_identity": true,
+    "cross_schema_read_denied": true,
+    "cross_schema_write_denied": true,
+    "wrong_db": true,
+    "wrong_role": true,
+    "wrong_port": true,
+    "wrong_search_path": true
+  },
+  "source_writes": 0
+}

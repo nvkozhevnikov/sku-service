@@ -128,7 +128,8 @@ def filters_from_request(request: Request, *, forced_decision: str = "") -> Prod
 
 def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None,
                session_secret: str | None = None, auth_required: bool | None = None,
-               commercial_qa_service=None) -> FastAPI:
+               commercial_qa_service=None, competitor_service=None, competitor_collection=None,
+               release_dispatch=None) -> FastAPI:
     injected = store is not None; config = None
     if store is None:
         if os.environ.get("CONTROL_PLANE_DEMO_SNAPSHOT") == "YES":
@@ -156,6 +157,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     app.state.store = store; app.state.queue = queue; app.state.admin_store = admin_store; app.state.stage6e_service = stage6e_service
     app.state.auth_required = auth_required; app.state.direct_crawl_executions = 0
     app.state.commercial_qa_service = commercial_qa_service
+    app.state.competitor_monitoring_available = competitor_service is not None
     login_throttle = app.state.login_throttle = PostgresLoginThrottle(admin_store.config) if isinstance(admin_store, PostgresAdminStore) else LoginThrottle()
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE / "templates")
@@ -187,11 +189,42 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             "safety_banner": "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
             "commercial_qa_available": bool(getattr(commercial_qa_service, "enabled", False)),
             "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
+            "monitoring_available": competitor_service is not None,
+            "release_replay_available": release_dispatch is not None,
             "control_plane_read_only": read_only_source, **values}
+
+    if competitor_service is not None:
+        app.state.monitoring_templates = templates
+        app.state.monitoring_template_context = context
+        from .competitor_ui import register_monitoring
+        register_monitoring(app, templates, context, guard, competitor_service,
+                            competitor_collection, check_csrf)
+
+    if release_dispatch is not None:
+        @app.get('/release-jobs', response_class=HTMLResponse)
+        def release_jobs(request: Request):
+            guard(request)
+            return templates.TemplateResponse(request, 'release_jobs.html', context(request,
+                title='Проверка сохранённых данных', active='release_jobs',
+                sources=release_dispatch.sources(), jobs=release_dispatch.history()))
+
+        @app.post('/release-jobs/enqueue')
+        async def release_enqueue(request: Request):
+            guard(request, MUTATING_ROLES); require_trusted_origin(request)
+            values=await form_values(request); check_csrf(request, values)
+            try: result=release_dispatch.enqueue(values.get('source_key',''),'OPERATOR_UI')
+            except ValueError as e: raise HTTPException(400,str(e))
+            if result['status']=='queued' and 'text/html' in request.headers.get('accept',''):
+                return RedirectResponse('/release-jobs',status_code=303)
+            return JSONResponse(result,status_code=202 if result['status']=='queued' else 409)
 
     @app.middleware("http")
     async def block_qa_source_writes(request: Request, call_next):
         allowed_posts = {"/login", "/logout", "/commercial-qa/runs"}
+        if competitor_collection is not None:
+            allowed_posts.add('/competitor-monitoring/runs')
+        if release_dispatch is not None:
+            allowed_posts.add('/release-jobs/enqueue')
         if getattr(type(store), "read_only", False) and request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in allowed_posts:
             if request.url.path.startswith("/suppliers/") and request.url.path.endswith("/start") and commercial_qa_service.enabled:
                 return HTMLResponse(

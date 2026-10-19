@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import random
 import re
 import time
 from typing import Callable
@@ -20,6 +21,7 @@ import xml.etree.ElementTree as ET
 from .adapters.bekamak import parse_bekamak_detail
 from .adapters.bekamak_official import parse_bekamak_official_detail
 from .adapters.intervesp import parse_intervesp_detail
+from .adapters.vekprom import parse_vekprom_detail
 from .commercial_discovery import _MODEL_RE, normalise_model
 from .http_capture import CaptureStatus, EvidenceStore, PublicHttpClient, UrllibPublicHttpClient, capture_public_html
 from .postgres import PostgresRepository
@@ -29,10 +31,11 @@ ROOT_SITEMAPS = {
     "intervesp": "https://intervesp.ru/sitemap.xml",
     "beka_mak": "https://beka-mak.su/sitemap.xml",
     "beka_mak_tr": "https://www.bekamak.com/sitemap.xml",
+    "vekprom": "https://vekprom.ru/sitemap.xml",
 }
 _HOSTS = {site: urlparse(url).hostname for site, url in ROOT_SITEMAPS.items()}
 _PARSERS = {"intervesp": parse_intervesp_detail, "beka_mak": parse_bekamak_detail,
-            "beka_mak_tr": parse_bekamak_official_detail}
+            "beka_mak_tr": parse_bekamak_official_detail, "vekprom": parse_vekprom_detail}
 _SITEMAP_PATH = re.compile(r"^/sitemap(?:-iblock-\d+|-files)?\.xml$", re.I)
 
 
@@ -51,6 +54,10 @@ def _safe_source_url(site: str, url: str, *, sitemap: bool = False) -> str:
     elif site == "beka_mak":
         if not parsed.path.startswith("/product/"):
             raise ValueError("not a Beka-Mak detail path")
+    elif site == "vekprom":
+        parts = parsed.path.rstrip("/").split("/")
+        if len(parts) != 4 or parts[1] != "catalog":
+            raise ValueError("not a Vekprom detail path")
     else:
         parts = parsed.path.rstrip("/").split("/")
         if len(parts) != 4 or parts[1] != "urun" or parts[3] != "en":
@@ -94,19 +101,55 @@ def _candidate_sha(candidates: tuple[FullCandidate, ...]) -> str:
 
 
 class PublicPacer:
+    """Public GET pacing.
+
+    The default policy remains the fixed, floor-guarded >= 20 s pause used
+    by every supplier crawl.  ``with_jitter_range`` is an explicit opt-in
+    constructor for an operator-authorized per-supplier jitter policy: it
+    draws a fresh continuous delay for every request and never changes the
+    effective pacing of any other caller.
+    """
+
     def __init__(self, pause_seconds: float = 20.0, sleep: Callable[[float], None] = time.sleep) -> None:
         if pause_seconds < 20.0:
             raise ValueError("public GET pause must be at least 20 seconds")
-        self.pause_seconds = pause_seconds
+        self.pause_seconds: float | None = pause_seconds
+        self.pause_min_seconds = pause_seconds
+        self.pause_max_seconds = pause_seconds
+        self._sampler: Callable[[], float] = lambda: pause_seconds
         self.sleep = sleep
         self.last_request: float | None = None
 
-    def before_get(self) -> None:
+    @classmethod
+    def with_jitter_range(cls, pause_min_seconds: float, pause_max_seconds: float,
+                          sampler: Callable[[float, float], float] = random.uniform,
+                          sleep: Callable[[float], None] = time.sleep) -> "PublicPacer":
+        """Operator-authorized random pacing: one fresh continuous draw in
+        [pause_min_seconds, pause_max_seconds] per request, no rounding."""
+        if pause_min_seconds <= 0:
+            raise ValueError("pause range must be strictly positive")
+        if pause_min_seconds > pause_max_seconds:
+            raise ValueError("pause_min_seconds must not exceed pause_max_seconds")
+        pacer = cls.__new__(cls)
+        pacer.pause_seconds = None
+        pacer.pause_min_seconds = pause_min_seconds
+        pacer.pause_max_seconds = pause_max_seconds
+        pacer._sampler = lambda: float(sampler(pause_min_seconds, pause_max_seconds))
+        pacer.sleep = sleep
+        pacer.last_request = None
+        return pacer
+
+    def next_delay(self) -> float:
+        return self._sampler()
+
+    def before_get(self) -> float:
+        delay = self._sampler() if self.last_request is not None else 0.0
         if self.last_request is not None:
             # Sleep after the preceding response, not merely between request
             # start times: a slow response must not erase the site pause.
-            self.sleep(self.pause_seconds)
+            self.sleep(delay)
         self.last_request = time.monotonic()
+        return delay
 
 
 class _SourceClient:
@@ -189,6 +232,11 @@ def discover_full_manifest(*, client: PublicHttpClient | None = None,
                 try:
                     _safe_source_url(site, url)
                 except ValueError:
+                    continue
+                if site == "vekprom":
+                    # No slug-borne model expectation: the article on the
+                    # page, not the URL, is the primary model claim.
+                    candidates[(site, url)] = FullCandidate(site, url, "")
                     continue
                 path = urlparse(url).path.rstrip("/")
                 raw_slug = path.split("/")[2] if site == "beka_mak_tr" else path.rsplit("/", 1)[-1]
@@ -275,12 +323,18 @@ def run_full_collection(*, manifest: FullManifest, repository: PostgresRepositor
             source_blocked.add(item.source)
         if capture.status is CaptureStatus.SUCCESS and capture.capture and capture.evidence_body:
             try:
+                if item.source == "vekprom" and capture.final_url.rstrip("/") != item.url.rstrip("/"):
+                    raise ValueError("redirected away from sitemap detail URL")
                 product = _PARSERS[item.source](capture.evidence_body.decode("utf-8", "replace"),
                                                 source_url=capture.final_url)
-                if not product.site_internal_id or not product.supplier_model:
-                    raise ValueError("stable site ID or primary model not proven")
-                if normalise_model(product.supplier_model) != item.expected_model:
-                    raise ValueError("sitemap model and product card disagree")
+                if item.source == "vekprom":
+                    if not product.site_internal_id or not product.name:
+                        raise ValueError("stable site ID or product name not proven")
+                else:
+                    if not product.site_internal_id or not product.supplier_model:
+                        raise ValueError("stable site ID or primary model not proven")
+                    if normalise_model(product.supplier_model) != item.expected_model:
+                        raise ValueError("sitemap model and product card disagree")
                 identity_key = (item.source, product.site_internal_id)
                 if identity_key in seen_ids and seen_ids[identity_key] != item.url:
                     raise ValueError("site internal ID reused by another URL in this run")

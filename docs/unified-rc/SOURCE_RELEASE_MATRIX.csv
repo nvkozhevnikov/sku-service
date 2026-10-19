@@ -1,0 +1,24 @@
+﻿module,namespace,target_rows,active_rows,source_status,source_evidence,replay_runner,live_runner,live_cron_enabled
+supplier,partner_st,1225,1225,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,EXISTING_SHARED_JOB,False
+supplier,optimum,1353,1353,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,EXISTING_SHARED_JOB,False
+supplier,beka_mak,109,109,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+supplier,beka_mak_tr,78,78,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+supplier,intervesp,1642,1642,HISTORICAL_ONLY_NEW_SNAPSHOT_BLOCKED_MISSING_VERIFIED_SOURCE_DATA,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+supplier,kami,5264,5264,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+supplier,vekprom,,,BLOCKED_MISSING_VERIFIED_SOURCE_DATA,PACKAGED-EVIDENCE expected6834;target0,BLOCKED,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+supplier,ltt_msk,369,365,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+supplier,ltt_sib,1266,1266,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+supplier,ltt_yug,591,591,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+supplier,uss_stanko,227,227,AVAILABLE,LIVE-VERIFIED restored payload,SHARED_FROZEN_DISPATCH,COMPONENT_ONLY_NOT_VERIFIED_SHARED_LIVE_JOB,False
+competitor,amur_stan,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,belmash,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,harvey_rus,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,jet_online,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,jettools_ru,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,kuvalda_nnov,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,lasercut_ru,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,metalmaster,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,rustan,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,stanki_ru,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,titaniumgroup,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,DETACHED_WORKER,False
+competitor,youmet,see DB manifest,,AVAILABLE,LIVE-VERIFIED restored entire competitor schema,SHARED_FROZEN_DISPATCH,MANUAL_CAPTURE,False

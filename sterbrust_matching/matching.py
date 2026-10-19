@@ -151,10 +151,10 @@ def _identity_conflicts(source: Product, candidate: Product) -> dict[str, Any]:
     )
     conflicts.update(category_conflicts)
     source_voltage_text = source.name + " " + " ".join(
-        f"{key} {value}" for key, value in sorted(source.properties.items())
+        " ".join((key, *property_values(value))) for key, value in sorted(source.properties.items())
     )
     candidate_voltage_text = candidate.name + " " + " ".join(
-        f"{key} {value}" for key, value in sorted(candidate.properties.items())
+        " ".join((key, *property_values(value))) for key, value in sorted(candidate.properties.items())
     )
     source_band = mains_voltage_band(source_voltage_text)
     candidate_band = mains_voltage_band(candidate_voltage_text)

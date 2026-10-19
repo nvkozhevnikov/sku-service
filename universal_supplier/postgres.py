@@ -33,8 +33,17 @@ SUPPLIER_CONFIGS = {
     "beka_mak": ("Beka-Mak", "https://beka-mak.su/", "beka_mak"),
     "beka_mak_tr": ("Bekamak manufacturer reference", "https://www.bekamak.com/", "beka_mak_tr"),
     "kami": ("КАМИ", "https://www.stanki.ru/", "kami"),
+    "vekprom": ("Векпром", "https://vekprom.ru/", "vekprom"),
+    # LTT regional network + USS-Stanko (source-integration stage 2026-10-13).
+    # Separate namespaces per operator decision: regional LTT sites keep their
+    # own prices/stock; USS-Stanko never reuses manufacturer namespaces.
+    "ltt_msk": ("LTT Москва", "https://ltt-msk.ru/", "ltt_msk"),
+    "ltt_sib": ("LTT Сибирь", "https://lttsib.ru/", "ltt_sib"),
+    "ltt_yug": ("LTT Юг", "https://ltt-yug.ru/", "ltt_yug"),
+    "uss_stanko": ("USS-Stanko", "https://uss-stanko.com/", "uss_stanko"),
 }
-PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr", "kami"})
+PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr", "kami", "vekprom",
+                                           "ltt_msk", "ltt_sib", "ltt_yug", "uss_stanko"})
 
 
 def should_quarantine_automatic_link(previous_auto_accepted: bool, new_status: str) -> bool:
@@ -159,7 +168,7 @@ class PostgresRepository:
     def _ensure_passive_commercial_supplier(cursor, supplier_code: str) -> int:
         """Create only the isolated namespace; never touch Sterbrust identifiers."""
         name, base_url, adapter_name = SUPPLIER_CONFIGS[supplier_code]
-        if supplier_code == 'kami':
+        if supplier_code in {'kami', 'ltt_msk', 'ltt_sib', 'ltt_yug', 'uss_stanko'}:
             # Exact KAMI capture replay must not consume the supplier sequence.
             cursor.execute('SELECT id FROM suppliers WHERE code=%s FOR UPDATE', (supplier_code,))
             existing = cursor.fetchone()

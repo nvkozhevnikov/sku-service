@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<h2>Проверка сохранённых данных</h2>
+<p>Релиз-кандидат · данные собраны до 19.10.2026. Проверка читает сохранённые записи, не обновляет сайты и не меняет решения сопоставления.</p>
+<p class="notice">Автоматический сбор выключен. Vekprom и новый снимок Intervesp: ожидается проверенный дамп.</p>
+<table><thead><tr><th>Источник</th><th>Записей</th><th>Состояние снимка</th><th>Проверка</th></tr></thead><tbody>
+{% for source in sources %}<tr><td>{{source.module}} · {{source.source}}</td><td>{{source.records if source.records is defined else '—'}}</td><td>{{source.snapshot_status}}</td><td>
+<form method="post" action="/release-jobs/enqueue"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="source_key" value="{{source.key}}"><button {% if source.snapshot_status=='BLOCKED_MISSING_VERIFIED_SOURCE_DATA' %}disabled{% endif %}>Проверить сохранённые данные</button></form>
+</td></tr>{% endfor %}</tbody></table>
+<h3>Журнал проверок</h3><table><thead><tr><th>№</th><th>Источник</th><th>Запуск</th><th>Статус</th><th>Результат</th></tr></thead><tbody>{% for job in jobs %}<tr>{% for value in job %}<td>{{value}}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+{% endblock %}
