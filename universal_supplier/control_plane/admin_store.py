@@ -9,7 +9,7 @@ from typing import Any
 
 from universal_supplier.postgres import PostgresConfig
 from universal_supplier.effective_identity import effective_identity_mapping_sql
-from sterbrust_matching.normalization import normalize_brand, normalize_model, normalized_name
+from sterbrust_matching.normalization import normalize_brand, normalize_model, normalize_model_strict, normalized_name
 from sterbrust_matching.product_identity import classify_product_kind
 from .security import AuthUser, normalize_username
 
@@ -367,8 +367,8 @@ class PostgresAdminStore:
                 candidate_kind = classify_product_kind(candidate.get("name"), candidate.get("category_path")).product_kind
                 pairs = [
                     ("Бренд", item.get("brand_raw"), candidate.get("brand_raw"), normalize_brand(item.get("brand_raw")) == normalize_brand(candidate.get("brand_raw"))),
-                    ("Собственная модель", item.get("own_model"), candidate.get("model_raw"), normalize_model(item.get("own_model"), item.get("brand_raw")) == normalize_model(candidate.get("model_raw"), candidate.get("brand_raw"))),
-                    ("Референсная модель", item.get("reference_model"), candidate.get("model_raw"), normalize_model(item.get("reference_model"), item.get("brand_raw")) == normalize_model(candidate.get("model_raw"), candidate.get("brand_raw"))),
+                    ("Собственная модель", item.get("own_model"), candidate.get("model_raw"), normalize_model_strict(item.get("own_model"), item.get("brand_raw")) == normalize_model_strict(candidate.get("model_raw"), candidate.get("brand_raw"))),
+                    ("Референсная модель", item.get("reference_model"), candidate.get("model_raw"), normalize_model_strict(item.get("reference_model"), item.get("brand_raw")) == normalize_model_strict(candidate.get("model_raw"), candidate.get("brand_raw"))),
                     ("Тип товара", source_kind, candidate_kind, source_kind == candidate_kind),
                 ]
                 item["comparison"] = [{"label": label, "source": left or "—", "candidate": right or "—", "status": "Совпадает" if same and left and right else ("Нет данных" if not left or not right else "Конфликт")} for label,left,right,same in pairs]

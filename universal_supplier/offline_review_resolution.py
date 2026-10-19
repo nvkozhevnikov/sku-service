@@ -3,7 +3,7 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 import re
 
-from sterbrust_matching.normalization import normalize_model, normalize_brand, extract_model
+from sterbrust_matching.normalization import normalize_model, normalize_model_strict, normalize_brand, extract_model
 from sterbrust_matching.matching import Product, classify_identity_quality
 from sterbrust_matching.product_identity import classify_model_role, classify_product_kind, OWN_MODEL
 from .characteristic_evidence import features, equipment_scope, _same, IDENTITY_CRITICAL, normalize_characteristic, unit_from_label
@@ -132,11 +132,11 @@ def resolve_existing(row, target, mappings=()):
     canonical_normalization = clean_observed_model({**target,'model':canonical_raw})
     proof['canonical_model_normalization'] = canonical_normalization
     canonical_model = canonical_normalization['model']
-    if not normalize_model(model, brand) or normalize_model(model, brand) != normalize_model(canonical_model, other_brand):
+    if not normalize_model_strict(model, brand) or normalize_model_strict(model, brand) != normalize_model_strict(canonical_model, other_brand):
         reasons.append('FULL_MODEL_EXECUTION_MISMATCH')
-    if normalize_model(source_title_model(row), brand) != normalize_model(model, brand):
+    if normalize_model_strict(source_title_model(row), brand) != normalize_model_strict(model, brand):
         reasons.append('SOURCE_TITLE_FULL_MODEL_NOT_PROVEN')
-    if normalize_model(source_title_model(target), other_brand) != normalize_model(canonical_model, other_brand):
+    if normalize_model_strict(source_title_model(target), other_brand) != normalize_model_strict(canonical_model, other_brand):
         reasons.append('CANONICAL_TITLE_FULL_MODEL_NOT_PROVEN')
     if row.get('execution') and clean_observed_model({**row, 'model': row['execution']})['model'] != model:
         reasons.append('SOURCE_EXECUTION_FIELD_DISAGREES')

@@ -1,7 +1,7 @@
 """Exact operator-authorized card equivalences; no global execution aliases."""
 from copy import deepcopy
 from dataclasses import replace
-from sterbrust_matching.normalization import normalize_model
+from sterbrust_matching.normalization import normalize_model_strict
 from .beka_visible_identity import RESOLVED,product_from_assessment
 
 DECISIONS={
@@ -18,7 +18,7 @@ def apply_decision(a):
         return result
     if a['url'] not in DECISIONS: return result
     primary,alias=DECISIONS[a['url']]
-    if a['source']!='beka_mak' or normalize_model(a['visible_primary_model'])!=normalize_model(primary) or not a['visible_article'] or any(normalize_model(v)!=normalize_model(alias) for v in a['visible_article']):
+    if a['source']!='beka_mak' or normalize_model_strict(a['visible_primary_model'])!=normalize_model_strict(primary) or not a['visible_article'] or any(normalize_model_strict(v)!=normalize_model_strict(alias) for v in a['visible_article']):
         raise ValueError('Operator equivalence does not match saved visible fields')
     if set(a['reasons'])!={'VISIBLE_H1_ARTICLE_FULL_EXECUTION_DISAGREES'}:
         raise ValueError('Operator equivalence cannot clear another contradiction')

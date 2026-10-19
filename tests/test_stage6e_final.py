@@ -20,6 +20,7 @@ from universal_supplier.control_plane.admin_store import InMemoryAdminStore
 from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.security import hash_password
 from universal_supplier.control_plane.store import PostgresControlPlaneStore, SnapshotControlPlaneStore
+from conftest import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 from universal_supplier.stage6e import AnomalyThresholds
 from universal_supplier.yml_feed import PostgresFeedStore
@@ -46,7 +47,7 @@ def test_invalid_quality_policy_is_not_saved_and_has_russian_error():
         def save_data_quality_policy(self, supplier_id, values):
             return PostgresControlPlaneStore.save_data_quality_policy(self, supplier_id, values)
 
-    store = Store(ROOT / "reports")
+    store = Store(control_plane_snapshot_dir())
     admin = InMemoryAdminStore([{"id": 1, "username": "admin", "display_name": "Admin", "role": "ADMIN", "is_active": True,
                                  "password_hash": hash_password("Safe-password-2026", salt=b"0123456789abcdef")}])
     client = TestClient(create_app(store=store, queue=InMemoryJobQueue(), admin_store=admin,

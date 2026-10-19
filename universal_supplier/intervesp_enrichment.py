@@ -6,7 +6,7 @@ from lxml import html
 
 from .adapters.intervesp import parse_intervesp_detail
 from .intervesp_listing import listing_snapshot, product_url, url_identity, present
-from sterbrust_matching.normalization import normalize_brand, normalize_model, model_tokens
+from sterbrust_matching.normalization import normalize_brand, normalize_model, normalize_model_strict, model_tokens
 from sterbrust_matching.product_identity import classify_product_kind
 
 
@@ -33,7 +33,7 @@ def enrich_saved_detail(source: str, row: dict, *, source_url: str):
     # Title model candidates are not enough to confirm identity, but a missing
     # exact execution token is enough to refuse a commercial projection.
     expected = present(row.get('model_candidate'))
-    if expected and normalize_model(expected) not in model_tokens(name):
+    if expected and normalize_model_strict(expected) not in model_tokens(name, strict=True):
         raise ValueError('listing/detail full model or execution contradiction')
     listing_kind = classify_product_kind(row['title'], present(row.get('category'))).product_kind
     detail_kind = classify_product_kind(name, present(row.get('category'))).product_kind

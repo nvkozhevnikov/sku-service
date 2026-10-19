@@ -12,7 +12,7 @@ import re
 from typing import Any, Iterable, Mapping
 
 from sterbrust_matching.matching import Product, classify_identity_quality
-from sterbrust_matching.normalization import extract_model, normalize_model, normalize_text
+from sterbrust_matching.normalization import extract_model, normalize_model, normalize_model_strict, normalize_text
 from sterbrust_matching.product_identity import OWN_MODEL, classify_model_role, classify_product_kind
 
 
@@ -322,14 +322,14 @@ def evaluate_candidate(candidate: Mapping[str, Any], evidence: Mapping[str, Any]
                       model=str(candidate.get("model") or ""), category=str(candidate.get("source_category") or ""))
     role = classify_model_role(product.name, product.category, product.model)
     kind = classify_product_kind(product.name, product.category).product_kind
-    full_model = normalize_model(product.model, product.brand)
+    full_model = normalize_model_strict(product.model, product.brand)
     own_proven = role.role == OWN_MODEL and candidate.get("model_role") == OWN_MODEL
-    title_model = normalize_model(extract_model(product.name), product.brand)
+    title_model = normalize_model_strict(extract_model(product.name), product.brand)
     if not own_proven or kind in {"jaw", "handle", "controller", "accessory", "unknown"}:
         reasons.append("accessory_or_own_identity_not_proven")
     if not product.brand or not full_model or (title_model and title_model != full_model):
         reasons.append("brand_or_full_model_execution_not_proven")
-    execution = normalize_model(candidate.get("execution"))
+    execution = normalize_model_strict(candidate.get("execution"))
     if execution and not full_model.endswith(execution):
         reasons.append("execution_contradiction")
     if _conflicts(candidate.get("match_conflicts")) or _conflicts(candidate.get("semantic_conflicts")):

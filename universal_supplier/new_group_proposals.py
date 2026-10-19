@@ -15,7 +15,7 @@ import re
 from typing import Any, Iterable, Mapping
 
 from sterbrust_matching.matching import Product, classify_identity_quality
-from sterbrust_matching.normalization import extract_model, normalize_brand, normalize_model
+from sterbrust_matching.normalization import articles_compatible, extract_model, normalize_brand, normalize_model, normalize_model_strict
 from sterbrust_matching.product_identity import (
     OWN_MODEL, TAXON_BY_KIND, PROPERTY_POLICIES as CATEGORY_PROPERTY_POLICIES, canonical_property_name,
     classify_model_role, classify_product_kind,
@@ -89,7 +89,7 @@ def _parsed(value: Any, key: str) -> bool:
 def _product(row: Mapping[str, Any]) -> Product:
     article = _text(row, "manufacturer_article")
     if (not _text(row, "manufacturer_article_evidence_ref")
-            or normalize_model(article) == normalize_model(row.get("external_id"))):
+            or articles_compatible(article, row.get("external_id"))):
         article = ""
     return Product(
         key=json.dumps(_source_key(row)), supplier_code=_text(row, "source"),
@@ -102,7 +102,9 @@ def _product(row: Mapping[str, Any]) -> Product:
 
 def _individual_reasons(row: Mapping[str, Any], product: Product, allowed_sources=SOURCES) -> list[str]:
     reasons = []
-    model = normalize_model(product.model, product.brand)
+    # Identity comparisons use the strict key (decimal point, semantic plus);
+    # group IDs and model_key outputs stay on the legacy retrieval key.
+    model = normalize_model_strict(product.model, product.brand)
     if row.get("classification") != "NEW_CANDIDATE":
         reasons.append("not_new_candidate")
     if product.supplier_code not in allowed_sources or not _text(row, "external_id"):
@@ -123,15 +125,15 @@ def _individual_reasons(row: Mapping[str, Any], product: Product, allowed_source
     role = classify_model_role(product.name, product.category, product.model)
     if row.get("model_role") != OWN_MODEL or role.role != OWN_MODEL:
         reasons.append("own_model_not_proven")
-    title_model = normalize_model(extract_model(product.name), product.brand)
+    title_model = normalize_model_strict(extract_model(product.name), product.brand)
     if title_model and model and title_model != model:
         reasons.append("title_model_execution_contradiction")
-    execution = normalize_model(row.get("execution"))
+    execution = normalize_model_strict(row.get("execution"))
     if execution and model and not model.endswith(execution):
         reasons.append("full_model_execution_contradiction")
     if _has_conflicts(row.get("match_conflicts")) or _has_conflicts(row.get("semantic_conflicts")):
         reasons.append("upstream_semantic_contradiction")
-    article = normalize_model(product.manufacturer_article)
+    article = normalize_model_strict(product.manufacturer_article)
     typed = product.properties.keys() & TYPED_GEOMETRIC_ANCHORS.keys()
     proof = row.get('typed_group_anchor_evidence') or {}
     if typed and (proof.get('basis') != 'SAFE_confirmed_pairs_scoped_unit_conversion_only'
@@ -162,9 +164,8 @@ def _pair_evidence(left: Product, right: Product) -> tuple[list[str], dict[str, 
         checks.append({"evidence": evidence, "conflicts": conflicts, "warnings": warnings})
         if conflict_class or conflicts or warnings:
             reasons.append("semantic_or_property_contradiction")
-    article = normalize_model(left.manufacturer_article)
-    article_equal = bool(article and article == normalize_model(right.manufacturer_article)
-                         and article != normalize_model(left.model, left.brand))
+    article_equal = bool(articles_compatible(left.manufacturer_article, right.manufacturer_article)
+                         and normalize_model_strict(left.manufacturer_article) != normalize_model_strict(left.model, left.brand))
     anchors = {}
     comparisons = {}
     for key in sorted(left.properties.keys() & right.properties.keys()):
@@ -247,7 +248,7 @@ def propose_new_groups(rows: Iterable[Mapping[str, Any]], *, allowed_sources=SOU
     for _, members in sorted(cohorts.items()):
         reasons = [reason for _, _, errors in members for reason in errors]
         products = [product for _, product, _ in members]
-        if len({normalize_model(product.model, product.brand) for product in products}) != 1:
+        if len({normalize_model_strict(product.model, product.brand) for product in products}) != 1:
             reasons.append("full_model_or_execution_mismatch")
         if len({product.brand for product in products}) != 1:
             reasons.append("brand_mismatch_or_missing")

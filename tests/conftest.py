@@ -5,9 +5,15 @@ Some regression tests replay local evidence that is deliberately not committed
 ``SUMMARY.txt`` and ``docker-compose.qa.yml`` live only in operator checkouts).
 On a clean clone those tests SKIP with an explicit reason instead of failing.
 The assertions themselves are unchanged and still run wherever the evidence exists.
+
+Web-UI tests that only need *some* packaged identity snapshot use
+``control_plane_snapshot_dir()``: the real ``reports/`` evidence when present,
+otherwise the committed synthetic fixture ``tests/fixtures/control_plane_snapshot``.
+Production ``CONTROL_PLANE_DEMO_SNAPSHOT`` still reads ``reports/`` only.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -24,6 +30,26 @@ LOCAL_EVIDENCE_FILES = frozenset({
     "stage3d_migration_baseline_sha256.json",
     "stage6c1_migration_baseline_sha256.json",
 })
+
+
+CONTROL_PLANE_SNAPSHOT_FILES = ("OPTIMUM_IDENTITY_AUDIT.csv", "PARTNER_ST_IDENTITY_REGRESSION.csv")
+CONTROL_PLANE_SNAPSHOT_FIXTURE = ROOT / "tests" / "fixtures" / "control_plane_snapshot"
+
+
+def control_plane_snapshot_dir() -> Path:
+    """Directory for SnapshotControlPlaneStore in UI tests.
+
+    ``CONTROL_PLANE_TEST_SNAPSHOT=fixture`` forces the synthetic fixture,
+    ``=reports`` forces the real evidence (skipping when absent); by default the
+    real ``reports/`` is used when both CSVs exist, else the synthetic fixture.
+    """
+    reports = ROOT / "reports"
+    mode = os.environ.get("CONTROL_PLANE_TEST_SNAPSHOT", "").strip().lower()
+    if mode == "fixture":
+        return CONTROL_PLANE_SNAPSHOT_FIXTURE
+    if mode == "reports" or all((reports / name).exists() for name in CONTROL_PLANE_SNAPSHOT_FILES):
+        return reports
+    return CONTROL_PLANE_SNAPSHOT_FIXTURE
 
 
 def is_local_evidence(path: str | Path) -> bool:

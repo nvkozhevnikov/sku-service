@@ -7,7 +7,7 @@ from dataclasses import replace
 import json,re
 from urllib.parse import urlparse
 from lxml import html
-from sterbrust_matching.normalization import normalize_model
+from sterbrust_matching.normalization import normalize_model_strict
 from universal_supplier.adapters.bekamak import parse_bekamak_detail
 from universal_supplier.adapters.bekamak_official import _products
 from universal_supplier.commercial import PriceExtraction,PriceState,PriceSourceKind,ReadOnlySupplierProduct
@@ -64,12 +64,12 @@ def assess(source,url,body,*,approved_urls,operator_stale=False):
         if len(names)==len(values)==1 and visible(names[0]) and visible(values[0]):
             props.append((text(names[0]),text(values[0])))
     for k,v in props:
-        if re.fullmatch(r'(?i)model|модель|execution|исполнение',k) and model(v) and normalize_model(model(v))!=normalize_model(primary):
+        if re.fullmatch(r'(?i)model|модель|execution|исполнение',k) and model(v) and normalize_model_strict(model(v))!=normalize_model_strict(primary):
             contradictions.append('VISIBLE_CHARACTERISTIC_MODEL_DISAGREES')
         if re.fullmatch(r'(?i)sku|article|артикул|product code|ürün kodu',k): articles.append(v)
     for article in articles:
         article_model=model(article)
-        if not article_model or normalize_model(article_model)!=normalize_model(primary):
+        if not article_model or normalize_model_strict(article_model)!=normalize_model_strict(primary):
             contradictions.append('VISIBLE_H1_ARTICLE_FULL_EXECUTION_DISAGREES')
     if len(titles)>1: contradictions.append('MULTIPLE_VISIBLE_PRIMARY_TITLES')
     aliases=[{'kind':'url_alias','value':urlparse(url).path.split('/')[-2 if source=='beka_mak_tr' else -2],

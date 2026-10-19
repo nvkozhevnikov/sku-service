@@ -4,7 +4,7 @@ import re
 from typing import Any, Iterable
 
 from .normalization import (
-    model_identity_evidence, model_tokens, normalize_article, normalize_brand,
+    articles_compatible, model_identity_evidence, model_tokens, normalize_article, normalize_brand,
     normalize_model_strict, normalize_model_with_flags, normalized_name,
 )
 from .property_normalization import (
@@ -99,7 +99,7 @@ def _identity_conflicts(source: Product, candidate: Product) -> dict[str, Any]:
     if sm and cm and sm != cm:
         conflicts["model"] = {"source": sm, "candidate": cm}
     sa, ca = normalize_article(source.manufacturer_article), normalize_article(candidate.manufacturer_article)
-    if sa and ca and sa != ca:
+    if sa and ca and not articles_compatible(sa, ca):
         conflicts["manufacturer_article"] = {"source": sa, "candidate": ca}
     source_kind = classify_product_kind(source.name, source.category)
     candidate_kind = classify_product_kind(candidate.name, candidate.category)
@@ -157,7 +157,7 @@ def _identity_conflicts(source: Product, candidate: Product) -> dict[str, Any]:
     if source.supplier_code == "optimum" and source.supplier_article:
         printed = optimum_title_articles(candidate.name)
         source_article = normalize_article(source.supplier_article)
-        if printed and source_article and source_article not in printed:
+        if printed and source_article and not any(articles_compatible(source_article, value) for value in printed):
             conflicts["card_article"] = {
                 "source_sku": source_article,
                 "card_articles": sorted(printed),
@@ -185,11 +185,8 @@ def _identity_conflicts(source: Product, candidate: Product) -> dict[str, Any]:
 def _supplier_article_confirmed(source: Product, candidate: Product) -> bool:
     if not source.supplier_code or not source.supplier_article:
         return False
-    source_article = normalize_article(source.supplier_article)
-    return bool(source_article and source_article in {
-        normalize_article(value)
-        for value in candidate.supplier_identifiers.get(source.supplier_code, ()) if value
-    })
+    return any(articles_compatible(source.supplier_article, value)
+               for value in candidate.supplier_identifiers.get(source.supplier_code, ()) if value)
 
 
 def _supplier_article_identity_quality(source: Product, candidate: Product) -> tuple[str, dict[str, Any], dict[str, Any]]:
@@ -212,7 +209,7 @@ def _supplier_article_identity_quality(source: Product, candidate: Product) -> t
         "sterbrust_name_model_tokens": list(candidate_name_models),
         "source_name_model_tokens": list(source_name_models),
         "general_article_normalized": general_article,
-        "general_article_matches_supplier_sku": bool(source_article and general_article == source_article),
+        "general_article_matches_supplier_sku": articles_compatible(source_article, general_article),
     }
     if not source_model or not candidate_model or source_model == candidate_model:
         conflict_class = "EXTRACTION_CONFLICT" if warnings else ""
@@ -388,7 +385,7 @@ def match_product(source: Product, candidates: Iterable[Product], existing_link:
         exact_supplier_rows = []
         for candidate in candidate_list:
             values = candidate.supplier_identifiers.get(source.supplier_code, ())
-            if source_article and source_article in {normalize_article(value) for value in values if value}:
+            if source_article and any(articles_compatible(source_article, value) for value in values if value):
                 exact_supplier_rows.append(candidate)
         if len(exact_supplier_rows) > 1:
             return MatchResult(
@@ -420,7 +417,7 @@ def match_product(source: Product, candidates: Iterable[Product], existing_link:
         conflicts = _identity_conflicts(source, candidate)
         sb, cb = normalize_brand(source.brand), normalize_brand(candidate.brand)
         sm, cm = normalize_model_strict(source.model, source.brand), normalize_model_strict(candidate.model, candidate.brand)
-        manufacturer_article_equal = bool(source.manufacturer_article and candidate.manufacturer_article and normalize_article(source.manufacturer_article) == normalize_article(candidate.manufacturer_article))
+        manufacturer_article_equal = bool(source.manufacturer_article and candidate.manufacturer_article and articles_compatible(source.manufacturer_article, candidate.manufacturer_article))
         brand_equal = bool(sb and cb and sb == cb)
         model_equal = bool(sm and cm and sm == cm)
         name_similarity = SequenceMatcher(None, normalized_name(source.name), normalized_name(candidate.name)).ratio()

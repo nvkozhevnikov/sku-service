@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from universal_supplier.control_plane import scheduler_main
 from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.store import SnapshotControlPlaneStore
+from conftest import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 
 
@@ -18,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class RecordingStore(SnapshotControlPlaneStore):
     def __init__(self) -> None:
-        super().__init__(ROOT / "reports")
+        super().__init__(control_plane_snapshot_dir())
         self.saved: tuple[int, dict] | None = None
 
     def save_schedule(self, supplier_id: int, values: dict) -> None:

@@ -20,6 +20,7 @@ from universal_supplier.control_plane.orchestrator import Orchestrator
 from universal_supplier.control_plane.queue import CrawlJob
 from universal_supplier.control_plane.scheduler import next_occurrences, validate_schedule
 from universal_supplier.control_plane.store import ProductFilters, SnapshotControlPlaneStore, product_where
+from conftest import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 
 
@@ -143,7 +144,7 @@ def test_registry_is_explicit_and_rejects_duplicates():
 
 
 def test_web_pages_filters_banner_health_and_enqueue_only():
-    store = SnapshotControlPlaneStore(ROOT / "reports"); queue = InMemoryJobQueue()
+    store = SnapshotControlPlaneStore(control_plane_snapshot_dir()); queue = InMemoryJobQueue()
     client = TestClient(create_app(store=store, queue=queue))
     for path in ("/", "/products?page_size=25", "/review", "/suppliers", "/runs", "/scheduler"):
         response = client.get(path)
@@ -159,7 +160,7 @@ def test_web_pages_filters_banner_health_and_enqueue_only():
 
 
 def test_all_product_filters_searches_pagination_and_stable_sorting():
-    store=SnapshotControlPlaneStore(ROOT / "reports")
+    store=SnapshotControlPlaneStore(control_plane_snapshot_dir())
     combined=store.products(ProductFilters(supplier="optimum",brand="Optimum",decision="ACCESSORY_OR_COMPATIBILITY_ITEM",category="патроны",page_size=25))
     assert combined["total"] > 0
     assert all(r["supplier_code"]=="optimum" and r["brand"]=="Optimum" and r["decision"]=="ACCESSORY_OR_COMPATIBILITY_ITEM" for r in combined["items"])

@@ -11,6 +11,7 @@ from universal_supplier.control_plane.admin_store import InMemoryAdminStore, can
 from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.security import AuthUser, SessionSigner, hash_password, normalize_username, role_allows, verify_password
 from universal_supplier.control_plane.store import SnapshotControlPlaneStore
+from conftest import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +35,7 @@ def case(case_id=1):
 
 def client_for(role="ADMIN", cases=None):
     admin = InMemoryAdminStore([user(role=role)], cases or [case()]); queue = InMemoryJobQueue()
-    app = create_app(store=SnapshotControlPlaneStore(ROOT / "reports"), queue=queue, admin_store=admin,
+    app = create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), queue=queue, admin_store=admin,
                      session_secret=SECRET, auth_required=True)
     client = TestClient(app)
     response = client.post("/login", data={"username":"user1","password":PASSWORD}, follow_redirects=False)
@@ -86,20 +87,20 @@ def test_role_matrix(role, allowed, expected):
 
 
 def test_anonymous_pages_redirect_to_login_but_health_stays_public():
-    admin = InMemoryAdminStore([user()]); app = create_app(store=SnapshotControlPlaneStore(ROOT/"reports"), admin_store=admin, session_secret=SECRET, auth_required=True)
+    admin = InMemoryAdminStore([user()]); app = create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), admin_store=admin, session_secret=SECRET, auth_required=True)
     client = TestClient(app)
     assert client.get("/", follow_redirects=False).headers["location"].startswith("/login")
     assert client.get("/health").status_code == 200
 
 
 def test_empty_user_table_shows_safe_first_admin_instruction():
-    app = create_app(store=SnapshotControlPlaneStore(ROOT/"reports"), admin_store=InMemoryAdminStore(), session_secret=SECRET, auth_required=True)
+    app = create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), admin_store=InMemoryAdminStore(), session_secret=SECRET, auth_required=True)
     page = TestClient(app).get("/login")
     assert page.status_code == 200 and "python scripts/create_admin.py" in page.text
 
 
 def test_login_failure_success_cookie_flags_and_logout():
-    admin = InMemoryAdminStore([user()]); client = TestClient(create_app(store=SnapshotControlPlaneStore(ROOT/"reports"), admin_store=admin, session_secret=SECRET, auth_required=True))
+    admin = InMemoryAdminStore([user()]); client = TestClient(create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), admin_store=admin, session_secret=SECRET, auth_required=True))
     assert client.post("/login", data={"username":"user1","password":"bad"}).status_code == 401
     response = client.post("/login", data={"username":"user1","password":PASSWORD}, follow_redirects=False)
     cookie = response.headers["set-cookie"].lower()
@@ -110,7 +111,7 @@ def test_login_failure_success_cookie_flags_and_logout():
 
 def test_session_cookie_becomes_secure_when_https_is_enabled(monkeypatch):
     monkeypatch.setenv("HTTPS_ENABLED", "YES")
-    admin = InMemoryAdminStore([user()]); client = TestClient(create_app(store=SnapshotControlPlaneStore(ROOT/"reports"), admin_store=admin, session_secret=SECRET, auth_required=True))
+    admin = InMemoryAdminStore([user()]); client = TestClient(create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), admin_store=admin, session_secret=SECRET, auth_required=True))
     response = client.post("/login", data={"username":"user1","password":PASSWORD}, follow_redirects=False)
     assert "secure" in response.headers["set-cookie"].lower()
 

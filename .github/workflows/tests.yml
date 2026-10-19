@@ -1,0 +1,97 @@
+name: tests
+
+on:
+  push:
+    branches: [develop, main, production]
+  pull_request:
+    branches: [develop, main, production]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      # Git-ignored local evidence (reports/, RC_LOCAL, stage baselines) is absent
+      # on a clean clone: those tests SKIP with an explicit reason (tests/conftest.py).
+      # Web-UI tests use the synthetic tests/fixtures/control_plane_snapshot instead.
+      # The scratch-DB tests skip here; they run in the postgres job below.
+      - name: Run tests
+        run: python -m pytest -q
+
+  postgres:
+    name: scratch PostgreSQL lifecycle tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: kami_app
+          POSTGRES_PASSWORD: ci-throwaway-scratch-only
+          # Must equal the pinned scratch DB name in tests/test_kami_lifecycle_db.py.
+          POSTGRES_DB: universal_supplier_kami_lifecycle_test_20261006
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kami_app -d universal_supplier_kami_lifecycle_test_20261006"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Standard settings for scripts/docker_postgres_migrate.py (PostgresConfig.from_env).
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: universal_supplier_kami_lifecycle_test_20261006
+      DB_USER: kami_app
+      DB_PASSWORD: ci-throwaway-scratch-only
+      DB_SSLMODE: disable
+      # Explicit opt-in for the throwaway service container (never an RC/operator DB).
+      KAMI_LIFECYCLE_TEST_DB: universal_supplier_kami_lifecycle_test_20261006
+      KAMI_LIFECYCLE_TEST_EPHEMERAL: "YES"
+      KAMI_LIFECYCLE_TEST_HOST: 127.0.0.1
+      KAMI_LIFECYCLE_TEST_PORT: "5432"
+      KAMI_LIFECYCLE_TEST_USER: kami_app
+      KAMI_LIFECYCLE_TEST_PASSWORD: ci-throwaway-scratch-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Apply migrations 001+ (verifies immutable checksums)
+        run: python scripts/docker_postgres_migrate.py
+      # Only the scratch-DB suites. Not run here: the operator receipt-pinned mode
+      # (reports/ SCRATCH_READY receipt + LOCALAPPDATA runtime.json on port 55451),
+      # RC dumps, and Windows PowerShell 5.1 restart tests (tests/test_rc_restart_safety.py,
+      # exercised by the windows-latest unit job instead).
+      - name: Run scratch-DB tests (fail if the opt-in silently skipped them)
+        shell: bash
+        run: |
+          python -m pytest -q -rs tests/test_kami_lifecycle_db.py tests/test_phase2_targeted_blockers_db.py | tee pytest-db.txt
+          if grep -qi "skipped" pytest-db.txt; then echo "::error::scratch-DB tests skipped"; exit 1; fi

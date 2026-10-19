@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sterbrust_matching.matching import Product, match_product
 from sterbrust_matching.normalization import (
-    brand_evidenced_by_name, model_identity_evidence, normalize_article, normalize_brand, normalize_model,
+    article_lookup_key, brand_evidenced_by_name, model_identity_evidence, normalize_brand, normalize_model,
     normalized_name, model_tokens,
 )
 from sterbrust_matching.product_identity import classify_model_role
@@ -82,7 +82,7 @@ def _optimum_title_articles(name: str) -> tuple[str, ...]:
         return ()
     values: list[str] = []
     for raw in re.findall(r"(?<!\d)(\d{5,10})(?!\d)", name or ""):
-        normalized = normalize_article(raw)
+        normalized = article_lookup_key(raw)
         if normalized and normalized not in values:
             values.append(normalized)
     return tuple(values)
@@ -129,10 +129,10 @@ def load_registry_from_postgres(connection) -> RegistryContext:
             if key not in products:
                 continue
             products[key]["supplier_identifiers"][supplier_code].append(raw_value)
-            # Rebuild the key from raw_value with the same article normalizer
-            # that lookup uses. The stored normalized_value is a legacy key
-            # that merges digit groups (10-100 == 101-00), so it is not used.
-            article_key = normalize_article(raw_value)
+            # Rebuild the retrieval key from raw_value with the same function
+            # lookup uses. Whether a retrieved article really is the same one
+            # (10-100 != 101-00) is decided by articles_compatible in the matcher.
+            article_key = article_lookup_key(raw_value)
             if article_key:
                 identifier_index[(supplier_code, article_key)].append(key)
     return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index)
@@ -162,7 +162,7 @@ def _source(card: ProductCard) -> Product:
 
 
 def _candidates(source: Product, registry: RegistryContext) -> list[dict]:
-    article = normalize_article(source.supplier_article)
+    article = article_lookup_key(source.supplier_article)
     ids = sorted(set(registry.identifier_index.get((source.supplier_code, article), [])), key=int) if article else []
     if not ids and article:
         # Safe fallback for legacy Sterbrust cards where the supplier-specific

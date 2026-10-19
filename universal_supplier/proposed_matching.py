@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from decimal import Decimal
 from typing import Any
 
-from sterbrust_matching.normalization import model_tokens, normalize_model
+from sterbrust_matching.normalization import model_tokens, normalize_model_strict
 
 from .matching_service import RegistryContext, match_cards
 from .models import CategoryNode, ProductCard, PropertyValue
@@ -56,11 +56,11 @@ def classify_persisted_sources(records: list[dict[str, Any]], registry: Registry
         status = result["status"]
         model = str((record.get("raw_data") or {}).get("source_identity", {}).get("raw_model")
                     or record.get("expected_model") or result.get("model") or card.sku)
-        model_key = normalize_model(model)
+        model_key = normalize_model_strict(model)
         proposed_id = result["sterbrust_product_id"]
         target = registry.products.get(proposed_id)
-        target_model_keys = ({normalize_model(target.get("model") or "")}
-                             | set(model_tokens(target.get("name") or ""))) if target else set()
+        target_model_keys = ({normalize_model_strict(target.get("model") or "")}
+                             | set(model_tokens(target.get("name") or "", strict=True))) if target else set()
         full_model_confirmed = bool(model_key and model_key in target_model_keys)
         if (status in {"EXACT_MATCH", "HIGH_CONFIDENCE_MATCH"}
                 and result["auto_accepted"] == "TRUE" and full_model_confirmed):

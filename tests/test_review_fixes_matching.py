@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from sterbrust_matching.matching import Product, match_product
+from sterbrust_matching.matching import Product, _supplier_article_confirmed, match_product
 from sterbrust_matching.normalization import (
+    article_lookup_key, articles_compatible,
     normalize_article, normalize_brand, normalize_model, normalize_model_strict,
 )
 from sterbrust_matching.product_identity import (
@@ -111,14 +112,27 @@ def test_supplier_article_digit_groups_are_not_merged():
     assert match_product(source, [same]).method == "SUPPLIER_ARTICLE_EXACT"
 
 
-def test_registry_identifier_lookup_uses_same_article_key():
+def test_registry_identifier_lookup_retrieves_broadly_and_matcher_confirms_compatibly():
     products = {"5": {"sterbrust_product_id": "5", "name": "x", "brand": "", "model": "", "article": "",
                       "category": "", "properties": {}, "supplier_identifiers": {"partner": ["10 100"]}}}
-    registry = RegistryContext(products, {("partner", normalize_article("10 100")): ["5"]}, {}, {}, {})
+    registry = RegistryContext(products, {("partner", article_lookup_key("10 100")): ["5"]}, {}, {}, {})
     hit = Product(key="S", name="x", brand="", model="", supplier_article="10-100", supplier_code="partner")
+    plain = Product(key="S", name="x", brand="", model="", supplier_article="10100", supplier_code="partner")
     miss = Product(key="S", name="x", brand="", model="", supplier_article="101-00", supplier_code="partner")
-    assert [r["sterbrust_product_id"] for r in _candidates(hit, registry)] == ["5"]
-    assert _candidates(miss, registry) == []
+    for source in (hit, plain, miss):  # retrieval ignores digit-group boundaries
+        assert [r["sterbrust_product_id"] for r in _candidates(source, registry)] == ["5"]
+    candidate = Product(key="5", name="x", brand="", model="", supplier_identifiers={"partner": ("10 100",)})
+    assert _supplier_article_confirmed(hit, candidate) and _supplier_article_confirmed(plain, candidate)
+    assert not _supplier_article_confirmed(miss, candidate)
+
+
+@pytest.mark.parametrize(("left", "right", "expected"), (
+    ("303 4252", "3034252", True), ("710-1150", "7101150", True), ("10-100", "10 100", True),
+    ("10-100", "101-00", False), ("10-100", "10-1000", False), ("JWL-1015", "JWL1015", True),
+    ("", "", False), ("A-1", "", False),
+))
+def test_articles_compatible(left, right, expected):
+    assert articles_compatible(left, right) is expected and articles_compatible(right, left) is expected
 
 
 # 3. Brand homoglyphs.

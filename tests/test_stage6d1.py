@@ -12,6 +12,7 @@ from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.scheduler import controls_to_schedule, schedule_to_controls
 from universal_supplier.control_plane.security import hash_password
 from universal_supplier.control_plane.store import SnapshotControlPlaneStore
+from conftest import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 from universal_supplier.identity_service import IDENTITY_DECISIONS, classify_identity_card
 
@@ -75,13 +76,13 @@ def test_custom_scheduler_roundtrip_never_changes_expression():
 
 
 def test_default_host_policy_blocks_untrusted_host():
-    app = create_app(store=SnapshotControlPlaneStore(ROOT/"reports"), queue=InMemoryJobQueue(), admin_store=admin_store(), session_secret=SECRET, auth_required=True)
+    app = create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), queue=InMemoryJobQueue(), admin_store=admin_store(), session_secret=SECRET, auth_required=True)
     assert TestClient(app, base_url="http://untrusted.example").get("/login").status_code == 400
 
 
 def test_configured_future_host_login_and_csrf_mutation(monkeypatch):
     monkeypatch.setenv("CONTROL_PLANE_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver,admin.example.internal")
-    store = admin_store(); app = create_app(store=SnapshotControlPlaneStore(ROOT/"reports"), queue=InMemoryJobQueue(), admin_store=store, session_secret=SECRET, auth_required=True)
+    store = admin_store(); app = create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), queue=InMemoryJobQueue(), admin_store=store, session_secret=SECRET, auth_required=True)
     client = TestClient(app, base_url="http://admin.example.internal")
     response = client.post("/login", data={"username":"admin","password":PASSWORD}, follow_redirects=False)
     assert response.status_code == 303
@@ -92,7 +93,7 @@ def test_configured_future_host_login_and_csrf_mutation(monkeypatch):
 
 def test_configured_host_does_not_weaken_csrf(monkeypatch):
     monkeypatch.setenv("CONTROL_PLANE_ALLOWED_HOSTS", "admin.example.internal")
-    app = create_app(store=SnapshotControlPlaneStore(ROOT/"reports"), queue=InMemoryJobQueue(), admin_store=admin_store(), session_secret=SECRET, auth_required=True)
+    app = create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), queue=InMemoryJobQueue(), admin_store=admin_store(), session_secret=SECRET, auth_required=True)
     client = TestClient(app, base_url="http://admin.example.internal")
     client.post("/login", data={"username":"admin","password":PASSWORD})
     assert client.post("/settings/users", data={"username":"xuser","display_name":"X","password":"long-password-123","role":"VIEWER"}).status_code == 403
@@ -110,7 +111,7 @@ def test_supplier_detail_uses_confirmation_dialog_and_queue_wording():
 
 
 def test_basic_scheduler_page_has_no_visible_cron_requirement():
-    client = TestClient(create_app(store=SnapshotControlPlaneStore(ROOT/"reports"), admin_store=admin_store(), session_secret=SECRET, auth_required=False))
+    client = TestClient(create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), admin_store=admin_store(), session_secret=SECRET, auth_required=False))
     text = client.get("/scheduler").text
     assert "Ежедневно" in text and "По дням недели" in text
     assert "Пользовательское cron-выражение" not in text

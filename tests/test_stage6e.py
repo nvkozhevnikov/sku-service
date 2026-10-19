@@ -13,6 +13,7 @@ from universal_supplier.control_plane.admin_store import InMemoryAdminStore
 from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.security import SessionSigner, hash_password
 from universal_supplier.control_plane.store import ProductFilters, SnapshotControlPlaneStore, product_where
+from conftest import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 from universal_supplier.stage6e import (
     AnomalyThresholds, InMemoryStage6EService, MissingState, QualityProfile,
@@ -26,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def make_client(role="ADMIN", service=None):
     admin=InMemoryAdminStore([{"id":1,"username":"user1","display_name":"Пользователь","role":role,"is_active":True,"password_hash":hash_password("Safe-password-2026",salt=b"0123456789abcdef")}])
-    app=create_app(store=SnapshotControlPlaneStore(ROOT/"reports"),queue=InMemoryJobQueue(),admin_store=admin,
+    app=create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()),queue=InMemoryJobQueue(),admin_store=admin,
                    stage6e_service=service or InMemoryStage6EService(),session_secret="stage6e-test-secret-at-least-32-bytes",auth_required=True)
     client=TestClient(app); assert client.post("/login",data={"username":"user1","password":"Safe-password-2026"},follow_redirects=False).status_code==303
     return client,admin
@@ -135,7 +136,7 @@ def test_export_filename_cannot_traverse():
 
 
 def test_filtered_export_parity_with_visible_snapshot_set():
-    store=SnapshotControlPlaneStore(ROOT/"reports"); filters=ProductFilters(supplier="optimum",decision="SAFE_NEW_PRODUCT_CANDIDATE",brand="Optimum",page_size=100)
+    store=SnapshotControlPlaneStore(control_plane_snapshot_dir()); filters=ProductFilters(supplier="optimum",decision="SAFE_NEW_PRODUCT_CANDIDATE",brand="Optimum",page_size=100)
     assert len(store.export_rows(filters))==store.products(filters)["total"]
 
 

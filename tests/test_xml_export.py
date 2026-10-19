@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from test_stage5 import POLICY, row, snapshot
 from test_stage6e import csrf, make_client
 from universal_supplier.control_plane.store import ProductFilters, SnapshotControlPlaneStore
+from conftest import control_plane_snapshot_dir
 from universal_supplier.xml_export import (
     generate_canonical_xml, pp800f_in_artifact, supplier_xml_bytes,
 )
@@ -143,7 +144,7 @@ def test_supplier_xml_well_formed():
 
 
 def test_supplier_xml_filter_parity():
-    store = SnapshotControlPlaneStore(ROOT / "reports")
+    store = SnapshotControlPlaneStore(control_plane_snapshot_dir())
     filters = ProductFilters(supplier="optimum", brand="Optimum", page_size=100)
     xml = supplier_xml_bytes(store.export_rows(filters))
     assert len(ET.fromstring(xml).findall(".//product")) == store.products(filters)["total"]
@@ -170,7 +171,7 @@ def test_xml_page_authenticated_and_anonymous():
     assert "XML-выгрузка" in client.get("/exports/xml").text
     assert "НЕ ПОДТВЕРЖДЁН" in client.get("/exports/xml").text
     bare = TestClient(__import__("universal_supplier.control_plane.web", fromlist=["create_app"]).create_app(
-        store=SnapshotControlPlaneStore(ROOT / "reports"),
+        store=SnapshotControlPlaneStore(control_plane_snapshot_dir()),
         session_secret="stage6e-test-secret-at-least-32-bytes", auth_required=True,
     ))
     assert bare.get("/exports/xml", follow_redirects=False).status_code in {303, 401}

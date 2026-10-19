@@ -137,6 +137,30 @@ def normalize_article(value: object) -> str:
     return result
 
 
+def article_lookup_key(value: object) -> str:
+    """Index/retrieval key for articles: digit-group boundaries removed.
+
+    Retrieval must find ``3034252`` for ``303 4252``; whether the two are the
+    same article is decided afterwards by :func:`articles_compatible`.
+    """
+    return normalize_article(value).replace("-", "")
+
+
+def articles_compatible(left: object, right: object) -> bool:
+    """True when two articles denote the same identifier.
+
+    Characters must be equal. Digit-group boundaries must agree only when both
+    sides print them: ``303 4252`` == ``3034252`` (one side is unformatted),
+    but ``10-100`` != ``101-00`` (both are formatted, differently).
+    """
+    a, b = normalize_article(left), normalize_article(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return a.replace("-", "") == b.replace("-", "") and ("-" not in a or "-" not in b)
+
+
 def normalize_decimal(value: object) -> Decimal | None:
     text = normalize_text(value).replace(" ", "").replace(",", ".")
     try:

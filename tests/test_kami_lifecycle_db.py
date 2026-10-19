@@ -31,17 +31,41 @@ class ScratchConfig(PostgresConfig):
         return 'ScratchConfig(database='+self.dbname+', credentials=[REDACTED])'
 
 
-@pytest.fixture
-def fixture(request):
-    if os.environ.get('KAMI_LIFECYCLE_TEST_DB')!=DB:
-        pytest.skip('Explicit scratch DB opt-in required; never use RC')
+OPERATOR_SCRATCH_PORT=55451
+LOOPBACK_HOSTS=frozenset({'127.0.0.1','localhost','::1'})
+
+
+def scratch_config():
+    """Resolve the opt-in scratch database.
+
+    Default (operator) mode stays pinned to the receipt-verified scratch cluster.
+    ``KAMI_LIFECYCLE_TEST_EPHEMERAL=YES`` is for a throwaway, freshly migrated
+    loopback container (CI service / local docker): it still requires the pinned
+    scratch database name and refuses the operator scratch port.
+    """
+    if os.environ.get('KAMI_LIFECYCLE_TEST_EPHEMERAL')=='YES':
+        host=os.environ.get('KAMI_LIFECYCLE_TEST_HOST','127.0.0.1')
+        port=int(os.environ['KAMI_LIFECYCLE_TEST_PORT'])
+        if host not in LOOPBACK_HOSTS:
+            pytest.fail('Ephemeral scratch DB must be a loopback container')
+        if port==OPERATOR_SCRATCH_PORT:
+            pytest.fail('Ephemeral mode must never target the operator scratch port')
+        return ScratchConfig(host,port,DB,os.environ.get('KAMI_LIFECYCLE_TEST_USER','kami_app'),
+                             os.environ['KAMI_LIFECYCLE_TEST_PASSWORD'],'disable')
     receipt=json.loads((ROOT/'reports/KAMI_INTEGRATION_2026-10-05/CANONICAL_AUTHORITY_RC_2026-10-06/SCRATCH_READY.json').read_bytes())
     assert receipt['database']==DB and receipt['system_identifier']=='7693098812512405428'
     private=Path(os.environ['LOCALAPPDATA'])/'UniversalSupplier/kami-rc-20261005/runtime.json'
     values=json.loads(private.read_bytes())
-    config=ScratchConfig('127.0.0.1',55451,DB,'kami_app',values['DB_PASSWORD'],'disable')
+    return ScratchConfig('127.0.0.1',OPERATOR_SCRATCH_PORT,DB,'kami_app',values['DB_PASSWORD'],'disable')
+
+
+@pytest.fixture
+def fixture(request):
+    if os.environ.get('KAMI_LIFECYCLE_TEST_DB')!=DB:
+        pytest.skip('Explicit scratch DB opt-in required; never use RC')
+    config=scratch_config()
     repo=PostgresRepository(config);c=repo.connection
-    assert c.execute('SELECT current_database(),inet_server_port(),current_user').fetchone()==(DB,55451,'kami_app')
+    assert c.execute('SELECT current_database(),inet_server_port(),current_user').fetchone()==(DB,config.port,config.user)
     # Earlier synthetic seeds lacked the feed's required declared price role.
     # Repair only these scratch fixtures, never infer a real supplier price role.
     c.execute("UPDATE offers SET price_type='retail' WHERE price_type='unknown' AND source_product_id IN (SELECT id FROM source_products WHERE source_url='https://example.invalid/source/')")

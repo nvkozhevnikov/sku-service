@@ -97,7 +97,7 @@ def readiness_advisory(row, diagnostic, *, dedup_verified=False, proposed_group_
     """Separate source proof/readiness from matching; REVIEW has no NEW IDs."""
     from .new_readiness import propose_readiness
     from .proposal_export import new_candidate_id
-    from sterbrust_matching.normalization import normalize_model
+    from sterbrust_matching.normalization import normalize_model, normalize_model_strict
     result = deepcopy(row)
     if row.get('classification') == 'READY_TO_CREATE_FULL':
         return result
@@ -122,7 +122,7 @@ def readiness_advisory(row, diagnostic, *, dedup_verified=False, proposed_group_
         and proof.get('verified') is True and proof.get('execution_verified') is True
         and proof.get('kind') in {'VISIBLE_MODEL_TYPED_ANCHORS','VISIBLE_ARTICLE_FULL_MODEL','MANUFACTURER_EXECUTION_DOCUMENT'}
         and bool(proof.get('provenance')) and proof.get('independent_anchor_count',0) >= 2
-        and normalize_model(proof.get('full_model','')) == normalize_model(row.get('model',''))
+        and normalize_model_strict(proof.get('full_model','')) == normalize_model_strict(row.get('model',''))
         and not proof.get('contradictions')
         and (row.get('card_kind','SINGLE_PRODUCT') == 'SINGLE_PRODUCT' or proof.get('explicit_variant_identity') is True))
     candidate = deepcopy(result)

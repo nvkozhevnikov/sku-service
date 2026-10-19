@@ -1,6 +1,7 @@
 import json
 import pytest
 from universal_supplier.beka_visible_identity import *
+from sterbrust_matching.normalization import normalize_model
 
 URL='https://www.bekamak.com/urun/bmsy-320-dg/en'
 def page(h1='BMSY-320DGH',sku='BMSY-320-DG',extra=''):
