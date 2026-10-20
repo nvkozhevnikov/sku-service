@@ -103,8 +103,13 @@ def test_live_wrapper_uses_existing_client_contract_with_saved_response_only(tmp
             return HttpResponse(url,200,'text/html; charset='+charset,body)
     monkeypatch.setenv('STERBRUST_ALLOW_SUPPLIER_HTTP','YES')
     monkeypatch.setenv('SOURCE_RUNNER_EVIDENCE_ROOT',str(tmp_path/'output'))
+    before=datetime.now(timezone.utc)
     with patch.object(socket.socket,'connect',deny),patch('psycopg.connect',deny):
         result=make_source_runner(code,transport_factory=Client)(job,None)
+    after=datetime.now(timezone.utc)
+    observed=datetime.fromisoformat(result['rows'][0]['observed_at'])
+    assert before<=observed<=after
+    assert observed!=datetime.fromisoformat(json.loads(manifest.read_text(encoding='utf-8'))['entries'][0]['observed_at'])
     assert result['status']=='succeeded',result
     assert calls==[url] and result['source_writes']==0 and result['matching_applied'] is False
 

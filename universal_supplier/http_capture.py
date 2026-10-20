@@ -105,6 +105,7 @@ class HttpResponse:
     body: bytes
     redirects: tuple[str, ...] = ()
     transport_url: str | None = None
+    headers: dict[str, str] | None = None
 
 
 def public_transport_url(url: str) -> str:
@@ -202,6 +203,7 @@ class UrllibPublicHttpClient:
                     body=_read_bounded(response),
                     redirects=tuple(redirects.redirects),
                     transport_url=response.geturl(),
+                    headers={k:response.headers[k] for k in ("Retry-After","Date") if response.headers.get(k)} or None,
                 )
         except HTTPError as error:
             return HttpResponse(
@@ -211,6 +213,7 @@ class UrllibPublicHttpClient:
                 body=_read_bounded(error),
                 redirects=tuple(redirects.redirects),
                 transport_url=error.geturl() or wire_url,
+                headers={k:error.headers[k] for k in ("Retry-After","Date") if error.headers and error.headers.get(k)} or None,
             )
 
     def get(self, url: str, *, timeout_seconds: float) -> HttpResponse:

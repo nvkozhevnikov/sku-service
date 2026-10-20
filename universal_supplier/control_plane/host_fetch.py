@@ -1,0 +1,137 @@
+"""Prepared per-host bounded fetch component. No scheduler or source activation.
+
+Reuses DomainRatePolicy/Limiter/resilience. The caller must supply the existing
+host lease, URL allowlist, robots decision and HTTP client. SQL is never called.
+"""
+from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
+from dataclasses import dataclass
+from datetime import datetime,timezone
+from urllib.parse import urlsplit
+import hashlib,json,math,os,threading
+from .rate_control import (DomainRatePolicy,DomainRateLimiter,RequestMetrics,
+    CircuitBreaker,SystemClock,request_with_resilience,retry_after_seconds)
+from universal_supplier.http_capture import has_blocking_interstitial
+
+
+def host_key(url):return (urlsplit(url).hostname or '').lower().removeprefix('www.')
+
+def policy_digest(source,host,rate,approval):
+    return hashlib.sha256(json.dumps({'source':source,'host':host,'rate':rate.snapshot(),'approval_reference':approval},sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+def compile_policy(source,url,settings=None,*,approval=None,approved_digests=None):
+    values={'max_concurrency':1,'min_request_interval_seconds':20.0,'max_attempts':1,'request_timeout_seconds':20.0,'max_run_duration_seconds':300.0,**(settings or {})}
+    rate=DomainRatePolicy.from_mapping(values)
+    for name,value in rate.snapshot().items():
+        if name=='respect_retry_after':continue
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value):raise ValueError('INVALID_HOST_RATE_NUMBER')
+    if rate.min_request_interval_seconds<=0 or rate.max_concurrency>8 or rate.max_attempts>3:raise ValueError('HOST_RATE_OUTSIDE_BOUNDED_PROFILE')
+    if rate.respect_retry_after is not True:raise ValueError('RETRY_AFTER_PROTECTION_REQUIRED')
+    for name in ('max_concurrency','max_attempts','consecutive_error_threshold'):
+        if type(getattr(rate,name)) is not int:raise ValueError('HOST_RATE_INTEGER_REQUIRED')
+    host=host_key(url)
+    if not host:raise ValueError('HOST_REQUIRED')
+    if rate.max_concurrency>1 or rate.min_request_interval_seconds<20:
+        approval=approval or {}
+        if approval.get('host')!=host or not approval.get('reference'):raise PermissionError('HOST_PROFILE_NOT_APPROVED')
+        approved_digests=approved_digests if approved_digests is not None else json.loads(os.environ.get('STERBRUST_APPROVED_HOST_POLICIES','{}'))
+        if approved_digests.get(host)!=policy_digest(source,host,rate,approval['reference']):raise PermissionError('HOST_PROFILE_DIGEST_NOT_APPROVED')
+    return rate
+
+@dataclass(frozen=True)
+class FetchOutcome:
+    url:str
+    response:object=None
+    observed_at:object=None
+    attempts:int=0
+    seconds:float=0.0
+    error:str|None=None
+    retry_after_seconds:float|None=None
+
+class BoundedHostFetcher:
+    def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
+                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None):
+        if not source:raise ValueError('SOURCE_REQUIRED')
+        rate=compile_policy(source,'https://'+host,rate.snapshot(),approval=approval)
+        if not lease_acquired:raise PermissionError('HOST_LEASE_REQUIRED')
+        if not callable(robots_allowed):raise PermissionError('ROBOTS_DECISION_REQUIRED')
+        if robots_delay_seconds is None or not math.isfinite(robots_delay_seconds) or robots_delay_seconds<0:raise PermissionError('ROBOTS_DELAY_DECISION_REQUIRED')
+        if robots_delay_seconds>rate.min_request_interval_seconds:raise PermissionError('ROBOTS_REQUIRES_SLOWER_PROFILE')
+        self._target_urls=set();self._url_budget=0
+        self.host=host_key('https://'+host);self.rate=rate;self.client_factory=client_factory
+        self.validator=validator;self.robots_allowed=robots_allowed;self.clock=clock or SystemClock()
+        self.stop_requested=stop_requested or (lambda:False);self.stopped=threading.Event()
+        self.metrics=RequestMetrics();self.limiter=DomainRateLimiter(rate,clock=self.clock)
+        self.breaker=CircuitBreaker(rate,clock=self.clock,metrics=self.metrics);self.stop_reason=None
+        self._lock=threading.Lock();self.outcomes=[];self.receipt_sink=receipt_sink
+    def stop(self,reason='OPERATOR_STOP'):
+        with self._lock:
+            if self.stop_reason is None:self.stop_reason=reason
+            self.stopped.set()
+    def aborted(self):
+        if self.stop_requested():self.stop()
+        return self.stopped.is_set()
+    def _validate(self,url):
+        self.validator(url)
+        if host_key(url)!=self.host:raise ValueError('CROSS_HOST_REDIRECT_FORBIDDEN')
+        if not self.robots_allowed(url):raise PermissionError('ROBOTS_DISALLOW')
+    def _fetch(self,url,deadline):
+        started=self.clock.monotonic();client=None
+        try:
+            self._validate(url);client=self.client_factory();callback=getattr(client,'before_request',None)
+            initial=[True]
+            def before_request(target):
+                self._validate(target)
+                with self._lock:
+                    exceeded=target not in self._target_urls and len(self._target_urls)>=self._url_budget
+                    if not exceeded:self._target_urls.add(target)
+                if exceeded:
+                    self.stop('HARD_HTTP_URL_BUDGET');raise ValueError('HARD_HTTP_URL_BUDGET')
+                if self.aborted():raise RuntimeError('HOST_STOPPED')
+                if initial[0]:initial[0]=False
+                else:self.limiter.wait(self.metrics,deadline=deadline)
+                if self.aborted():raise RuntimeError('HOST_STOPPED')
+                if callback:callback(target)
+            # The existing public client calls this for each redirect too.
+            client.before_request=before_request
+            def send():
+                initial[0]=True
+                response=client.get_validated(url,validator=self._validate,timeout_seconds=min(self.rate.request_timeout_seconds,max(.001,deadline-self.clock.monotonic())))
+                if response.status_code in (403,429):self.stop('SOURCE_BLOCKED_HTTP_'+str(response.status_code))
+                elif has_blocking_interstitial(response.body):self.stop('SOURCE_BLOCKED_INTERSTITIAL')
+                return response
+            response,attempts=request_with_resilience(send,self.rate,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=frozenset({403,429}),abort_requested=self.aborted)
+            outcome=FetchOutcome(url,response,datetime.now(timezone.utc),attempts,self.clock.monotonic()-started,
+                self.stop_reason if response.status_code in (403,429) or has_blocking_interstitial(response.body) else None,
+                retry_after_seconds(response.headers) if getattr(response,'headers',None) else None)
+            if self.receipt_sink:
+                try:self.receipt_sink(outcome)
+                except Exception:
+                    self.stop('CAPTURE_ARCHIVE_FAILED');raise
+            return outcome
+        except Exception as e:
+            return FetchOutcome(url,seconds=self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}')
+        finally:
+            if client and getattr(client,'session',None):client.session.close()
+    def fetch(self,urls,*,limit,seconds):
+        urls=list(urls)
+        if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=1000 or len(urls)>limit:raise ValueError('HARD_URL_BUDGET')
+        if len(urls)!=len(set(urls)):raise ValueError('DUPLICATE_URL')
+        if not math.isfinite(seconds) or not 0<seconds<=3600:raise ValueError('TIME_BUDGET')
+        for url in urls:self._validate(url)
+        self._url_budget=limit
+        deadline=self.clock.monotonic()+min(seconds,self.rate.max_run_duration_seconds)
+        pending={};cursor=0
+        try:
+            with ThreadPoolExecutor(max_workers=self.rate.max_concurrency) as pool:
+                try:
+                    while pending or cursor<len(urls):
+                        while cursor<len(urls) and len(pending)<self.rate.max_concurrency and not self.aborted() and self.clock.monotonic()<deadline:
+                            url=urls[cursor];cursor+=1;pending[pool.submit(self._fetch,url,deadline)]=url
+                        if not pending:break
+                        done,_=wait(pending,return_when=FIRST_COMPLETED)
+                        for future in done:
+                            pending.pop(future);outcome=future.result();self.outcomes.append(outcome);yield outcome
+                        if self.clock.monotonic()>=deadline:self.stop('MAX_RUN_DURATION_EXCEEDED')
+                except BaseException:
+                    self.stop('CONSUMER_STOP');raise
+        finally:self.stopped.set()
