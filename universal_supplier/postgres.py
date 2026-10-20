@@ -924,8 +924,9 @@ class PostgresRepository:
                ON CONFLICT(source_product_id) DO UPDATE SET consecutive_confirmed=0,
                 last_evidence_type='SEEN',state='ACTIVE',first_missing_at=NULL,
                 last_observed_at=EXCLUDED.last_observed_at,last_crawl_run_id=EXCLUDED.last_crawl_run_id,
-                history=(missing_observations.history || %s::jsonb)""",
-            (product_id, observed_at, crawl_run_id, event, event),
+                history=(missing_observations.history || EXCLUDED.history)
+               WHERE NOT (missing_observations.history @> EXCLUDED.history)""",
+            (product_id, observed_at, crawl_run_id, event),
         )
 
     @staticmethod
@@ -951,6 +952,10 @@ class PostgresRepository:
                                  *, schema_signals: list[str],
                                  crawl_settings: dict[str, Any] | None = None,
                                  base_url: str | None = None):
+        # Serialize this run's profile check/insert, including associated diagnostics.
+        # Caller holds the ingest transaction; no global or cross-supplier lock.
+        cursor.execute("SELECT id FROM crawl_runs WHERE id=%s AND supplier_id=%s FOR UPDATE",
+                       (crawl_run_id, supplier_id))
         cursor.execute(
             """SELECT d.products_seen,d.products_parsed,d.metrics
                FROM data_quality_snapshots d JOIN crawl_runs r ON r.id=d.crawl_run_id
@@ -983,6 +988,16 @@ class PostgresRepository:
         )
         anomaly = detect_anomalies(previous, current, thresholds, schema_signals=sorted(automatic_signals))
         metrics = {"fill_rates": dict(current.fill_rates), **{f"{key}_fill_rate": value for key, value in current.fill_rates.items()}}
+        cursor.execute(
+            """SELECT id FROM data_quality_snapshots
+               WHERE supplier_id=%s AND crawl_run_id=%s
+                 AND products_seen=%s AND products_parsed=%s AND metrics=%s::jsonb
+                 AND anomaly_codes=%s AND critical=%s LIMIT 1""",
+            (supplier_id, crawl_run_id, current.products_seen, current.products_parsed,
+             json.dumps(metrics), list(anomaly.codes), anomaly.critical),
+        )
+        if cursor.fetchone() is not None:
+            return anomaly
         cursor.execute(
             """INSERT INTO data_quality_snapshots
                (supplier_id,crawl_run_id,products_seen,products_parsed,metrics,anomaly_codes,critical)

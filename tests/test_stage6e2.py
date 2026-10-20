@@ -75,7 +75,7 @@ def test_anomaly_adapter_result_partial(monkeypatch):
     def fake_crawl(*, baseline, rate_policy):
         card = SimpleNamespace(raw_data={"schema_signals": ["gallery_missing"]})
         return SimpleNamespace(
-            cards=(card,), finished_at="2026-09-16T00:00:00+00:00",
+            cards=(card,), finished_at="2026-09-16T00:00:00+00:00", started_at="2026-09-15T23:59:50+00:00", rows=(), captures=(),
             discovered_urls=("https://partner-st.ru/a",), errors=(),
             health=DiscoveryHealth(101, 101, 1.0, False, True),
             effective_rate_policy=rate_policy.snapshot(), request_metrics={},
@@ -93,7 +93,7 @@ def test_anomaly_crawl_job_partial(monkeypatch):
     monkeypatch.setattr(adapter_module, "_post_ingest_identity", lambda *args, **kwargs: {"status": "succeeded"})
     monkeypatch.setattr(adapter_module, "run_partner_st_live", lambda **kwargs: SimpleNamespace(
         cards=(SimpleNamespace(raw_data={"schema_signals": ["json_ld_changed"]}),),
-        finished_at="2026-09-16T00:00:00+00:00", discovered_urls=("https://partner-st.ru/a",), errors=(),
+        finished_at="2026-09-16T00:00:00+00:00", started_at="2026-09-15T23:59:50+00:00", rows=(), captures=(), discovered_urls=("https://partner-st.ru/a",), errors=(),
         health=DiscoveryHealth(101, 101, 1.0, False, True),
         effective_rate_policy=kwargs["rate_policy"].snapshot(), request_metrics={},
         discovery_metadata={}, termination_reason=None,
@@ -128,7 +128,7 @@ def test_healthy_adapter_result_is_succeeded(monkeypatch):
     _install_recording_repository(monkeypatch)
     monkeypatch.setattr(adapter_module, "_post_ingest_identity", lambda *args, **kwargs: {"status": "succeeded"})
     monkeypatch.setattr(adapter_module, "run_partner_st_live", lambda **kwargs: SimpleNamespace(
-        cards=(SimpleNamespace(raw_data={}),), finished_at="2026-09-16T00:00:00+00:00",
+        cards=(SimpleNamespace(raw_data={}),), finished_at="2026-09-16T00:00:00+00:00", started_at="2026-09-15T23:59:50+00:00", rows=(), captures=(),
         discovered_urls=("https://partner-st.ru/a",), errors=(),
         health=DiscoveryHealth(101, 101, 1.0, False, True),
         effective_rate_policy=kwargs["rate_policy"].snapshot(), request_metrics={},
@@ -184,7 +184,7 @@ def test_queued_job_freezes_missing_and_quality_policies(monkeypatch):
     _install_recording_repository(monkeypatch)
     monkeypatch.setattr(adapter_module, "_post_ingest_identity", lambda *args, **kwargs: {"status": "succeeded"})
     monkeypatch.setattr(adapter_module, "run_partner_st_live", lambda **kwargs: SimpleNamespace(
-        cards=(SimpleNamespace(raw_data={}),), finished_at="2026-09-16T00:00:00+00:00",
+        cards=(SimpleNamespace(raw_data={}),), finished_at="2026-09-16T00:00:00+00:00", started_at="2026-09-15T23:59:50+00:00", rows=(), captures=(),
         discovered_urls=("https://partner-st.ru/a",), errors=(),
         health=DiscoveryHealth(1, 1, 1.0, False, True),
         effective_rate_policy=kwargs["rate_policy"].snapshot(), request_metrics={},
