@@ -95,6 +95,23 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
         safe_url(url)
         if url not in allowed:raise ValueError('PILOT_REDIRECT_OUTSIDE_BATCH')
         return url
+    if batch is not None and not (stop_requested and stop_requested()):
+        from urllib.robotparser import RobotFileParser
+        from pathlib import Path
+        import json
+        robots_url='https://partner-st.ru/robots.txt'
+        def robots_target(url):
+            if url not in (robots_url,'https://www.partner-st.ru/robots.txt'):raise ValueError('PILOT_ROBOTS_REDIRECT')
+            return url
+        robots=transport.get_validated(robots_url,robots_target)
+        Path(evidence_root).mkdir(parents=True,exist_ok=True)
+        (Path(evidence_root)/'robots.json').write_text(json.dumps({'url':robots.final_url,'status':robots.status_code,'text':robots.text},ensure_ascii=False),encoding='utf-8')
+        if robots.status_code!=200:raise RuntimeError('PILOT_ROBOTS_HTTP_'+str(robots.status_code))
+        if '<html' in robots.text.lower():raise RuntimeError('PILOT_ROBOTS_NOT_TEXT')
+        rules=RobotFileParser();rules.parse(robots.text.splitlines())
+        delay=rules.crawl_delay('UniversalSupplier')
+        if delay and delay>effective_policy.min_request_interval_seconds:raise RuntimeError('PILOT_ROBOTS_REQUIRES_SLOWER_POLICY')
+        if not all(rules.can_fetch('UniversalSupplier',u) for u in allowed):raise RuntimeError('PILOT_ROBOTS_DISALLOWED')
     rows: list[dict[str, Any]] = []
     cards: list[ProductCard] = []
     failures: list[CrawlFailure] = []

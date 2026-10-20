@@ -23,7 +23,9 @@ class Transport:
     def __init__(self,**kw):self.calls=[];self.policy=kw['domain_policy']
     def get(self,url):raise AssertionError('discovery forbidden')
     def get_validated(self,url,validator):
-        validator(url);self.calls.append(url);i=url.split('item-')[1].strip('/')
+        validator(url)
+        if url.endswith('/robots.txt'):return FetchRecord(url,url,200,(),1,1,'User-agent: *\nAllow: /')
+        self.calls.append(url);i=url.split('item-')[1].strip('/')
         return FetchRecord(url,url,200,(),1,2,html(i))
 
 def run(tmp_path,n=50,**kw):
