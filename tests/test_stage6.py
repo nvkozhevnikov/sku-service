@@ -82,7 +82,8 @@ def xml_contract(**overrides) -> ProvenXmlContract:
         "root_element": "updates",
         "update_element": "product",
         "identity_element": "existingId",
-        "field_elements": {"price": "price", "availability": "availability", "quantity": "quantity"},
+        # Quantity stays out unless both the contract and the safety config prove it.
+        "field_elements": {"price": "price", "availability": "availability"},
         "availability_values": {"in_stock": "stock", "preorder": "preorder", "out_of_stock": "none"},
     }
     values.update(overrides)
@@ -154,9 +155,15 @@ def test_public_availability_mapping(raw, expected):
     assert normalize_public_availability(raw) == expected
 
 
+QUANTITY_FIELDS = {"price": "price", "availability": "availability", "quantity": "quantity"}
+
+
 def test_null_quantity_is_not_converted_to_zero():
-    payload = serialize_import_payload([desired(quantity=None)], evidence(), xml_contract())
-    assert b"<quantity>" not in payload
+    payload = serialize_import_payload([desired(quantity=None), desired(sterbrust_product_id="2")],
+                                       evidence(quantity_contract_verified=True),
+                                       xml_contract(field_elements=QUANTITY_FIELDS),
+                                       safety_config={"quantity_write_enabled": True})
+    assert payload.count(b"<quantity>") == 1  # only the row with a real quantity
     assert b">0</quantity>" not in payload
 
 

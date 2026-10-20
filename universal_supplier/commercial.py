@@ -147,6 +147,14 @@ def _currency(value: str) -> str | None:
     return "RUB" if _CURRENCY_RE.search(value or "") else None
 
 
+def _currency_code(value: Any) -> str | None:
+    """Machine currency field: rouble spellings ("руб.", "RUR", "₽") become RUB; others stay as given."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return _currency(text) or text.upper()
+
+
 def parse_rub_money(value: str | None) -> Decimal | None:
     """Parse a rouble amount only after the caller established price context."""
 
@@ -174,6 +182,10 @@ def _parse_number(value: str | None) -> Decimal | None:
         parts = raw.split(delimiter)
         if len(parts) == 2 and len(parts[1]) in (1, 2):
             normalized = parts[0] + "." + parts[1]
+        elif len(parts) == 2 and len(parts[1]) == 3 and len(parts[0]) > 3:
+            # "12990.000" / "12 990.000": a lone separator after an ungrouped
+            # integer is a 3-digit fraction, not thousands grouping. Ambiguous.
+            return None
         elif all(len(part) == 3 for part in parts[1:]):
             normalized = "".join(parts)
         else:
@@ -244,8 +256,8 @@ def _current_dom(scope: _Node) -> tuple[list[_Candidate], list[_Candidate], bool
 
 
 def _microdata(scope: _Node) -> list[_Candidate]:
-    currency = next((node.attrs.get("content") or node.attrs.get("value") or node.text()
-                     for node in _nodes(scope) if node.attrs.get("itemprop", "").lower() == "pricecurrency"), "").upper()
+    currency = _currency_code(next((node.attrs.get("content") or node.attrs.get("value") or node.text()
+                                    for node in _nodes(scope) if node.attrs.get("itemprop", "").lower() == "pricecurrency"), ""))
     candidates: list[_Candidate] = []
     for node in _nodes(scope):
         if node.attrs.get("itemprop", "").lower() == "price":
@@ -257,10 +269,17 @@ def _microdata(scope: _Node) -> list[_Candidate]:
     return candidates
 
 
+def _identity_key(value: Any) -> str:
+    # Unicode-aware: Cyrillic letters are identity ("Корвет-405" is not "Энкор 405").
+    return re.sub(r"[\W_]+", "", str(value or "").casefold())
+
+
 def _identity_matches(value: Any, identity: str) -> bool:
-    wanted = re.sub(r"[^a-z0-9]+", "", identity.lower())
+    wanted = _identity_key(identity)
+    if not wanted:
+        return False
     for item in value if isinstance(value, list) else [value]:
-        actual = re.sub(r"[^a-z0-9]+", "", str(item or "").lower())
+        actual = _identity_key(item)
         # Separator/case normalization is safe; a substring match is not.
         # BMS-230DG and BMS-230DG-WP2 are distinct executions.
         if wanted and wanted == actual:
@@ -301,7 +320,7 @@ def _json_ld(root: _Node, identity: str) -> tuple[list[_Candidate], tuple[str, .
                 if not isinstance(offer, dict):
                     continue
                 raw = str(offer.get("price") or "")
-                currency = str(offer.get("priceCurrency") or "").upper() or None
+                currency = _currency_code(offer.get("priceCurrency"))
                 candidates.append(_Candidate(_parse_machine_number(raw), currency, raw,
                                              PriceSourceKind.JSON_LD, f"json_ld_product[{index}]"))
         if product_records and not candidates:

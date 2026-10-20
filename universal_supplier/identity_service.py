@@ -327,8 +327,10 @@ class RuntimeIdentityService:
                 existing = repository.load_existing_link_contexts(code)
                 matches = match_cards(supplier_cards, registry_context, existing)
                 for card, match in zip(supplier_cards, matches, strict=True):
-                    persistence[repository.persist_match(match, validated_at, code)] += 1
-                    audit = classify_identity_card(card.as_jsonable(), match, registry, by_model, by_brand_model)
+                    outcome, effective = repository.persist_match_decision(match, validated_at, code)
+                    persistence[outcome] += 1
+                    # Classify what was actually stored (guards may have downgraded it).
+                    audit = classify_identity_card(card.as_jsonable(), effective, registry, by_model, by_brand_model)
                     audits.append((source_ids[(code, card.external_id)], audit))
                     match_counts[audit["decision"]] += 1
 

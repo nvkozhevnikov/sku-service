@@ -188,6 +188,23 @@ def _candidates(source: Product, registry: RegistryContext) -> list[dict]:
     return [registry.products[product_id] for product_id in ids]
 
 
+def _manual_target_unavailable_row(card: ProductCard, source: Product, manual_key: str) -> dict:
+    evidence = {"existing_link": True, "mapping_provenance": "MANUAL_OR_HUMAN_CONFIRMED",
+                "manual_mapping_guard": {"manual_sterbrust_product_id": manual_key,
+                                         "reason": "MANUAL_TARGET_NOT_IN_ACTIVE_REGISTRY"}}
+    return {
+        "source_external_id": card.external_id, "SKU": card.sku, "name": card.name,
+        "brand": card.brand, "model": source.model, "status": "REVIEW",
+        "match_method": "REVIEW_MANUAL_TARGET_CHANGE", "confidence_score": 0.0,
+        "sterbrust_product_id": manual_key, "conflict_class": "MANUAL_TARGET_UNAVAILABLE",
+        "warnings": json.dumps({"manual_target_change": "MANUAL_TARGET_NOT_IN_ACTIVE_REGISTRY"}, ensure_ascii=False, sort_keys=True),
+        "data_quality_flags": "[]",
+        "conflicts": json.dumps({"manual_mapping": "MANUAL_TARGET_NOT_IN_ACTIVE_REGISTRY"}, ensure_ascii=False, sort_keys=True),
+        "evidence": json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+        "auto_accepted": "FALSE",
+    }
+
+
 def match_cards(cards: list[ProductCard] | tuple[ProductCard, ...], registry: RegistryContext,
                 existing_links: dict[str, str | dict] | None = None) -> list[dict]:
     rows: list[dict] = []
@@ -199,6 +216,12 @@ def match_cards(cards: list[ProductCard] | tuple[ProductCard, ...], registry: Re
         existing = _candidate(registry.products[existing_key]) if existing_key in registry.products else None
         origin = str(existing_value.get("origin_match_method") or "") if isinstance(existing_value, dict) else ""
         manual = bool(existing_value.get("manual_or_human_confirmed")) if isinstance(existing_value, dict) else False
+        if manual and existing_key and existing is None:
+            # The human-confirmed target left the active registry. Never rematch
+            # automatically (that could auto-accept a different product): keep
+            # the manual target as evidence and send the card to an operator.
+            rows.append(_manual_target_unavailable_row(card, source, str(existing_key)))
+            continue
         candidates = [_candidate(row) for row in _candidates(source, registry)]
         result = match_product(source, candidates,
                                existing_link=existing, existing_link_origin=origin,

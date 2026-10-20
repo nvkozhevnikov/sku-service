@@ -101,7 +101,9 @@ def title_represents(title, model, brand=''):
     raw = normalize_text(model).replace('×', 'x').translate(str.maketrans({'х':'x'}))
     chars = re.findall(r'[a-zа-я0-9+]', raw)
     if not chars: return False
-    pattern = r'(?<![a-zа-я0-9+])' + r'[\s\-./(),×x]*'.join(map(re.escape, chars)) + r'(?![a-zа-я0-9+])'
+    # "x" is a model character after transliteration, never a separator: as a
+    # separator it overlaps the characters it joins (catastrophic backtracking).
+    pattern = r'(?<![a-zа-я0-9+])' + r'[\s\-./(),×]*'.join(map(re.escape, chars)) + r'(?![a-zа-я0-9+])'
     text = normalize_text(title).replace('×', 'x').translate(str.maketrans({'х':'x'}))
     for match in re.finditer(pattern, text, re.I):
         tail = text[match.end():]

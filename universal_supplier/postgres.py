@@ -106,6 +106,15 @@ class PostgresConfig:
         return values
 
 
+def _effective_decision(decision: dict, evidence: Any, warnings: Any, conflicts: Any, conflict_class: str) -> dict:
+    """The decision row as persisted, in the same JSON-string shape match_cards emits."""
+    def as_json(value: Any) -> str:
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return {**decision, "evidence": as_json(evidence), "warnings": as_json(warnings),
+            "conflicts": as_json(conflicts), "conflict_class": conflict_class,
+            "auto_accepted": "TRUE" if decision.get("auto_accepted") in {True, "TRUE"} else "FALSE"}
+
+
 class PostgresRepository:
     """PostgreSQL repository for Docker or host-local client workflows."""
 
@@ -1205,6 +1214,17 @@ class PostgresRepository:
     def persist_match(self, decision: dict, validated_at: str,
                       supplier_code: str = PARTNER_CODE) -> str:
         """Persist one current decision without duplicating unchanged history."""
+        return self.persist_match_decision(decision, validated_at, supplier_code)[0]
+
+    def persist_match_decision(self, decision: dict, validated_at: str,
+                               supplier_code: str = PARTNER_CODE) -> tuple[str, dict]:
+        """Like persist_match, plus the effective decision actually stored.
+
+        Guards under the row locks (protected manual mapping, operator
+        rejection) may downgrade the caller's decision; identity
+        classification must use this effective decision so that
+        product_identity_decisions never disagrees with product_matches.
+        """
         evidence = json.loads(decision.get("evidence") or "{}") if isinstance(decision.get("evidence"), str) else decision.get("evidence", {})
         warnings = json.loads(decision.get("warnings") or "{}") if isinstance(decision.get("warnings"), str) else decision.get("warnings", {})
         conflicts = json.loads(decision.get("conflicts") or "{}") if isinstance(decision.get("conflicts"), str) else decision.get("conflicts", {})
@@ -1281,7 +1301,7 @@ class PostgresRepository:
                 )
                 if decision.get("auto_accepted") in {True, "TRUE"} and catalog_id is not None:
                     cursor.execute("UPDATE source_products SET catalog_product_id=%s, updated_at=now() WHERE id=%s", (catalog_id, source_id))
-                return "VALIDATED_UNCHANGED"
+                return "VALIDATED_UNCHANGED", _effective_decision(decision, evidence, warnings, conflicts, conflict_class)
             if current:
                 cursor.execute("UPDATE product_matches SET is_current=false WHERE id=%s", (current[0],))
             auto_accepted = decision.get("auto_accepted") in {True, "TRUE"} and catalog_id is not None
@@ -1315,7 +1335,7 @@ class PostgresRepository:
                          AND NOT {effective_manual_mapping_sql('sp.id','sp.catalog_product_id')}""",
                     (source_id, current[4]),
                 )
-            return "INSERTED_EVENT"
+            return "INSERTED_EVENT", _effective_decision(decision, evidence, warnings, conflicts, conflict_class)
 
     def load_sterbrust_snapshot(self, registry_path: Path, property_map_path: Path) -> int:
         """Idempotently load the approved read-only Sterbrust snapshot."""

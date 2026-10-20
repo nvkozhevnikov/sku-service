@@ -407,7 +407,7 @@ class Stage3BTests(unittest.TestCase):
             {"fetched_count": 1}, {"fetched_count": 1}))
 
     def test_match_validation_time_cannot_predate_database_event_creation(self):
-        source = inspect.getsource(PostgresRepository.persist_match)
+        source = inspect.getsource(PostgresRepository.persist_match_decision)
         self.assertIn("last_validated_at=GREATEST(%s::timestamptz, now())", source)
         self.assertIn("GREATEST(%s::timestamptz, now()),true", source)
 

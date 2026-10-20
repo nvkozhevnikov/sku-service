@@ -15,7 +15,11 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, Sequence
+
+SAFETY_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "sterbrust_import_safety.json"
+CREATE_NEW_DISABLED_VALUES = frozenset({"false", "no", "0", "n"})
 
 
 DRY_RUN_STATUSES = frozenset({
@@ -73,6 +77,9 @@ class ImportContractEvidence:
     price_contract_verified: bool = False
     availability_contract_verified: bool = False
     quantity_contract_verified_or_not_required: bool = False
+    # Separate, explicit proof that the quantity field itself is understood.
+    # "...or_not_required" only says the payload may omit quantity.
+    quantity_contract_verified: bool = False
     source_evidence: str = ""
 
     @property
@@ -243,6 +250,20 @@ def validate_write_fields(fields: Iterable[str], *, quantity_contract_proven: bo
     return normalized
 
 
+def load_safety_config(path: Path = SAFETY_CONFIG_PATH) -> dict[str, Any]:
+    """Missing or unreadable config means every optional write stays disabled."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def quantity_write_allowed(contract: ImportContractEvidence, safety_config: Mapping[str, Any] | None = None) -> bool:
+    config = load_safety_config() if safety_config is None else safety_config
+    return contract.quantity_contract_verified and config.get("quantity_write_enabled") is True
+
+
 def validate_price(price: Decimal | None, currency: str) -> Decimal:
     violations: list[str] = []
     if price is None:
@@ -378,6 +399,9 @@ def serialize_import_payload(
     rows: Sequence[DesiredCommercialState],
     contract_evidence: ImportContractEvidence,
     xml_contract: ProvenXmlContract | None,
+    *,
+    no_eligible_supplier_keys: Iterable[tuple[str, str]] = (),
+    safety_config: Mapping[str, Any] | None = None,
 ) -> bytes:
     """Serialize deterministically only after every contract gate is proven."""
 
@@ -385,9 +409,12 @@ def serialize_import_payload(
         raise ContractValidationError(contract_evidence.blockers)
     if xml_contract is None:
         raise ContractValidationError(["MISSING_PROVEN_XML_CONTRACT"])
-    validate_write_fields(xml_contract.field_elements.keys(), quantity_contract_proven=True)
-    if xml_contract.create_new_disabled_value.casefold() not in {"false", "no", "0", "n"}:
+    validate_write_fields(xml_contract.field_elements.keys(),
+                          quantity_contract_proven=quantity_write_allowed(contract_evidence, safety_config))
+    if xml_contract.create_new_disabled_value.casefold() not in CREATE_NEW_DISABLED_VALUES:
         raise ContractValidationError(["CREATE_NEW_NOT_DISABLED"])
+    # Duplicate targets, known false pairs and no-eligible rows never reach a payload.
+    validate_managed_rows(rows, no_eligible_supplier_keys)
 
     root = ET.Element(xml_contract.root_element, {
         xml_contract.create_new_attribute: xml_contract.create_new_disabled_value,
@@ -435,10 +462,12 @@ class SterbrustWriteAdapter:
         transport: WriteTransport,
         contract_evidence: ImportContractEvidence,
         allowed_target_ids: Iterable[str],
+        xml_contract: ProvenXmlContract | None = None,
     ) -> None:
         self.transport = transport
         self.contract_evidence = contract_evidence
         self.allowed_target_ids = frozenset(map(str, allowed_target_ids))
+        self.xml_contract = xml_contract
 
     def execute(self, payload: bytes, target_ids: Iterable[str]) -> Any:
         if os.environ.get("STERBRUST_WRITE_ENABLE", "NO") != "YES":
@@ -450,7 +479,40 @@ class SterbrustWriteAdapter:
             raise WriteRefused("Duplicate target ID")
         if not set(targets).issubset(self.allowed_target_ids):
             raise WriteRefused("Target outside explicit existing-ID allowlist")
+        payload_targets = self._payload_target_ids(payload)
+        if set(payload_targets) != set(targets):
+            raise WriteRefused("Payload identities differ from declared target IDs")
         return self.transport.send(payload)
+
+    def _payload_target_ids(self, payload: bytes) -> tuple[str, ...]:
+        """The payload, not the caller's list, decides what would be written: verify it."""
+        contract = self.xml_contract
+        if contract is None:
+            raise WriteRefused("MISSING_PROVEN_XML_CONTRACT")
+        try:
+            root = ET.fromstring(payload)
+        except ET.ParseError as error:
+            raise WriteRefused("Payload is not well-formed XML") from error
+        if root.tag != contract.root_element:
+            raise WriteRefused("Unexpected payload root element")
+        create_new = root.get(contract.create_new_attribute)
+        if create_new is None or create_new.casefold() not in CREATE_NEW_DISABLED_VALUES:
+            raise WriteRefused("createNew is not disabled in the payload")
+        identities: list[str] = []
+        for update in root:
+            if update.tag != contract.update_element:
+                raise WriteRefused(f"Unexpected payload element: {update.tag}")
+            nodes = update.findall(contract.identity_element)
+            if len(nodes) != 1 or not (nodes[0].text or "").strip():
+                raise WriteRefused("Payload update without exactly one identity")
+            identities.append(nodes[0].text.strip())
+        if not identities:
+            raise WriteRefused("Payload contains no updates")
+        if len(identities) != len(set(identities)):
+            raise WriteRefused("Duplicate identity in payload")
+        if not set(identities).issubset(self.allowed_target_ids):
+            raise WriteRefused("Payload identity outside explicit existing-ID allowlist")
+        return tuple(identities)
 
 
 def canonical_json_bytes(value: Any) -> bytes:

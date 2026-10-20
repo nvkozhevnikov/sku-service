@@ -13,20 +13,16 @@ from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape, quoteattr
 
 from universal_supplier.stage6e import safe_export_filename, strip_xml_illegal
+from universal_supplier.sterbrust_import_contract import KNOWN_FALSE_MATCH_PAIRS
 from universal_supplier.yml_feed import (
     FeedArtifact, FeedGenerationError, FeedPolicy, FeedSnapshot, build_yml,
     selected_row_violations,
 )
 
 
-FALSE_MATCH_GUARDS = (
-    ("partner_st", "1655", "61421"),
-    ("partner_st", "1656", "40495"),
-    ("partner_st", "1835", "96887"),
-    ("partner_st", "1837", "96887"),
-    ("optimum", "561", "18451"),
-    ("optimum", "782", "19862"),
-)
+# Single source of truth: the import contract's known false pairs.
+FALSE_MATCH_GUARDS = tuple((supplier, external_id, target)
+                           for supplier, external_id, target, _reason in KNOWN_FALSE_MATCH_PAIRS)
 SECRET_KEYS = frozenset({
     "password", "password_hash", "session", "session_secret", "token", "cookie",
     "proxy_credentials", "csrf_secret", "signing_secret", "db_password",
