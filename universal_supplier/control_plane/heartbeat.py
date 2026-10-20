@@ -7,6 +7,8 @@ database outage cannot stop the loop it observes. ``/health`` and the container 
 """
 from __future__ import annotations
 
+from universal_supplier.partner_pilot import connect_postgres
+
 from datetime import datetime, timezone
 import logging
 import sys
@@ -51,7 +53,7 @@ class HeartbeatRecorder:
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True)
+        return connect_postgres(self.config, autocommit=True)
 
     def record(self, error: BaseException | None = None) -> None:
         if error is None and self._last_success_write is not None \
@@ -103,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     import psycopg
     try:
-        with psycopg.connect(**PostgresConfig.from_env().kwargs(), autocommit=True, row_factory=psycopg.rows.dict_row) as c, c.cursor() as q:
+        with connect_postgres(PostgresConfig.from_env(), autocommit=True, row_factory=psycopg.rows.dict_row) as c, c.cursor() as q:
             status = read_components(q)[args[0]]
     except Exception as error:
         print(f"{args[0]}: heartbeat unavailable: {type(error).__name__}", file=sys.stderr)

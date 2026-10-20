@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from universal_supplier.partner_pilot import connect_postgres
+
 from copy import deepcopy
 from dataclasses import asdict
 from difflib import SequenceMatcher
@@ -129,7 +131,7 @@ class PostgresAdminStore:
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True, row_factory=psycopg.rows.dict_row)
+        return connect_postgres(self.config, autocommit=True, row_factory=psycopg.rows.dict_row)
 
     @staticmethod
     def _user(row: dict | None) -> AuthUser | None:

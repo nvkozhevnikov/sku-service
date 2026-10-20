@@ -139,6 +139,14 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         job.settings_snapshot.get("rate_settings"), PARTNER_ST_DEFAULT_RATE_POLICY,
     )
     crawl = job.settings_snapshot.get("crawl_settings") or {}
+    from universal_supplier.partner_pilot import enabled,validate_config,validate_snapshot
+    pilot=job.settings_snapshot.get('partner_pilot')
+    if pilot is not None:
+        validate_config(config);validate_snapshot(pilot)
+        if job.supplier_code!='partner_st' or job.adapter_name!='partner_st' or job.trigger_type!='manual':raise PermissionError('PILOT_JOB_NAMESPACE')
+        if not enabled() or __import__('os').environ.get('STERBRUST_ALLOW_SUPPLIER_HTTP')!='YES':raise PermissionError('PILOT_HTTP_NOT_APPROVED')
+        if rate.max_concurrency!=1 or rate.min_request_interval_seconds<2 or rate.max_attempts!=1 or rate.max_run_duration_seconds>300:raise ValueError('PILOT_RATE_SNAPSHOT_INVALID')
+    elif enabled():raise PermissionError('PILOT_FULL_JOB_DISABLED')
     baseline = crawl.get("baseline_discovered_count", 1222)
     repository = PostgresRepository(config)
     run_id = repository.start_crawl_run(
@@ -149,24 +157,37 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
     )
     progress = _tracker(repository, run_id)
     try:
-        result = _run_with_progress(run_partner_st_live, progress.callback, baseline=baseline, rate_policy=rate)
+        kwargs={}
+        if pilot:
+            from pathlib import Path
+            import os
+            kwargs={'pilot':pilot,'evidence_root':Path(os.environ['PARTNER_PILOT_EVIDENCE_ROOT'])/str(job.id),'stop_requested':lambda:Path(os.environ['PARTNER_PILOT_STOP_FILE']).exists()}
+        result = _run_with_progress(run_partner_st_live, progress.callback, baseline=baseline, rate_policy=rate,**kwargs)
+        if pilot and result.termination_reason and result.termination_reason.startswith('PILOT_'):
+            _finish_metadata(repository,run_id,{'pilot_http_rows':list(result.rows),'pilot_captures':list(result.captures),'request_metrics':result.request_metrics,'termination_reason':result.termination_reason})
+            raise RuntimeError(result.termination_reason)
         for error in result.errors:
             repository.record_crawl_error(run_id, url=error.url, error_type=error.error_type,
                                           message=error.message, http_status=error.http_status)
-        deadline_exceeded = result.termination_reason == "MAX_RUN_DURATION_EXCEEDED"
+        deadline_exceeded = result.termination_reason is not None
         health = replace(result.health, deactivation_allowed=False) if deadline_exceeded else result.health
         progress.set_phase("INGESTING")
-        counts = repository.ingest(
-            list(result.cards), result.finished_at, crawl_run_id=run_id,
-            discovery_health=health, discovered_urls=list(result.discovered_urls),
-            error_count=len(result.errors), supplier_code=job.supplier_code,
-            schema_signals=_schema_signals(result.cards, result.errors),
-            crawl_settings=crawl,
-        )
+        from contextlib import nullcontext
+        with repository.connection.transaction() if pilot else nullcontext():
+            counts = repository.ingest(
+                list(result.cards), result.finished_at, crawl_run_id=run_id,
+                discovery_health=health, discovered_urls=list(result.discovered_urls),
+                error_count=len(result.errors), supplier_code=job.supplier_code,
+                schema_signals=_schema_signals(result.cards, result.errors),
+                crawl_settings=crawl,
+                **({"bounded":True} if pilot else {}),
+            )
+            if pilot:
+                repository.record_partner_pilot_captures(result.cards,result.captures)
         post_error = None
         try:
             progress.set_phase("MATCHING")
-            identity = _post_ingest_identity(config, job.supplier_code)
+            identity = run_post_ingest(config, job.supplier_code,[c.external_id for c in result.cards]) if pilot else _post_ingest_identity(config, job.supplier_code)
             progress.set_phase("REVIEW_SYNC")
         except Exception as error:
             post_error = f"{type(error).__name__}: {str(error)[:1800]}"
@@ -176,6 +197,8 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         _finish_metadata(repository, run_id, {
             "requested_rate_policy": rate.snapshot(), "effective_rate_policy": effective,
             "requested_effective_policy_match": rate.snapshot() == effective,
+            "pilot_http_rows":list(result.rows) if pilot else [],
+            "pilot_captures":list(result.captures) if pilot else [],
             "request_metrics": result.request_metrics,
             "discovery": result.discovery_metadata,
             "termination_reason": result.termination_reason,

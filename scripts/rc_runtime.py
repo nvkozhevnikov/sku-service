@@ -21,6 +21,8 @@ import psycopg
 def credentials():return json.loads((OUT/'private-runtime.json').read_text(encoding='utf-8'))
 
 def config(role='app_supplier',db=None):
+    from universal_supplier.partner_pilot import enabled,DATABASE
+    if enabled():return PostgresConfig(*DATABASE,'rc_owner',None,'disable')
     return PostgresConfig('127.0.0.1',PORT,db or TARGET,role,credentials()[role],'disable')
 
 class FrozenStore(PostgresControlPlaneStore):
@@ -47,7 +49,11 @@ def build_app():
     c=config('app_competitor')
     p=OUT/('private-competitor-'+TARGET+'.json')
     p.write_text(json.dumps({'dsn':make_conninfo(**c.kwargs())}),encoding='utf-8')
-    return create_app(store=FrozenStore(config()),admin_store=PostgresAdminStore(config()),
+    from universal_supplier.partner_pilot import enabled,connect_postgres
+    from universal_supplier.control_plane.queue import PostgresJobQueue
+    if enabled():
+        with connect_postgres(config(),autocommit=True):pass
+    return create_app(store=PostgresControlPlaneStore(config()) if enabled() else FrozenStore(config()),queue=PostgresJobQueue(config()) if enabled() else None,admin_store=PostgresAdminStore(config()),
         auth_required=True,session_secret=cfg['session_secret'],
         commercial_qa_service=DisabledCommercialQaService('Сбор отключён: используются сохранённые данные.'),
         competitor_service=MonitoringService(MonitoringRepository(p)),
@@ -55,8 +61,24 @@ def build_app():
 
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('--work-one',action='store_true');args=parser.parse_args()
-    if args.work_one:print(FrozenDispatch(dispatch_connect).work_one())
+    parser=argparse.ArgumentParser();parser.add_argument('--work-one',action='store_true');parser.add_argument('--pilot-work-one',action='store_true');args=parser.parse_args()
+    if args.pilot_work_one:
+        from universal_supplier.partner_pilot import enabled
+        if not enabled():raise PermissionError('PILOT_MODE_REQUIRED')
+        from universal_supplier.control_plane.orchestrator import Orchestrator
+        from universal_supplier.control_plane.queue import PostgresJobQueue
+        import time
+        q=PostgresJobQueue(config());worker=Orchestrator(config(),queue=q,max_parallel_supplier_jobs=1)
+        try:
+            until=time.monotonic()+180
+            while time.monotonic()<until:
+                job=q.claim_next()
+                if job:
+                    worker._run_job(job);break
+                time.sleep(1)
+            else:raise TimeoutError('No approved pilot enqueued')
+        finally:worker.pool.shutdown(wait=True)
+    elif args.work_one:print(FrozenDispatch(dispatch_connect).work_one())
     else:
         import uvicorn
         uvicorn.run(build_app(),host='127.0.0.1',port=58161)

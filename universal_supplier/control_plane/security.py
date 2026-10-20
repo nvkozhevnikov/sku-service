@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from universal_supplier.partner_pilot import connect_postgres
+
 from dataclasses import dataclass
 import base64
 import hashlib
@@ -101,7 +103,7 @@ class PostgresLoginThrottle:
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True)
+        return connect_postgres(self.config, autocommit=True)
 
     def locked(self, key) -> bool:
         with self._connect() as c, c.cursor() as q:

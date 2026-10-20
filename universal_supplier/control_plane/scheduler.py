@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from universal_supplier.partner_pilot import connect_postgres
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
@@ -93,7 +95,7 @@ class Scheduler:
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True)
+        return connect_postgres(self.config, autocommit=True)
 
     def tick(self, now: datetime | None = None) -> list[int]:
         now = now or datetime.now(timezone.utc)

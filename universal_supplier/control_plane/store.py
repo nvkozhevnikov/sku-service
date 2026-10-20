@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from universal_supplier.partner_pilot import connect_postgres
 from universal_supplier.effective_identity import effective_manual_mapping_sql,accepted_current_mapping_sql
 
 import csv
@@ -105,7 +107,7 @@ class PostgresControlPlaneStore:
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True, row_factory=psycopg.rows.dict_row)
+        return connect_postgres(self.config, autocommit=True, row_factory=psycopg.rows.dict_row)
 
     def health(self) -> dict:
         try:
@@ -416,7 +418,7 @@ class PostgresControlPlaneStore:
     def xml_canonical_snapshot(self, supplier: str = ""):
         from universal_supplier.yml_feed import FeedSnapshot, PostgresFeedStore
         import psycopg
-        with psycopg.connect(**self.config.kwargs(), autocommit=True) as connection:
+        with connect_postgres(self.config, autocommit=True) as connection:
             snapshot = PostgresFeedStore(connection).load_snapshot()
         if supplier:
             selected = tuple(row for row in snapshot.selected_rows if row.supplier_code == supplier)

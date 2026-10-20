@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from universal_supplier.partner_pilot import connect_postgres
 from universal_supplier.effective_identity import effective_manual_mapping_sql,accepted_current_mapping_sql,effective_identity_mapping_sql
 
 import json
@@ -122,7 +124,7 @@ class PostgresRepository:
         import psycopg
         # Plain SELECT statements must never open an implicit outer transaction
         # that can absorb later connection.transaction() blocks as savepoints.
-        self.connection = psycopg.connect(**config.kwargs(), autocommit=True)
+        self.connection = connect_postgres(config, autocommit=True)
 
     def gate(self) -> dict:
         with self.connection.cursor() as cursor:
@@ -415,6 +417,28 @@ class PostgresRepository:
                 "capture_id": capture_id, "observation_id": observation_id, "observation_created": True,
                 "projection_updated": projection_updated, "exact_noop": False}
 
+    def record_partner_pilot_captures(self,cards,captures):
+        """Append real HTTP evidence for just the ingested pilot cards; never reproject."""
+        import hashlib
+        from psycopg.types.json import Jsonb
+        records={r['url']:r for r in captures}
+        with self.connection.transaction(),self.connection.cursor() as q:
+            for card in cards:
+                r=records[card.requested_url]
+                q.execute("SELECT sp.id,sp.supplier_id,o.id FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id JOIN offers o ON o.source_product_id=sp.id AND o.offer_kind='default' WHERE s.code='partner_st' AND sp.external_id=%s",(card.external_id,))
+                sid,supplier,offer=q.fetchone()
+                fp=hashlib.sha256(json.dumps(r,sort_keys=True).encode()).hexdigest()
+                q.execute("SELECT id FROM supplier_http_captures WHERE source_product_id=%s AND capture_fingerprint=%s",(sid,fp))
+                if q.fetchone():continue
+                q.execute("""INSERT INTO supplier_http_captures(supplier_id,source_product_id,requested_url,final_url,http_status,content_type,observed_at,capture_fingerprint,response_sha256,evidence_sha256,evidence_ref,redirect_urls,diagnostics)
+                VALUES(%s,%s,%s,%s,%s,'text/html; charset=utf-8',%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (supplier,sid,r['url'],r['final_url'],r['http_status'],r['observed_at'],fp,r['response_sha256'],r['evidence_sha256'],r['evidence_ref'],Jsonb(list(r['redirects'])),Jsonb({'response_hash_basis':r['response_hash_basis'],'capture_scope':'detail','job_mode':'SAVED_URL_LIVE'})))
+                capture=q.fetchone()[0]
+                payload=card.as_jsonable();eh=hashlib.sha256(json.dumps(payload,sort_keys=True,default=str).encode()).hexdigest()
+                q.execute("""INSERT INTO offer_commercial_observations(supplier_id,source_product_id,offer_id,capture_id,observed_at,extraction_fingerprint,price_state,price,old_price,currency,availability_raw,availability_normalized,extraction_evidence)
+                VALUES(%s,%s,%s,%s,%s,%s,'numeric_public',%s,%s,%s,%s,%s,%s)""",
+                (supplier,sid,offer,capture,r['observed_at'],eh,card.price,card.old_price,card.currency,card.availability_raw,card.availability_normalized,Jsonb({'parser':'PartnerStAdapter','url':card.requested_url,'evidence_sha256':r['evidence_sha256']})))
+
     def start_crawl_run(self, *, started_at: str, baseline_discovered_count: int | None,
                         metadata: dict[str, Any] | None = None,
                         supplier_code: str = PARTNER_CODE) -> int:
@@ -482,7 +506,7 @@ class PostgresRepository:
                discovery_health: DiscoveryHealth | None = None, discovered_urls: list[str] | None = None,
                error_count: int = 0, supplier_code: str | None = None,
                schema_signals: list[str] | None = None,
-               crawl_settings: dict[str, Any] | None = None) -> IngestCounts:
+               crawl_settings: dict[str, Any] | None = None, bounded: bool = False) -> IngestCounts:
         counts = IngestCounts()
         card_codes = {card.supplier_code for card in cards}
         if supplier_code is None:
@@ -492,7 +516,10 @@ class PostgresRepository:
         if card_codes and card_codes != {supplier_code}:
             raise ValueError("cross-supplier card batch is forbidden")
         with self.connection.transaction(), self.connection.cursor() as cursor:
-            supplier_id = self.ensure_supplier(supplier_code)
+            if bounded:
+                if supplier_code!='partner_st':raise ValueError('BOUNDED_PARTNER_ONLY')
+                cursor.execute("SELECT id FROM suppliers WHERE code=%s",(supplier_code,));supplier_id=cursor.fetchone()[0]
+            else:supplier_id = self.ensure_supplier(supplier_code)
             url_to_product: dict[str, int] = {}
             observed_ids: set[int] = set()
             for card in cards:
@@ -636,10 +663,11 @@ class PostgresRepository:
                          card.http_status, json.dumps({"final_url": card.final_url,
                                                        "canonical_url": card.canonical_url}, ensure_ascii=False)),
                     )
-            self._upsert_navigation_relations(cursor, supplier_id, cards, url_to_product, observed_at)
-            self._bootstrap_canonical_properties(cursor)
-            self._reconcile_supplier_properties(cursor, supplier_id)
-            self._reconcile_sterbrust_property_evidence(cursor)
+            if not bounded:
+                self._upsert_navigation_relations(cursor, supplier_id, cards, url_to_product, observed_at)
+                self._bootstrap_canonical_properties(cursor)
+                self._reconcile_supplier_properties(cursor, supplier_id)
+                self._reconcile_sterbrust_property_evidence(cursor)
             if crawl_run_id is not None:
                 discovered_count = len(discovered_urls if discovered_urls is not None else cards)
                 cursor.execute("SELECT crawl_settings,base_url FROM suppliers WHERE id=%s", (supplier_id,))
@@ -650,7 +678,7 @@ class PostgresRepository:
                     schema_signals=schema_signals or [], crawl_settings=frozen, base_url=base_url,
                 )
                 allow_missing = bool(
-                    discovery_health and discovery_health.deactivation_allowed
+                    not bounded and discovery_health and discovery_health.deactivation_allowed
                     and anomaly.allow_missing_consequences
                 )
                 missing_policy = MissingPolicy.from_mapping((frozen or {}).get("missing_policy"))

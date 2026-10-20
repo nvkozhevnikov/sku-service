@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from universal_supplier.partner_pilot import connect_postgres
+
 from dataclasses import dataclass
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -71,10 +73,15 @@ class PostgresJobQueue:
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True)
+        return connect_postgres(self.config, autocommit=True)
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
-                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None) -> EnqueueResult:
+                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None) -> EnqueueResult:
+        from universal_supplier.partner_pilot import enabled,limit_value,validate_config
+        if pilot_limit is not None:
+            if not enabled():raise PermissionError("PILOT_MODE_NOT_ENABLED")
+            limit_value(pilot_limit);validate_config(self.config)
+        if enabled() and pilot_limit is None:raise PermissionError('PILOT_FULL_CRAWL_DISABLED')
         scheduled_for = scheduled_for or utcnow()
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
             cursor.execute(
@@ -98,6 +105,11 @@ class PostgresJobQueue:
                 "domain": normalized_domain(base_url), "crawl_type": crawl_type,
                 "crawl_settings": crawl_settings or {}, "rate_settings": rate_settings or {},
             }
+            if pilot_limit is not None:
+                if code!='partner_st' or adapter_name!='partner_st' or trigger_type!='manual':raise ValueError('PILOT_PARTNER_MANUAL_ONLY')
+                cursor.execute("SELECT sp.id,sp.external_id,coalesce(sp.canonical_url,sp.source_url) FROM source_products sp WHERE sp.supplier_id=%s AND sp.active AND sp.external_id_is_stable ORDER BY sp.id LIMIT %s",(supplier_id,pilot_limit))
+                snapshot['partner_pilot']=__import__('universal_supplier.partner_pilot',fromlist=['snapshot']).snapshot(pilot_limit,cursor.fetchall())
+                snapshot['rate_settings']={**(rate_settings or {}),'max_concurrency':1,'min_request_interval_seconds':2.0,'max_attempts':1,'request_timeout_seconds':20.0,'max_run_duration_seconds':300.0}
             if active:
                 cursor.execute(
                     """INSERT INTO crawl_jobs
@@ -130,6 +142,13 @@ class PostgresJobQueue:
             row = cursor.fetchone()
             if row is None:
                 return None
+            from universal_supplier.partner_pilot import enabled,validate_snapshot
+            if enabled():
+                if row[2]!='partner_st' or row[3]!='partner_st' or not row[9].get('partner_pilot'):raise PermissionError('PILOT_WORKER_OTHER_JOB')
+                batch=validate_snapshot(row[9]['partner_pilot'])
+                for item in batch:
+                    cursor.execute('SELECT sp.external_id,coalesce(sp.canonical_url,sp.source_url),s.code FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id WHERE sp.id=%s',(item['source_product_id'],))
+                    if cursor.fetchone()!=(item['external_id'],item['url'],'partner_st'):raise PermissionError('PILOT_REGISTERED_IDENTITY_CHANGED')
             lease = utcnow() + timedelta(seconds=self.lease_seconds)
             cursor.execute(
                 """UPDATE crawl_jobs SET status='running',started_at=now(),heartbeat_at=now(),
@@ -182,7 +201,7 @@ class PostgresDomainLease:
 
     def __enter__(self):
         import psycopg
-        self.connection = psycopg.connect(**self.config.kwargs(), autocommit=True)
+        self.connection = connect_postgres(self.config, autocommit=True)
         with self.connection.cursor() as cursor:
             cursor.execute("SELECT pg_try_advisory_lock(%s)", (advisory_lock_key(self.domain),))
             self.acquired = bool(cursor.fetchone()[0])

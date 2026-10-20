@@ -238,6 +238,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.middleware("http")
     async def block_qa_source_writes(request: Request, call_next):
+        from universal_supplier.partner_pilot import enabled
+        if enabled() and request.method in {'POST','PUT','PATCH','DELETE'} and request.url.path not in {'/login','/logout'} and not (request.method=='POST' and request.url.path.startswith('/suppliers/') and (request.url.path.endswith('/start') or request.url.path.endswith('/stop-pilot'))):
+            return PlainTextResponse('Разрешён только тестовый запуск Partner-ST',status_code=403)
         allowed_posts = {"/login", "/logout", "/commercial-qa/runs"}
         if competitor_collection is not None:
             allowed_posts.add('/competitor-monitoring/runs')
@@ -437,9 +440,32 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     async def start_now(request: Request, supplier_id: int):
         user = guard(request, MUTATING_ROLES); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
         if values.get("crawl_type", "full") not in SUPPORTED_WEB_CRAWL_TYPES: raise HTTPException(400, "Можно поставить в очередь только полный сбор")
-        result = queue.enqueue(supplier_id, trigger_type="manual", crawl_type="full", requested_by_user_id=user.id or None)
+        from universal_supplier.partner_pilot import enabled,limit_value
+        mode=values.get('launch_mode','full')
+        if mode not in ('full','test'):raise HTTPException(400,'Неизвестный режим запуска')
+        if enabled() and mode!='test':raise HTTPException(403,'Разрешён только ограниченный тест Partner-ST')
+        kwargs={}
+        if mode=='test':
+            try:
+                raw=values.get('max_products','')
+                if not raw.isascii() or not raw.isdecimal():raise ValueError('Лимит должен быть целым числом от 1 до 50')
+                kwargs['pilot_limit']=limit_value(int(raw))
+            except ValueError as error:raise HTTPException(400,str(error))
+        try:result = queue.enqueue(supplier_id, trigger_type="manual", crawl_type="full", requested_by_user_id=user.id or None,**kwargs)
+        except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
         admin_store.audit(user.id or None, "MANUAL_CRAWL_ENQUEUED", "crawl_job", result.job_id, None, {"supplier_id": supplier_id, "crawl_type": "full", "status": result.status, "deduplicated_job_id": result.deduplicated_job_id}, values.get("comment") or None, str(uuid.uuid4()))
         return RedirectResponse(f"/runs?enqueue_status={result.status}&job_id={result.job_id}", 303)
+
+    @app.post('/suppliers/{supplier_id}/stop-pilot')
+    async def stop_pilot(request:Request,supplier_id:int):
+        from universal_supplier.partner_pilot import enabled
+        guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        values=await form_values(request);check_csrf(request,values)
+        if not enabled():raise HTTPException(403,'Тестовый режим не включён')
+        item=next((x for x in store.suppliers() if int(x['id'])==supplier_id),None)
+        if not item or item.get('code')!='partner_st':raise HTTPException(403,'Только Partner-ST')
+        Path(os.environ['PARTNER_PILOT_STOP_FILE']).touch(exist_ok=True)
+        return RedirectResponse('/runs',303)
 
     @app.get("/commercial-qa", response_class=HTMLResponse)
     def commercial_qa_page(request: Request):
