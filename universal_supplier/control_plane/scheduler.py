@@ -105,17 +105,28 @@ class Scheduler:
                    WHERE ss.enabled AND s.enabled FOR UPDATE OF ss"""
             )
             for supplier_id, expression, timezone_name, crawl_type, last_enqueued in cursor.fetchall():
-                occurrence = due_occurrence(expression, timezone_name, now)
-                age = (now - occurrence).total_seconds()
-                should_enqueue = age <= self.policy.misfire_grace_seconds and (last_enqueued is None or occurrence > last_enqueued)
-                if should_enqueue:
-                    result = self.queue.enqueue(supplier_id, trigger_type="schedule", crawl_type=crawl_type, scheduled_for=occurrence)
-                    if result.enqueued:
-                        enqueued.append(result.job_id)
-                    cursor.execute("UPDATE supplier_schedules SET last_enqueued_for=%s,last_evaluated_at=%s,updated_at=now() WHERE supplier_id=%s", (occurrence, now, supplier_id))
-                else:
-                    cursor.execute("UPDATE supplier_schedules SET last_evaluated_at=%s,updated_at=now() WHERE supplier_id=%s", (now, supplier_id))
+                # One broken schedule row must not roll back the whole tick: a
+                # savepoint per row isolates its SQL, the log keeps the cause.
+                try:
+                    with connection.transaction():
+                        job_id = self._evaluate(cursor, now, supplier_id, expression, timezone_name, crawl_type, last_enqueued)
+                except Exception:
+                    LOGGER.exception("scheduler: schedule of supplier %s skipped this tick", supplier_id)
+                    continue
+                if job_id is not None:
+                    enqueued.append(job_id)
         return enqueued
+
+    def _evaluate(self, cursor, now, supplier_id, expression, timezone_name, crawl_type, last_enqueued) -> int | None:
+        occurrence = due_occurrence(expression, timezone_name, now)
+        age = (now - occurrence).total_seconds()
+        should_enqueue = age <= self.policy.misfire_grace_seconds and (last_enqueued is None or occurrence > last_enqueued)
+        if not should_enqueue:
+            cursor.execute("UPDATE supplier_schedules SET last_evaluated_at=%s,updated_at=now() WHERE supplier_id=%s", (now, supplier_id))
+            return None
+        result = self.queue.enqueue(supplier_id, trigger_type="schedule", crawl_type=crawl_type, scheduled_for=occurrence)
+        cursor.execute("UPDATE supplier_schedules SET last_enqueued_for=%s,last_evaluated_at=%s,updated_at=now() WHERE supplier_id=%s", (occurrence, now, supplier_id))
+        return result.job_id if result.enqueued else None
 
     def run_forever(self) -> None:
         while True:

@@ -10,7 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 from xml.etree import ElementTree as ET
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 from universal_supplier.stage6e import safe_export_filename, strip_xml_illegal
 from universal_supplier.yml_feed import (
@@ -308,13 +308,13 @@ def iter_full_xml(rows: Iterable[Mapping[str, Any]],
         code = str(row.get("supplier_code") or "unknown")
         if current_supplier is None:
             current_supplier = code
-            yield f'<supplier code="{escape(strip_xml_illegal(code))}"><products>\n'.encode("utf-8")
+            yield f'<supplier code={quoteattr(strip_xml_illegal(code))}><products>\n'.encode("utf-8")
         elif code != current_supplier:
             if batch:
                 yield from flush(batch); batch = []
             yield b"</products></supplier>\n"
             current_supplier = code
-            yield f'<supplier code="{escape(strip_xml_illegal(code))}"><products>\n'.encode("utf-8")
+            yield f'<supplier code={quoteattr(strip_xml_illegal(code))}><products>\n'.encode("utf-8")
         batch.append(row)
         if len(batch) >= 200:
             yield from flush(batch); batch = []

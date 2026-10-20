@@ -29,7 +29,8 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=0.20)
     args = parser.parse_args()
     adapter = PartnerStAdapter()
-    transport = HttpTransport(min_interval_seconds=args.interval, retry_policy=RetryPolicy(max_attempts=3))
+    transport = HttpTransport(min_interval_seconds=args.interval, retry_policy=RetryPolicy(max_attempts=3),
+                              url_validator=adapter.url_validator)
     started = datetime.now(timezone.utc)
     discovery = adapter.discover(transport)
     health = discovery_health(len(discovery.product_urls), args.baseline)

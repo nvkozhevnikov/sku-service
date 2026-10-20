@@ -277,12 +277,26 @@ def test_partner_custom_circuit_breaker_uses_threshold_and_cooldown():
     )
     session = FakeSession([FakeResponse(503), FakeResponse(503), FakeResponse(200)])
     transport = HttpTransport(session=session, domain_policy=configured, clock=clock)
-    with pytest.raises(CircuitOpen):
-        transport.get("https://partner-st.ru/product/1")
-    assert len(session.calls) == 2
-    assert transport.breaker.open_until == pytest.approx(17)
+    # An open breaker pauses the domain for the cooldown instead of failing the URL instantly.
+    result = transport.get("https://partner-st.ru/product/1")
+    assert result.status_code == 200
+    assert len(session.calls) == 3
+    assert 17 in clock.sleeps and clock.value >= 17
+    assert transport.breaker.consecutive_failures == 0
     assert transport.metrics.circuit_breaker_trips == 1
     assert transport.metrics.circuit_breaker_cooldown_seconds == pytest.approx(17)
+
+
+def test_partner_open_breaker_never_waits_past_the_deadline():
+    clock = FakeClock()
+    configured = policy(max_attempts=3, backoff_base_seconds=0, consecutive_error_threshold=2,
+                        cooldown_seconds=17, max_run_duration_seconds=60)
+    session = FakeSession([FakeResponse(503), FakeResponse(503), FakeResponse(200)])
+    transport = HttpTransport(session=session, domain_policy=configured, clock=clock, deadline=10)
+    with pytest.raises(MaxRunDurationExceeded):
+        transport.get("https://partner-st.ru/product/1")
+    assert len(session.calls) == 2 and clock.value < 10
+    assert transport.metrics.max_run_duration_exceeded
 
 
 def test_partner_deadline_during_limiter_wait_starts_no_new_request():

@@ -17,7 +17,8 @@ from .commercial_discovery import (
     CatalogDiscoveryPage, DiscoveredCommercialProduct, ReviewCandidate, discover_catalog_page,
     fetch_catalog_page, normalise_model,
 )
-from .http_capture import CaptureStatus, EvidenceStore, PublicHttpClient, capture_public_html
+from .full_supplier_collection import _SourceClient, _safe_source_url
+from .http_capture import CaptureStatus, EvidenceStore, PublicHttpClient, UrllibPublicHttpClient, capture_public_html
 from .postgres import PostgresRepository
 
 
@@ -269,11 +270,13 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
             if on_progress is not None:
                 on_progress(row, attempted, len(selected_candidates))
 
+        # Every product request and redirect hop must stay on this site's host and detail paths.
+        source_client = _SourceClient(site, client or UrllibPublicHttpClient())
         for position, candidate in enumerate(selected_candidates):
             if blocked:
                 break
             pacer.before_request()
-            captured = capture_public_html(candidate.product_url, evidence_dir=evidence_dir / "products", client=client,
+            captured = capture_public_html(candidate.product_url, evidence_dir=evidence_dir / "products", client=source_client,
                                             timeout_seconds=15, max_attempts=2, retry_delay_seconds=pause_seconds,
                                             expected_model=candidate.expected_model, evidence_store=evidence_store)
             if captured.status is not CaptureStatus.SUCCESS or captured.capture is None or captured.final_url is None or captured.evidence_sha256 is None:
@@ -289,6 +292,15 @@ def run_commercial_collection(*, sites: Iterable[str], limit: int, pause_seconds
                 continue
             if captured.evidence_body is None:
                 raise RuntimeError("successful capture did not return sanitised evidence")
+            try:
+                for target in (*captured.redirects, captured.final_url):
+                    _safe_source_url(site, target)
+            except ValueError as error:
+                record_product(CollectionRow(site, candidate.product_url, candidate.expected_model, candidate.execution,
+                                          "product", CaptureStatus.UNSAFE_URL.value, captured.http_status,
+                                          diagnostics=(str(error),), evidence_ref=captured.evidence_ref))
+                errors += 1
+                continue
             product = _parser(site)(captured.evidence_body.decode("utf-8", errors="replace"), source_url=captured.final_url)
             parsed_model = normalise_model(product.supplier_model or "") if product.supplier_model else None
             diagnostics = list(product.diagnostics + product.price.diagnostics)

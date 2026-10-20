@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 from urllib.parse import urljoin
 
 import requests
 
 from .http_capture import MAX_RESPONSE_BYTES, ResponseTooLargeError
 from .models import FetchRecord
+from .url_safety import UnsafeUrlError, validate_public_http_url
 from .control_plane.rate_control import (
     CircuitBreaker, DomainRateLimiter, DomainRatePolicy, RequestMetrics, SystemClock,
     request_with_resilience,
@@ -36,8 +38,25 @@ def _bounded_text(response) -> str:  # type: ignore[no-untyped-def]
     return response.text
 
 
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+def _is_redirect(response) -> bool:  # type: ignore[no-untyped-def]
+    """As requests defines it: a redirect status *with* a Location header."""
+    if isinstance(response, requests.Response):
+        return response.is_redirect or response.is_permanent_redirect
+    headers = getattr(response, "headers", None) or {}
+    return (int(getattr(response, "status_code", 0)) in REDIRECT_STATUSES
+            and bool(headers.get("Location") or headers.get("location")))
+
+
 class HttpTransport:
-    """Direct HTTP transport with shared rate limiting and redirect evidence."""
+    """Direct HTTP transport with shared rate limiting and redirect evidence.
+
+    Redirects are never followed by ``requests``: every hop goes through
+    ``url_validator`` before any I/O.  Crawlers bind the validator to their
+    supplier hosts; the default only refuses non-public targets.
+    """
 
     def __init__(
         self,
@@ -52,7 +71,9 @@ class HttpTransport:
         clock=None,
         random_uniform=None,
         deadline: float | None = None,
+        url_validator: Callable[[str], str] | None = None,
     ) -> None:
+        self.url_validator = url_validator or validate_public_http_url
         self.session = session or requests.Session()
         self.session.trust_env = False
         self.session.headers.update({"User-Agent": user_agent, "Accept": "text/html,application/xml;q=0.9,*/*;q=0.8"})
@@ -87,18 +108,7 @@ class HttpTransport:
         self.limiter.wait(self.metrics)
 
     def get(self, url: str, *, deadline: float | None = None) -> FetchRecord:
-        started = self.clock.monotonic()
-        effective_deadline = self.deadline if deadline is None else deadline
-        response, attempts = request_with_resilience(
-            lambda: self.session.get(url, timeout=self.timeout, allow_redirects=True, stream=True),
-            self.policy, self.limiter, clock=self.clock, metrics=self.metrics, breaker=self.breaker,
-            deadline=effective_deadline,
-        )
-        return FetchRecord(
-            requested_url=url, final_url=response.url, status_code=response.status_code,
-            redirects=tuple(item.url for item in response.history), attempts=attempts,
-            elapsed_ms=round((self.clock.monotonic() - started) * 1000), text=_bounded_text(response),
-        )
+        return self.get_validated(url, self.url_validator, deadline=deadline)
 
     def get_validated(self, url: str, validator, *, deadline: float | None = None,
                       max_redirects: int = 5) -> FetchRecord:
@@ -115,13 +125,12 @@ class HttpTransport:
                 breaker=self.breaker, deadline=effective_deadline,
             )
             total_attempts += attempts
-            if response.is_redirect or response.is_permanent_redirect:
-                location = response.headers.get("Location")
-                if not location:
-                    raise ValueError("Redirect без Location")
-                redirects.append(current)
+            if _is_redirect(response):
+                headers = getattr(response, "headers", None) or {}
+                location = headers.get("Location") or headers.get("location")
                 if isinstance(response, requests.Response):
                     response.close()
+                redirects.append(current)
                 current = validator(urljoin(current, location))
                 continue
             return FetchRecord(
@@ -129,4 +138,4 @@ class HttpTransport:
                 redirects=tuple(redirects), attempts=total_attempts,
                 elapsed_ms=round((self.clock.monotonic() - started) * 1000), text=_bounded_text(response),
             )
-        raise ValueError("Слишком много перенаправлений")
+        raise UnsafeUrlError("Слишком много перенаправлений")

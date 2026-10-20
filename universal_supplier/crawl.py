@@ -12,6 +12,7 @@ from .control_plane.rate_control import (
 )
 from .http import HttpTransport
 from .models import ProductCard
+from .url_safety import error_type_name
 from .state import DiscoveryHealth, discovery_health
 
 
@@ -67,11 +68,16 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
     # Pass the exact policy instance to the actual transport.  HttpTransport
     # uses it for timeout, attempts, bounded backoff, Retry-After handling,
     # circuit breaking, jitter and the shared per-domain start gate.
+    transport_options: dict[str, Any] = {}
+    if callable(getattr(adapter, "url_validator", None)):
+        # Every sitemap <loc>, product URL and redirect hop stays on the supplier hosts.
+        transport_options["url_validator"] = adapter.url_validator
     transport = create_transport(
         domain_policy=effective_policy,
         clock=runtime_clock,
         random_uniform=random_uniform,
         deadline=deadline,
+        **transport_options,
     )
     if progress_callback:
         progress_callback("DISCOVERY")
@@ -102,7 +108,7 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
         except MaxRunDurationExceeded:
             return position, None, None, None, True
         except Exception as error:
-            failure = CrawlFailure(url, type(error).__name__, str(error)[:1000], None)
+            failure = CrawlFailure(url, error_type_name(error), str(error)[:1000], None)
             return position, None, failure, None, False
 
     items = list(enumerate(discovery.product_urls, 1))

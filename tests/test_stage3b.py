@@ -214,10 +214,13 @@ class Stage3BTests(unittest.TestCase):
         self.assertEqual(result.product_urls, ("https://partner-st.ru/p1/", "https://partner-st.ru/p2/"))
 
     def test_redirect_tracking(self):
-        history = FakeResponse(url="https://example.test/old")
-        session = FakeSession([FakeResponse(history=[history])])
+        # Redirects are followed manually so every hop is validated before I/O.
+        moved = FakeResponse(302, url="https://example.test/old")
+        moved.headers = {"Location": "/new"}
+        session = FakeSession([moved, FakeResponse(url="https://example.test/new")])
         result = HttpTransport(session=session, min_interval_seconds=0).get("https://example.test/old")
         self.assertEqual(result.redirects, ("https://example.test/old",))
+        self.assertEqual(result.final_url, "https://example.test/new")
 
     def test_crawl_retry_behavior(self):
         session = FakeSession([FakeResponse(503), FakeResponse(200)])

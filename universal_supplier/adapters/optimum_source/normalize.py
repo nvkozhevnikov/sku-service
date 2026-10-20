@@ -14,13 +14,27 @@ def clean_text(value: str | None) -> str | None:
     return value or None
 
 
-def normalize_url(value: str | None, base: str = BASE_URL) -> str | None:
+OWN_HOSTS = frozenset({"optimum.su", "www.optimum.su"})
+
+
+def normalize_url(value: str | None, base: str = BASE_URL, *, allow_foreign: bool = False) -> str | None:
+    """Canonical Optimum URL, or None for anything the crawler must not follow.
+
+    Foreign hosts return None unless ``allow_foreign`` (media such as embedded
+    videos); even then only plain http(s) URLs survive.
+    """
     if not value:
         return None
-    absolute = urljoin(base, value.strip())
-    p = urlsplit(absolute)
-    if p.scheme not in {"http", "https"} or p.hostname not in {"optimum.su", "www.optimum.su"}:
-        return absolute
+    try:
+        absolute = urljoin(base, value.strip())
+        p = urlsplit(absolute)
+        port = p.port
+    except ValueError:
+        return None
+    if p.scheme not in {"http", "https"} or not p.hostname or p.username or p.password:
+        return None
+    if p.hostname not in OWN_HOSTS or port not in {None, 80, 443}:
+        return absolute if allow_foreign and p.hostname not in OWN_HOSTS else None
     path = re.sub(r"/{2,}", "/", p.path or "/")
     query = urlencode([(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if k.lower() not in TRACKING_PARAMS])
     return urlunsplit(("https", "optimum.su", path, query, ""))

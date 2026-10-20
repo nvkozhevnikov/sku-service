@@ -76,6 +76,16 @@ class Orchestrator:
             LOGGER.error("job %s finished as %s but could not be completed (already stale?): %s",
                          job.id, status, kwargs, exc_info=True)
 
+    @staticmethod
+    def _log_failure(job_id: int, future: Future) -> None:
+        # _run_job handles runner errors itself; anything escaping it (lease,
+        # queue.complete) would otherwise vanish silently with the future.
+        if future.cancelled():
+            return
+        error = future.exception()
+        if error is not None:
+            LOGGER.error("supplier job %s crashed outside the runner", job_id, exc_info=error)
+
     def tick(self) -> int:
         if self._last_recover is None or time.monotonic() - self._last_recover >= self.recover_interval_seconds:
             self.recover()
@@ -85,7 +95,9 @@ class Orchestrator:
             job = self.queue.claim_next()
             if job is None:
                 break
-            self.active.add(self.pool.submit(self._run_job, job))
+            future = self.pool.submit(self._run_job, job)
+            future.add_done_callback(lambda done, job_id=job.id: self._log_failure(job_id, done))
+            self.active.add(future)
             submitted += 1
         return submitted
 

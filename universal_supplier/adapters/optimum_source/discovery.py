@@ -33,13 +33,15 @@ class OptimumDiscovery:
 
     async def sitemap_urls(self) -> tuple[list[str], list[str]]:
         root = etree.fromstring((await self.fetcher.get(SITEMAP_URL)).text.encode())
-        maps = root.xpath("//*[local-name()='sitemap']/*[local-name()='loc']/text()")
+        # A <loc> on a foreign host is never fetched: filter by host, not only by path.
+        maps = [url for url in (normalize_url(str(value).strip())
+                                for value in root.xpath("//*[local-name()='sitemap']/*[local-name()='loc']/text()")) if url]
         all_urls = []
         for sitemap in maps:
             child = etree.fromstring((await self.fetcher.get(sitemap)).text.encode())
             all_urls.extend(child.xpath("//*[local-name()='url']/*[local-name()='loc']/text()"))
-        catalog = sorted({normalize_url(u) for u in all_urls if urlsplit(u).path.startswith("/catalog/")})
-        return maps, [u for u in catalog if u]
+        catalog = {normalize_url(str(u).strip()) for u in all_urls}
+        return maps, sorted(u for u in catalog if u and urlsplit(u).path.startswith("/catalog/"))
 
     async def discover_categories(self, seed_urls: list[str] | None = None) -> list[dict]:
         """Discover taxonomy through navigation and category-section links.
@@ -113,7 +115,7 @@ class OptimumDiscovery:
                     "//link[contains(concat(' ',normalize-space(@rel),' '),' canonical ')]/@href"))
                     or fetched.final_url or source_url)
                 breadcrumbs = [item for item in self.parser.parse_categories(doc)
-                               if item.url and normalize_url(item.url).startswith(CATALOG_URL)]
+                               if item.url and (normalize_url(item.url) or "").startswith(CATALOG_URL)]
                 parent = next((normalize_url(item.url) for item in reversed(breadcrumbs)
                                if normalize_url(item.url) != canonical), candidates[source_url]["parent"])
                 result.append({"category_name": _text(_first(doc.xpath("//h1"))) or candidates[source_url]["category_name"],

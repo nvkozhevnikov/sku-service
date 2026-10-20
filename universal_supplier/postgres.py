@@ -19,8 +19,8 @@ from .models import ProductCard
 from .repository import IngestCounts
 from .state import DiscoveryHealth
 from .stage6e import (
-    AnomalyThresholds, MissingPolicy, QualityProfile,
-    deactivation_was_suppressed, detect_anomalies,
+    CONFIRMED_MISSING, NON_MISSING, AnomalyThresholds, MissingPolicy, QualityProfile,
+    deactivation_was_suppressed, detect_anomalies, missing_evidence_type,
 )
 
 PARTNER_CODE = "partner_st"
@@ -1050,9 +1050,9 @@ class PostgresRepository:
             product_id, source_url, old_misses, was_active, threshold = row[:5]
             confirmed = row[5] if len(row) > 5 else old_misses
             old_state = row[6] if len(row) > 6 else (policy.state_for(old_misses) if old_misses else "ACTIVE")
-            error_type = row[7] if len(row) > 7 else None
+            error_type = missing_evidence_type(row[7] if len(row) > 7 else None)
             normalized_url = str(source_url).rstrip("/")
-            if error_type in {"TIMEOUT", "HTTP_403", "HTTP_429", "NETWORK_ERROR", "PARSER_ERROR"}:
+            if error_type in NON_MISSING:
                 evidence_type = error_type
             elif error_type in {"HTTP_404", "HTTP_410"}:
                 evidence_type = error_type
@@ -1062,7 +1062,7 @@ class PostgresRepository:
                 evidence_type = "PARSER_ERROR"
             else:
                 evidence_type = "NOT_DISCOVERED"
-            confirmed_missing = evidence_type in {"HTTP_404", "HTTP_410", "NOT_IN_SITEMAP", "NOT_DISCOVERED"}
+            confirmed_missing = evidence_type in CONFIRMED_MISSING
             if anomaly_guarded or not confirmed_missing:
                 event = json.dumps({"crawl_run_id": crawl_run_id, "evidence_type": evidence_type,
                                     "observed_at": observed_at, "counter_changed": False})

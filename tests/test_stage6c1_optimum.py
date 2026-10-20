@@ -229,19 +229,15 @@ def test_optimum_custom_circuit_threshold_and_cooldown_apply_to_real_transport()
 
     async def exercise():
         fetcher = HttpFetcher(rate_policy=configured, clock=clock, client=client)
-        with pytest.raises(CircuitOpen):
-            await fetcher.get("https://optimum.su/catalog/probe/")
-        calls_while_open = len(client.calls)
-        open_until = fetcher.breaker.open_until
-        clock.advance(17)
+        # The open breaker pauses until open_until; the third attempt then recovers.
         recovered = await fetcher.get("https://optimum.su/catalog/probe/")
         await fetcher.close()
-        return fetcher, recovered, calls_while_open, open_until
+        return fetcher, recovered
 
-    fetcher, recovered, calls_while_open, open_until = asyncio.run(exercise())
+    fetcher, recovered = asyncio.run(exercise())
 
-    assert calls_while_open == 2
-    assert open_until == pytest.approx(17)
+    assert len(client.calls) == 3
+    assert 17 in clock.sleeps and clock.value >= 17
     assert recovered.status_code == 200
     assert fetcher.breaker.consecutive_failures == 0
     assert fetcher.metrics.circuit_breaker_trips == 1

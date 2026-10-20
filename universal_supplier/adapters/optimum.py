@@ -237,8 +237,7 @@ async def run_optimum_live(*, rate_policy: DomainRatePolicy | None = None,
         finished_at = datetime.now(timezone.utc).isoformat()
         fetch_errors = sum(row["classification"] == "FETCH_ERROR" for row in rows)
         if deadline_exceeded:
-            adapter.fetcher.metrics.max_run_duration_exceeded = True
-            adapter.fetcher.metrics.last_failure_reason = "MAX_RUN_DURATION_EXCEEDED"
+            adapter.fetcher.metrics.mark_deadline_exceeded(skipped=False)
         metadata = {
             "started_at": started_at, "finished_at": finished_at,
             "sitemap_child_maps": len(sitemap_maps), "discovered": len(discovery), "fetched": len(results),

@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from universal_supplier.http import HttpTransport
-from universal_supplier.url_safety import is_http_url
+from universal_supplier.url_safety import host_validator, is_http_url
 from universal_supplier.models import (
     CategoryNode, DiscoveryResult, FetchRecord, MediaItem, OptionValue,
     ProductCard, ProductOption, PropertyValue,
@@ -63,6 +63,19 @@ class PartnerStAdapter:
     code = "partner_st"
     base_url = "https://partner-st.ru/"
     sitemap_url = "https://partner-st.ru/sitemap.xml"
+    allowed_hosts = ("partner-st.ru", "www.partner-st.ru")
+
+    def url_validator(self, url: str) -> str:
+        """Fetch-time check for every request and redirect hop (host allowlist, 80/443, public DNS)."""
+        return host_validator(self.allowed_hosts, resolve_dns=True)(url)
+
+    def is_own_url(self, url: str) -> bool:
+        if not is_http_url(url):
+            return False
+        try:
+            return (urlparse(url).hostname or "").rstrip(".").lower() in self.allowed_hosts
+        except ValueError:
+            return False
 
     def discover(self, transport: HttpTransport) -> DiscoveryResult:
         index_fetch = transport.get(self.sitemap_url)
@@ -70,7 +83,8 @@ class PartnerStAdapter:
             raise RuntimeError(f"sitemap index HTTP {index_fetch.status_code}")
         root = ET.fromstring(index_fetch.text)
         sitemap_urls = tuple(dict.fromkeys(
-            node.text.strip() for node in root.iter() if node.tag.endswith("loc") and node.text
+            node.text.strip() for node in root.iter()
+            if node.tag.endswith("loc") and node.text and self.is_own_url(node.text.strip())
         ))
         product_sitemaps = tuple(url for url in sitemap_urls if PurePosixPath(urlparse(url).path).name.lower().startswith("products"))
         if not product_sitemaps and root.tag.endswith("urlset"):
@@ -82,7 +96,8 @@ class PartnerStAdapter:
                 raise RuntimeError(f"product sitemap HTTP {fetched.status_code}: {sitemap_url}")
             sitemap_root = ET.fromstring(fetched.text)
             product_urls.extend(
-                node.text.strip() for node in sitemap_root.iter() if node.tag.endswith("loc") and node.text
+                node.text.strip() for node in sitemap_root.iter()
+                if node.tag.endswith("loc") and node.text and self.is_own_url(node.text.strip())
             )
         unique_urls = tuple(dict.fromkeys(product_urls))
         return DiscoveryResult(self.sitemap_url, sitemap_urls, product_sitemaps, unique_urls)

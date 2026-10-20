@@ -15,6 +15,8 @@ from universal_supplier.control_plane.rate_control import (
     MaxRunDurationExceeded,
 )
 
+from universal_supplier.url_safety import error_type_name
+
 from .constants import CATALOG_URL, COLLECTION_PATHS
 from .category_tree import build_category_tree, category_tree_qa, is_merchandising_category
 from .discovery import OptimumDiscovery
@@ -68,7 +70,7 @@ class OptimumAdapter:
     @staticmethod
     def _canonical(doc, source_url: str, final_url: str) -> str:
         value = _first(doc.xpath("//link[contains(concat(' ',normalize-space(@rel),' '),' canonical ')]/@href"))
-        return normalize_url(value or final_url or source_url) or source_url
+        return normalize_url(value) or normalize_url(final_url) or normalize_url(source_url) or source_url
 
     def _category_row(self, doc, source_url: str, final_url: str) -> dict:
         own_url = self._canonical(doc, source_url, final_url)
@@ -107,7 +109,7 @@ class OptimumAdapter:
             # which has not completed and preserve only finished results.
             raise
         except Exception as exc:
-            return base | {"error_type": type(exc).__name__, "error": str(exc)}
+            return base | {"error_type": error_type_name(exc), "error": str(exc)}
         base.update(status=fetched.status_code, final_url=fetched.final_url,
                     attempt_count=fetched.attempt_count)
         if fetched.status_code == 404:

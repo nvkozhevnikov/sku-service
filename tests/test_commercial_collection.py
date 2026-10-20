@@ -90,7 +90,8 @@ class CommercialCollectionTests(unittest.TestCase):
         site = result.site_results[0]
         self.assertEqual((site.discovered_urls, site.candidate_offset, site.candidates_selected, site.product_attempts),
                          (2, 1, 1, 1))
-        self.assertEqual([url for kind, url in client.calls if kind == "product"], [bmsy_440])
+        # Product pages are fetched through the validating source client (get_validated).
+        self.assertEqual([url for _, url in client.calls if "/product/" in url], [bmsy_440])
 
     def test_manifest_mismatch_stops_before_product_capture(self):
         first, second = SITE_SEEDS["beka_mak"]
@@ -105,7 +106,7 @@ class CommercialCollectionTests(unittest.TestCase):
             run_commercial_collection(sites=("beka_mak",), limit=1, pause_seconds=0,
                                       evidence_dir=Path.cwd(), dry_run=True, client=client, sleep=lambda _: None,
                                       evidence_store=MemoryEvidenceStore(), expected_manifest=different)
-        self.assertFalse(any(kind == "product" for kind, _ in client.calls))
+        self.assertFalse(any("/product/" in url for _, url in client.calls))
 
     def test_ambiguous_product_is_review_with_evidence_and_no_persistence(self):
         first, second = SITE_SEEDS["beka_mak"]

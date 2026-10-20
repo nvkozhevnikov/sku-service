@@ -3,10 +3,14 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from dataclasses import replace
+from typing import Any, Callable
+from urllib.parse import urljoin
 
 import httpx
 
 from .constants import USER_AGENT
+from universal_supplier.http_capture import MAX_RESPONSE_BYTES, ResponseTooLargeError
+from universal_supplier.url_safety import UnsafeUrlError, host_validator
 from universal_supplier.control_plane.rate_control import (
     AsyncDomainRateLimiter,
     CircuitBreaker,
@@ -16,6 +20,21 @@ from universal_supplier.control_plane.rate_control import (
     RequestMetrics,
     async_request_with_resilience,
 )
+
+
+OPTIMUM_HOSTS = ("optimum.su", "www.optimum.su")
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+MAX_REDIRECTS = 5
+
+
+@dataclass
+class _BoundedResponse:
+    """Fully read (size-capped) httpx response; the connection is already released."""
+    status_code: int
+    headers: Any
+    url: str
+    text: str
+    too_large: bool = False
 
 
 @dataclass
@@ -31,7 +50,9 @@ class HttpFetcher:
     def __init__(self, concurrency: int | None = None, delay: float | None = None,
                  timeout: float | None = None,
                  *, rate_policy: DomainRatePolicy | None = None, clock=None, random_uniform=None,
-                 client: httpx.AsyncClient | None = None):
+                 client: httpx.AsyncClient | None = None,
+                 url_validator: Callable[[str], str] | None = None,
+                 resolve_dns: bool | None = None):
         # A supplied snapshot is already authoritative.  In particular, do not
         # rebuild it from concurrency/delay and silently restore other defaults.
         self.policy = rate_policy or replace(
@@ -56,9 +77,12 @@ class HttpFetcher:
         self.breaker = CircuitBreaker(self.policy, clock=self.clock, metrics=self.metrics)
         self.started_monotonic = self.clock.monotonic()
         self.deadline = self.started_monotonic + self.policy.max_run_duration_seconds
+        # DNS is resolved for the production client; an injected client owns its own transport.
+        self.url_validator = url_validator or host_validator(
+            OPTIMUM_HOSTS, resolve_dns=(client is None) if resolve_dns is None else resolve_dns)
         self.client = client or httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT}, timeout=self.policy.request_timeout_seconds,
-            follow_redirects=True,
+            follow_redirects=False,
         )
 
     async def close(self):
@@ -73,24 +97,50 @@ class HttpFetcher:
 
     def ensure_within_deadline(self) -> None:
         if self.clock.monotonic() >= self.deadline:
-            self.metrics.max_run_duration_exceeded = True
-            self.metrics.requests_skipped_deadline += 1
-            self.metrics.last_failure_reason = "MAX_RUN_DURATION_EXCEEDED"
+            self.metrics.mark_deadline_exceeded()
             raise MaxRunDurationExceeded("MAX_RUN_DURATION_EXCEEDED")
+
+    async def _send(self, url: str):
+        if not isinstance(self.client, httpx.AsyncClient):
+            # Injected test doubles expose get() with a ready text.  Pass the
+            # timeout per real request too: the policy wins over client defaults.
+            return await self.client.get(url, timeout=self.policy.request_timeout_seconds)
+        request = self.client.build_request("GET", url, timeout=self.policy.request_timeout_seconds)
+        response = await self.client.send(request, stream=True, follow_redirects=False)
+        try:
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > MAX_RESPONSE_BYTES:
+                    # Reported after the resilience loop: an oversized body is not retried.
+                    return _BoundedResponse(response.status_code, response.headers, str(response.url), "", True)
+            text = bytes(body).decode(response.encoding or "utf-8", errors="replace")
+            return _BoundedResponse(response.status_code, response.headers, str(response.url), text)
+        finally:
+            await response.aclose()
 
     async def get(self, url: str) -> FetchResult:
         self.ensure_within_deadline()
         async with self.semaphore:
-            self.ensure_within_deadline()
-            response, attempts = await async_request_with_resilience(
-                # Pass timeout per real request too.  This enforces the policy
-                # even when tests or an embedding application inject a client
-                # whose own default timeout differs.
-                lambda: self.client.get(
-                    url, timeout=self.policy.request_timeout_seconds),
-                self.policy, self.limiter,
-                clock=self.clock, metrics=self.metrics, breaker=self.breaker,
-                deadline=self.deadline,
-            )
-            return FetchResult(
-                url, str(response.url), response.status_code, response.text, attempts)
+            current = self.url_validator(url)
+            total_attempts = 0
+            for _ in range(MAX_REDIRECTS + 1):
+                self.ensure_within_deadline()
+                target = current
+                response, attempts = await async_request_with_resilience(
+                    lambda: self._send(target),
+                    self.policy, self.limiter,
+                    clock=self.clock, metrics=self.metrics, breaker=self.breaker,
+                    deadline=self.deadline,
+                )
+                total_attempts += attempts
+                if getattr(response, "too_large", False):
+                    raise ResponseTooLargeError(f"response body exceeds {MAX_RESPONSE_BYTES} bytes")
+                headers = getattr(response, "headers", None) or {}
+                location = headers.get("location") or headers.get("Location")
+                if int(response.status_code) in REDIRECT_STATUSES and location:
+                    # Validate every hop before any I/O: host allowlist, ports 80/443, public address.
+                    current = self.url_validator(urljoin(target, location))
+                    continue
+                return FetchResult(url, target, response.status_code, response.text, total_attempts)
+            raise UnsafeUrlError("Слишком много перенаправлений")

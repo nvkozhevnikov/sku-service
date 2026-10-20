@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 import hashlib
+import http.client
 from pathlib import Path
 import re
 from urllib.error import URLError
@@ -157,7 +158,10 @@ def fetch_catalog_page(site: str, url: str, *, evidence_dir: Path,
             getter(requested, timeout_seconds=timeout_seconds, validator=validate)
             if getter else client.get(requested, timeout_seconds=timeout_seconds)
         )
-    except (URLError, OSError, TimeoutError) as error:
+    except ValueError as error:
+        # The validating client rejected a redirect hop before any I/O to it.
+        return CatalogFetchResult(CaptureStatus.UNSAFE_URL, requested, None, None, None, observed_at, None, None, None, (str(error),))
+    except (URLError, OSError, TimeoutError, http.client.HTTPException) as error:
         return CatalogFetchResult(CaptureStatus.NETWORK_ERROR, requested, None, None, None, observed_at, None, None, None, (f"network_error:{type(error).__name__}",))
     try:
         final_url = validate_catalog_url(response.final_url, site=site)

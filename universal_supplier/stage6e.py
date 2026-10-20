@@ -5,18 +5,28 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
-import ipaddress
 import re
-import socket
 from typing import Any, Iterable, Iterator, Mapping, Sequence
-from urllib.parse import urlparse
+
+from universal_supplier.url_safety import validate_public_http_url
 
 
 QUALITY_FIELDS = (
     "price", "sku", "brand", "description", "property", "image", "category",
 )
 CONFIRMED_MISSING = frozenset({"HTTP_404", "HTTP_410", "NOT_IN_SITEMAP", "NOT_DISCOVERED"})
-NON_MISSING = frozenset({"TIMEOUT", "HTTP_403", "HTTP_429", "NETWORK_ERROR", "PARSER_ERROR"})
+# Fetch failures that say nothing about the product: never counted as "product disappeared".
+NON_MISSING = frozenset({"TIMEOUT", "HTTP_403", "HTTP_429", "NETWORK_ERROR", "PARSER_ERROR",
+                         "CIRCUIT_OPEN", "MAX_RUN_DURATION_EXCEEDED", "UNSAFE_URL"})
+_ERROR_TYPE_ALIASES = {"CIRCUITOPEN": "CIRCUIT_OPEN", "MAXRUNDURATIONEXCEEDED": "MAX_RUN_DURATION_EXCEEDED"}
+
+
+def missing_evidence_type(error_type: str | None) -> str | None:
+    """Canonical evidence token for a stored crawl error type (class names included)."""
+    if not error_type:
+        return None
+    value = str(error_type).upper()
+    return _ERROR_TYPE_ALIASES.get(value, value)
 FIELD_POLICIES = frozenset({
     "SUPPLIER_ALLOWED", "MANUAL_ONLY", "STERBRUST_OWNED", "REVIEW_REQUIRED", "NEVER_OVERWRITE",
 })
@@ -144,7 +154,7 @@ class MissingPolicy:
 def observe_missing(previous: MissingState, evidence_type: str, *, warning_at: int = 2,
                     candidate_at: int = 3, anomaly_guarded: bool = False,
                     policy: MissingPolicy | None = None) -> MissingState:
-    evidence_type = evidence_type.upper()
+    evidence_type = missing_evidence_type(evidence_type) or ""
     resolved = policy or MissingPolicy(warning_at=warning_at, candidate_at=candidate_at)
     if evidence_type == "SEEN":
         return MissingState(0, "ACTIVE", evidence_type)
@@ -225,26 +235,10 @@ def mapping_evidence(source_name: str, source_unit: str, category: str,
 
 
 def validate_supplier_url(url: str, allowed_hosts: Sequence[str], *, resolve_dns: bool = False) -> str:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError("URL поставщика недопустим")
-    host = parsed.hostname.rstrip(".").lower()
-    allowed = {item.rstrip(".").lower() for item in allowed_hosts}
-    if host not in allowed:
-        raise ValueError("Хост не разрешён адаптером поставщика")
-    try:
-        address = ipaddress.ip_address(host)
-        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
-            raise ValueError("Локальные и служебные адреса запрещены")
-    except ValueError as error:
-        if "запрещены" in str(error):
-            raise
-    if resolve_dns:
-        for _, _, _, _, sockaddr in socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80)):
-            address = ipaddress.ip_address(sockaddr[0])
-            if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
-                raise ValueError("DNS указывает на локальный или служебный адрес")
-    return url
+    """Supplier host allowlist, ports 80/443 only, no private/loopback/link-local targets."""
+    if isinstance(allowed_hosts, str):
+        allowed_hosts = (allowed_hosts,)
+    return validate_public_http_url(url, allowed_hosts, resolve_dns=resolve_dns)
 
 
 def validate_fetch_targets(fetch, allowed_hosts: Sequence[str], *, resolve_dns: bool = False) -> None:

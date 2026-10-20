@@ -90,7 +90,7 @@ class OptimumProductParser:
         name = _text(_first(doc.xpath("//h1")))
         sku = _text(_first(doc.xpath(f"//*[{_class('catalog-element-article-value')}]")))
         canonical = _first(doc.xpath("//link[contains(concat(' ',normalize-space(@rel),' '),' canonical ')]/@href"))
-        canonical = normalize_url(canonical or final_url or source_url)
+        canonical = normalize_url(canonical) or normalize_url(final_url) or normalize_url(source_url)
         main = _first(doc.xpath(f"//*[{_class('c-catalog-element')}]"))
         internal_id = self._internal_product_id(main if main is not None else doc)
         brand = manufacturer = None
@@ -194,7 +194,7 @@ class OptimumProductParser:
         result, seen = [], set()
         for node in nodes:
             raw = node.get("href") or node.get("data-original") or node.get("data-src") or node.get("src")
-            url = normalize_url(raw)
+            url = normalize_url(raw, allow_foreign=True)
             if not url or url in seen or "/upload/" not in url or "no_photo" in url.lower():
                 continue
             seen.add(url)
@@ -214,7 +214,7 @@ class OptimumProductParser:
             title = _text(node)
             if not re.search(r"\.(?:pdf|docx?|xlsx?)(?:$|\?)", href, re.I) and not (title and re.search(r"паспорт|инструкц|сертификат|каталог|руководство", title, re.I)):
                 continue
-            url = normalize_url(href)
+            url = normalize_url(href, allow_foreign=True)
             if not url or url in seen:
                 continue
             seen.add(url)
@@ -229,7 +229,7 @@ class OptimumProductParser:
         if section is None:
             section = doc
         for node in section.xpath(".//iframe[@src] | .//video[@src] | .//video/source[@src]"):
-            url = normalize_url(node.get("src"))
+            url = normalize_url(node.get("src"), allow_foreign=True)
             if not url or url in seen:
                 continue
             seen.add(url)
