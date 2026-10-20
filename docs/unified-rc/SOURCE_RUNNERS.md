@@ -1,3 +1,9 @@
+# Current status correction —2026-10-20
+
+REPOSITORY-VERIFIED: historical text below describes registration-time state. Permanent matching HOLD has been superseded: source_jobs invokes scoped run_post_ingest for PERSISTED external IDs; Partner/Optimum use existing automatic safe pipeline. No old reconcile. F01/F03/confirmed IDs retained. Current9wrapper remains bounded manifest refresh, sequential1worker/≥20s AFTER response/timeout≤20; no full discovery proof. New host_fetch and source_resume are code-only prepared components, not runtime-enabled. See docs/UNIFIED_READINESS_20261020.md and workspace evidence for exact SQL/live readiness, current baseline and next gates. Latest code does not itself authorize HTTP/SQL. Youmet manual.
+
+---
+
 # Shared bounded source runners
 
 Existing AdapterRegistry/Orchestrator/queue/scheduler now bind all11supplier

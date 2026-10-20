@@ -1,3 +1,11 @@
+# Current unified feature state —2026-10-20
+
+REPOSITORY-VERIFIED continuation after c4424f28. Current report: workspace reports/RC_UNIFIED_READINESS_CODE_20261020/REPORT.md; committed implementation summary docs/UNIFIED_READINESS_20261020.md. A/B/C fixed/verified offline and read-only golden; D/E prepared components, not full operational discovery. No new SQL write or HTTP. MainRC/source databases unchanged, own read-only55461 smart-stopped. Current TEST_AFTER preserved; SQL strict-idempotency re-QA remains PENDING. Linux3.12 and live/full11 gates remain open. Final HEAD and test-specific HEAD in report/GIT_RECEIPT. No develop transfer.
+
+Historical state below is retained as history; it is not a newer KAMI-only checkpoint.
+
+---
+
 # Universal Supplier KAMI current feature state
 
 OPERATOR-CONFIRMED 2026-10-08, task bf5d1d67; verified data milestone

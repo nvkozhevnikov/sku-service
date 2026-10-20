@@ -106,3 +106,23 @@ and feed/selection tests, and a stratified >=200 Existing QA (all if fewer), wit
 zero confirmed false positives. Use normal matching persistence only for accepted
 KAMI decisions. Do not recalculate predecessor decisions, apply selection, update
 commercial facts, create NEW/canonical IDs, commit/push or touch protected branches.
+
+## Unified readiness scope —2026-10-20 (supersedes outdated readiness assertions above)
+
+OPERATOR-CONFIRMED requirements; implementation proof is local code/offline/read-only only.
+
+| Criterion | Acceptance / status | Scope and evidence |
+|---|---|---|
+| Automatic matching | REQUIRED; permanent HOLD NOT_ACCEPTED | F01/F03 retained; proven exact AUTO, REVIEW ambiguity, CONFLICT contradiction, NEW proposal only. Preserve confirmed IDs/no fuzzy retarget; never bypass guards to inflate AUTO |
+| REVIEW operator work | Exception for missing/ambiguous proof, not all cards | Reasons/evidence remain visible; not force AUTO without proof |
+| One panel/one PostgreSQL | REQUIRED | Existing create_app, queue/schema; no second app/newDB/migration |
+| HTTP success≠SQL commit | REQUIRED; code/offline verified | Missing measurements unknown; SQL failure shown; no matching receipt not evidence of never run |
+| Strict presence/quality idempotency | REQUIRED; code fixed, SQL re-QA PENDING | All-array SEEN dedup, run row lock; old duplicates preserved; current TEST_AFTER baseline |
+| Existing9wrapper20s floor | ACCEPTED_WITH_CONDITIONS temporary only | One sequential worker, after-response pacing≥20s; not proven universal site requirement |
+| Universal irreversible20s final policy | NOT_ACCEPTED | Per-host measured/approved profiles required. Prepared shared start limiter/pool not activated |
+| Full fresh11sources | REQUIRED; NOT_VERIFIED | Discovery+refresh+durable resume+actual SQL/history terminal receipts; manifest refresh insufficient, partial must not deactivate |
+| New host rate profiles | Separate authorization before LIVE | Explicit exact host-policy digest + robots/Crawl-delay/Retry-After/lease required; stop403/429/interstitial |
+| Linux Python3.12 | REQUIRED before final acceptance; NOT_RUN | Windows tests cannot close; no user Docker/process launch |
+| Stage6 import / ESOL | BLOCKED_IMPORT_CONTRACT_EVIDENCE | No production mutation from green tests or artifact validity |
+
+Latest evidence: workspace reports/RC_UNIFIED_READINESS_CODE_20261020. No SQL write, canary, cleanup, restore, new HTTP, scheduler activation, push/merge/deploy authorized by this code report.
