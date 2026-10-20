@@ -54,7 +54,7 @@ class BoundedHostFetcher:
         rate=compile_policy(source,'https://'+host,rate.snapshot(),approval=approval)
         if not lease_acquired:raise PermissionError('HOST_LEASE_REQUIRED')
         if not callable(robots_allowed):raise PermissionError('ROBOTS_DECISION_REQUIRED')
-        if robots_delay_seconds is None or not math.isfinite(robots_delay_seconds) or robots_delay_seconds<0:raise PermissionError('ROBOTS_DELAY_DECISION_REQUIRED')
+        if isinstance(robots_delay_seconds,bool) or not isinstance(robots_delay_seconds,(int,float)) or not math.isfinite(robots_delay_seconds) or robots_delay_seconds<0:raise PermissionError('ROBOTS_DELAY_DECISION_REQUIRED')
         if robots_delay_seconds>rate.min_request_interval_seconds:raise PermissionError('ROBOTS_REQUIRES_SLOWER_PROFILE')
         self._target_urls=set();self._url_budget=0
         self.host=host_key('https://'+host);self.rate=rate;self.client_factory=client_factory
@@ -75,7 +75,7 @@ class BoundedHostFetcher:
         if host_key(url)!=self.host:raise ValueError('CROSS_HOST_REDIRECT_FORBIDDEN')
         if not self.robots_allowed(url):raise PermissionError('ROBOTS_DISALLOW')
     def _fetch(self,url,deadline):
-        started=self.clock.monotonic();client=None
+        started=self.clock.monotonic();client=None;response=None;attempts=0;observed=None
         try:
             self._validate(url);client=self.client_factory();callback=getattr(client,'before_request',None)
             initial=[True]
@@ -100,7 +100,8 @@ class BoundedHostFetcher:
                 elif has_blocking_interstitial(response.body):self.stop('SOURCE_BLOCKED_INTERSTITIAL')
                 return response
             response,attempts=request_with_resilience(send,self.rate,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=frozenset({403,429}),abort_requested=self.aborted)
-            outcome=FetchOutcome(url,response,datetime.now(timezone.utc),attempts,self.clock.monotonic()-started,
+            observed=datetime.now(timezone.utc)
+            outcome=FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,
                 self.stop_reason if response.status_code in (403,429) or has_blocking_interstitial(response.body) else None,
                 retry_after_seconds(response.headers) if getattr(response,'headers',None) else None)
             if self.receipt_sink:
@@ -109,14 +110,14 @@ class BoundedHostFetcher:
                     self.stop('CAPTURE_ARCHIVE_FAILED');raise
             return outcome
         except Exception as e:
-            return FetchOutcome(url,seconds=self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}')
+            return FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}')
         finally:
             if client and getattr(client,'session',None):client.session.close()
     def fetch(self,urls,*,limit,seconds):
         urls=list(urls)
         if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=1000 or len(urls)>limit:raise ValueError('HARD_URL_BUDGET')
         if len(urls)!=len(set(urls)):raise ValueError('DUPLICATE_URL')
-        if not math.isfinite(seconds) or not 0<seconds<=3600:raise ValueError('TIME_BUDGET')
+        if isinstance(seconds,bool) or not isinstance(seconds,(int,float)) or not math.isfinite(seconds) or not 0<seconds<=3600:raise ValueError('TIME_BUDGET')
         for url in urls:self._validate(url)
         self._url_budget=limit
         deadline=self.clock.monotonic()+min(seconds,self.rate.max_run_duration_seconds)

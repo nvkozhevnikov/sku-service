@@ -82,6 +82,7 @@ def test_receipt_failure_stops_before_next_http():
     outcomes=list(f.fetch(['https://vekprom.ru/1','https://vekprom.ru/2'],limit=2,seconds=300))
     assert len(calls)==1 and len(outcomes)==1
     assert f.stop_reason=='CAPTURE_ARCHIVE_FAILED' and 'archive unavailable' in outcomes[0].error
+    assert outcomes[0].response.status_code==200 and outcomes[0].observed_at is not None
 
 
 def test_cross_host_redirect_is_rejected_before_target_request():
@@ -106,3 +107,18 @@ def test_additional_redirect_cannot_exceed_unique_url_budget():
     rows=list(f.fetch(['https://vekprom.ru/1'],limit=1,seconds=300))
     assert f.stop_reason=='HARD_HTTP_URL_BUDGET' and len(f._target_urls)==1
     assert 'HARD_HTTP_URL_BUDGET' in rows[0].error
+
+
+@pytest.mark.parametrize('seconds',[True,float('nan'),float('inf'),0,-1,3601,'20'])
+def test_invalid_time_budget_fails_before_http(seconds):
+    f,calls=fetcher()
+    with pytest.raises(ValueError,match='TIME_BUDGET'):list(f.fetch(['https://vekprom.ru/1'],limit=1,seconds=seconds))
+    assert not calls
+
+
+def test_lease_and_robots_delay_are_mandatory():
+    r=compile_policy('vekprom','https://vekprom.ru/')
+    kw=dict(validator=lambda u:None,robots_allowed=lambda u:True,source='vekprom')
+    with pytest.raises(PermissionError,match='LEASE'):BoundedHostFetcher('vekprom.ru',r,object,**kw)
+    with pytest.raises(PermissionError,match='DELAY'):BoundedHostFetcher('vekprom.ru',r,object,lease_acquired=True,**kw)
+    with pytest.raises(PermissionError,match='SLOWER'):BoundedHostFetcher('vekprom.ru',r,object,lease_acquired=True,robots_delay_seconds=30,**kw)

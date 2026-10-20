@@ -17,6 +17,6 @@ def main():
     psycopg.connect=denied
     import pytest
     print(json.dumps({'platform':platform.platform(),'python':sys.version,'network':'DENIED','postgres':'DENIED'}),flush=True)
-    return pytest.main(['tests/test_automatic_matching.py','tests/test_source_jobs.py','tests/test_f01_f03_identity_inputs.py','tests/test_matching.py','tests/test_unified_replay_dispatch.py','tests/test_rc_recovered_source_status.py','-q','-p','no:cacheprovider',*sys.argv[1:]])
+    return pytest.main(['tests/test_automatic_matching.py','tests/test_source_jobs.py','tests/test_f01_f03_identity_inputs.py','tests/test_matching.py','tests/test_unified_replay_dispatch.py','tests/test_rc_recovered_source_status.py','tests/test_service_idempotency.py','tests/test_partner_history_fix.py','tests/test_partner_pilot.py','tests/test_readiness_panel.py','tests/test_matching_load_scope.py','tests/test_host_fetch.py','tests/test_source_resume.py','tests/test_stage6c.py','-q','-p','no:cacheprovider',*sys.argv[1:]])
 
 if __name__=='__main__':raise SystemExit(main())
