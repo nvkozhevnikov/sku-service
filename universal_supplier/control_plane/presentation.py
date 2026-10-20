@@ -8,11 +8,12 @@ def phase_summary(row):
     http=meta.get('http_phase') or {};requests=http.get('request_metrics') or {}
     identity=meta.get('identity_post_processing') or {}
     committed='default_offer_counts' in meta
+    matching_status=identity.get('status') or ('не запускался' if meta.get('failed_stage')=='sql_ingest_seconds' else 'результат не записан')
     return {'http_requested':requests.get('requests_total'),'http_successful':requests.get('http_2xx'),
             'parsed':http.get('successful_cards'),'http_speed':http.get('cards_per_minute'),
             'sql_count':row.get('fetched_count') if committed else None,
             'sql_state':'Сохранено' if committed else 'Ошибка SQL' if meta.get('failed_stage')=='sql_ingest_seconds' else 'Не подтверждено',
-            'matching':identity.get('total'),'matching_status':identity.get('status') or ('не запускался' if not identity else 'результат сохранён'),
+            'matching':identity.get('total'),'matching_status':matching_status,
             'failure':meta.get('failure'),'termination':meta.get('termination_reason'),
             'buckets':(identity.get('by_source') or {})}
 

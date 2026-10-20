@@ -111,3 +111,8 @@ def test_orchestrator_preserves_wrapper_terminal_message_without_inventing_run()
     args,kw=q.completed[0]
     assert args==(99,'partial') and kw['crawl_run_id'] is None
     assert 'SOURCE_BLOCKED_HTTP_429' in kw['error_message'] and 'discovery_complete=false' in kw['error_message']
+
+
+def test_missing_matching_receipt_is_unknown_not_proof_of_no_execution():
+    row={'status':'succeeded','fetched_count':50,'metadata':{'mode':'OFFLINE_SQL_QA','default_offer_counts':{}}}
+    assert phase_summary(row)['matching_status']=='результат не записан'
