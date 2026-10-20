@@ -193,7 +193,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
             "monitoring_available": competitor_service is not None,
             "release_replay_available": release_dispatch is not None,
-            "control_plane_read_only": read_only_source, **values}
+            "control_plane_read_only": read_only_source,
+            "partner_pilot_enabled":__import__('universal_supplier.partner_pilot',fromlist=['enabled']).enabled(),
+            "manifest_sources":__import__('universal_supplier.control_plane.source_jobs',fromlist=['SOURCES']).SOURCES, **values}
 
     @app.get('/automatic-matching', response_class=HTMLResponse)
     def automatic_matching(request: Request):
@@ -303,8 +305,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     def dashboard(request: Request):
         guard(request); suppliers = store.dashboard(); counts = admin_store.review_counts()
         counts["errors"] = sum(int(row.get("errors_30d") or 0) for row in suppliers)
-        counts["queued"] = sum(row.get("job_status") == "queued" for row in suppliers)
-        counts["running"] = sum(row.get("job_status") == "running" for row in suppliers)
+        counts["queued"] = sum(row.get("has_queued_job",row.get("job_status") == "queued") for row in suppliers)
+        counts["running"] = sum(row.get("has_running_job",row.get("job_status") == "running") for row in suppliers)
         return templates.TemplateResponse(request, "dashboard.html", context(request, suppliers=suppliers, review_counts=counts, active="dashboard"))
 
     @app.get("/products", response_class=HTMLResponse)
@@ -569,7 +571,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/runs", response_class=HTMLResponse)
     def runs(request: Request):
-        guard(request); return templates.TemplateResponse(request, "runs.html", context(request, runs=store.runs(), active="runs", enqueue_status=request.query_params.get("enqueue_status"), job_id=request.query_params.get("job_id")))
+        guard(request)
+        job_status=request.query_params.get('job_status')
+        rows=store.runs(job_status=job_status) if job_status in ('queued','running') else store.runs()
+        return templates.TemplateResponse(request, "runs.html", context(request, runs=rows, active="runs", enqueue_status=request.query_params.get("enqueue_status"), job_id=request.query_params.get("job_id")))
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):
@@ -612,6 +617,12 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 "backoff_base_seconds":float(raw.get("backoff_base_seconds","0.5")),"backoff_max_seconds":float(raw.get("backoff_max_seconds","8")),
                 "respect_retry_after":raw.get("respect_retry_after","true")=="true","consecutive_error_threshold":int(raw.get("consecutive_error_threshold","5")),
                 "cooldown_seconds":float(raw.get("cooldown_seconds","30")),"max_run_duration_seconds":float(raw.get("max_run_duration_seconds","7200"))}
+            from .source_jobs import SOURCES
+            source=next((r for r in store.suppliers() if r['id']==supplier_id),None)
+            if source and source['code'] in SOURCES:
+                if not raw.get('min_request_interval_seconds'):values['min_request_interval_seconds']=20.0
+                if values['min_request_interval_seconds']<20:raise ValueError('LIVE: текущий безопасный профиль требует интервал не менее20сек.')
+                if values['max_concurrency']!=1:raise ValueError('Текущий manifest runner выполняет запросы последовательно')
             DomainRatePolicy.from_mapping(values)
         except (TypeError, ValueError) as error:
             suppliers = store.suppliers()
@@ -627,7 +638,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.get("/data-quality", response_class=HTMLResponse)
     def data_quality(request: Request):
         guard(request); history=stage6e_service.quality_history(request.query_params.get("supplier") or None,10) if hasattr(stage6e_service,"quality_history") else []
-        return templates.TemplateResponse(request,"data_quality.html",context(request,rows=stage6e_service.quality(),history=history,active="data_quality"))
+        return templates.TemplateResponse(request,"data_quality.html",context(request,rows=stage6e_service.quality(),history=mark_quality_repeats(history),active="data_quality"))
 
     @app.get("/rules", response_class=HTMLResponse)
     def rules(request: Request):

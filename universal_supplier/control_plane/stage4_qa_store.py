@@ -218,7 +218,8 @@ class ReadOnlyStage4QaStore(PostgresControlPlaneStore):
         item["availability_normalized"] = item.get("commercial_availability") or "unknown"
         return item
 
-    def runs(self, limit: int = 100) -> list[dict]:
+    def runs(self, limit: int = 100, job_status=None) -> list[dict]:
+        if job_status in ('queued','running'):return []
         # Stage 5D commercial writes did not create crawl_runs; do not invent them.
         return []
 

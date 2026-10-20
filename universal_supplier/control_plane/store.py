@@ -34,7 +34,7 @@ class UnavailableControlPlaneStore:
     def products(self, filters): return {"rows": [], "total": 0, "page": filters.page, "page_size": filters.page_size, "pages": 0}
     def product(self, supplier_code, external_id): return None
     def suppliers(self): return []
-    def runs(self): return []
+    def runs(self, limit=100, job_status=None): return []
     def run(self, run_id): return None
     def export_rows(self, filters): return []
     def product_history(self, supplier_code, external_id): return []
@@ -136,15 +136,19 @@ class PostgresControlPlaneStore:
                        last_run.discovered_count AS last_discovered_count,last_run.new_count AS last_new_count,
                        last_run.changed_count AS last_changed_count,last_run.error_count AS last_error_count,
                        CASE WHEN last_run.finished_at IS NULL THEN NULL ELSE round(extract(epoch FROM (last_run.finished_at-last_run.started_at)))::int END AS last_duration_seconds,
-                       active.status AS job_status,active.id AS job_id,
+                       EXISTS(SELECT 1 FROM crawl_jobs WHERE supplier_id=s.id AND status='queued') AS has_queued_job,
+                       EXISTS(SELECT 1 FROM crawl_jobs WHERE supplier_id=s.id AND status='running') AS has_running_job,
+                       active.status AS job_status,active.id AS job_id,active.error_message AS job_error_message,
+                       active.crawl_run_id AS job_run_id,active.created_at AS job_created_at,
+                       (SELECT max(finished_at) FROM crawl_runs WHERE supplier_id=s.id AND status='succeeded') AS last_successful_crawl,
                        ss.enabled AS schedule_enabled,ss.cron_expression,ss.timezone
                 FROM suppliers s
                 LEFT JOIN source_products sp ON sp.supplier_id=s.id AND sp.active
                 LEFT JOIN crawl_errors ce ON ce.supplier_id=s.id
                 LEFT JOIN LATERAL (SELECT id,status,started_at,finished_at,discovered_count,new_count,changed_count,error_count,metadata FROM crawl_runs WHERE supplier_id=s.id ORDER BY started_at DESC LIMIT 1) last_run ON true
-                LEFT JOIN LATERAL (SELECT id,status FROM crawl_jobs WHERE supplier_id=s.id AND status IN ('queued','running') ORDER BY id LIMIT 1) active ON true
+                LEFT JOIN LATERAL (SELECT id,status,error_message,crawl_run_id,created_at FROM crawl_jobs WHERE supplier_id=s.id ORDER BY id DESC LIMIT 1) active ON true
                 LEFT JOIN supplier_schedules ss ON ss.supplier_id=s.id
-                GROUP BY s.id,last_run.id,last_run.status,last_run.started_at,last_run.finished_at,last_run.discovered_count,last_run.new_count,last_run.changed_count,last_run.error_count,last_run.metadata,active.status,active.id,ss.enabled,ss.cron_expression,ss.timezone
+                GROUP BY s.id,last_run.id,last_run.status,last_run.started_at,last_run.finished_at,last_run.discovered_count,last_run.new_count,last_run.changed_count,last_run.error_count,last_run.metadata,active.status,active.id,active.error_message,active.crawl_run_id,active.created_at,ss.enabled,ss.cron_expression,ss.timezone
                 ORDER BY s.name,s.id""")
             rows = list(cursor.fetchall())
         for row in rows:
@@ -360,13 +364,23 @@ class PostgresControlPlaneStore:
             return history
 
 
-    def runs(self, limit: int = 100) -> list[dict]:
+    def runs(self, limit: int = 100, job_status=None) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("""SELECT cr.*,s.code AS supplier_code,s.name AS supplier_name,j.trigger_type
+            if job_status in ('queued','running'):
+                cursor.execute("""SELECT j.*,s.name AS supplier_name,s.code AS supplier_code,'job' AS entry_type
+                    FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
+                    WHERE j.status=%s ORDER BY j.id DESC LIMIT %s""",(job_status,limit))
+                return list(cursor.fetchall())
+            cursor.execute("""SELECT cr.*,s.code AS supplier_code,s.name AS supplier_name,j.trigger_type,'run' AS entry_type
                 FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id
                 LEFT JOIN crawl_jobs j ON j.crawl_run_id=cr.id
                 ORDER BY cr.started_at DESC,cr.id DESC LIMIT %s""", (limit,))
-            return list(cursor.fetchall())
+            rows=list(cursor.fetchall())
+            cursor.execute("""SELECT j.*,s.name AS supplier_name,s.code AS supplier_code,'job' AS entry_type
+                FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
+                WHERE j.crawl_run_id IS NULL ORDER BY j.id DESC LIMIT %s""",(limit,))
+            rows.extend(cursor.fetchall())
+            return sorted(rows,key=lambda r:str(r.get('started_at') or r.get('created_at') or ''),reverse=True)[:limit]
 
     def run(self, run_id: int) -> dict | None:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -623,7 +637,7 @@ class SnapshotControlPlaneStore:
         return {"considered":0,"selected":0,"no_selected_offer":0,"blocked_by_conflict":0,"needs_review":0,"safe_new":0,"accessories":0,"excluded_total":0,"without_price":0,"without_url":0,"without_category":0,"blocked_by_identity":0,"invalid_selected_data":0}
     def product_history(self, supplier_code, external_id): return []
 
-    def runs(self, limit=100): return []
+    def runs(self, limit=100, job_status=None): return []
     def run(self, run_id): return None
     def run_progress(self, run_id):
         if int(run_id) != 1:

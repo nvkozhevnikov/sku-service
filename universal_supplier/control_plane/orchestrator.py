@@ -62,7 +62,12 @@ class Orchestrator:
             except Exception as error:
                 self._complete(job, "failed", error_message=f"{type(error).__name__}: {str(error)[:2000]}")
             else:
-                self._complete(job, result.get("status", "succeeded"), crawl_run_id=result.get("crawl_run_id"))
+                details={}
+                if 'termination_reason' in result or 'discovery_complete' in result:
+                    details['error_message']=(f"status={result.get('status','succeeded')}; "
+                        f"termination_reason={result.get('termination_reason') or 'none'}; "
+                        f"discovery_complete={str(result.get('discovery_complete')).lower()}")[:2000]
+                self._complete(job, result.get("status", "succeeded"), crawl_run_id=result.get("crawl_run_id"), **details)
             finally:
                 stop.set()
                 heart.join(timeout=1)

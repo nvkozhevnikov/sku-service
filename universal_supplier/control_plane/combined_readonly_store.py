@@ -53,5 +53,5 @@ class CombinedReadOnlyStore:
         store=self._store(code); return store.product(code,external_id) if store else None
     def product_history(self, code, external_id):
         store=self._store(code); return store.product_history(code,external_id) if store else []
-    def runs(self, limit=100): return [row for s in self.stores for row in s.runs(limit)]
+    def runs(self, limit=100, job_status=None): return [] if job_status in ('queued','running') else [row for s in self.stores for row in s.runs(limit)]
     def run(self, run_id): return None

@@ -244,8 +244,6 @@ def test_progress_templates_compile():
     environment.filters["ru"] = str
     from universal_supplier.control_plane.presentation import phase_summary
     environment.globals["phase_summary"] = phase_summary
-    from universal_supplier.control_plane.presentation import phase_summary
-    environment.globals["phase_summary"] = phase_summary
     environment.globals["url_for"] = lambda *args, **kwargs: "/static"
     environment.get_template("run_detail.html")
     environment.get_template("runs.html")
