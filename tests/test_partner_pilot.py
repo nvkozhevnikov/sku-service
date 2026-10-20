@@ -89,13 +89,13 @@ def test_wrong_cluster_stays_readonly_and_closes(monkeypatch):
 def test_worker_scopes_ingest_and_matching(tmp_path,monkeypatch):
     r,_=run(tmp_path,3)
     from unittest.mock import MagicMock
-    repo=MagicMock();repo.connection.transaction.side_effect=lambda:nullcontext()
+    repo=MagicMock();repo.last_ingest_timings={'history_seconds':0.001};repo.connection.transaction.side_effect=lambda:nullcontext()
     repo.ingest.return_value=SimpleNamespace(new_products=0);repo.final_crawl_run_status.return_value='partial'
     monkeypatch.setattr(ar,'PostgresRepository',lambda cfg:repo)
     monkeypatch.setattr(ar,'_run_with_progress',lambda *a,**kw:r)
     called=[];monkeypatch.setattr(ar,'run_post_ingest',lambda cfg,code,ids:called.append((code,ids)) or {'status':'succeeded'})
     for key,value in {'STERBRUST_PARTNER_PILOT':'YES','STERBRUST_ALLOW_SUPPLIER_HTTP':'YES','PARTNER_PILOT_EVIDENCE_ROOT':str(tmp_path),'PARTNER_PILOT_STOP_FILE':str(tmp_path/'stop')}.items():monkeypatch.setenv(key,value)
-    job=CrawlJob(1,1,'partner_st','partner_st','https://partner-st.ru/','manual','full','running',None,{'partner_pilot':batch(3),'rate_settings':{'max_concurrency':1,'min_request_interval_seconds':2,'max_attempts':1,'max_run_duration_seconds':300}})
+    job=CrawlJob(1,1,'partner_st','partner_st','https://partner-st.ru/','manual','full','running',None,{'partner_pilot':batch(3),'rate_settings':{'max_concurrency':1,'min_request_interval_seconds':2,'max_attempts':1,'request_timeout_seconds':20.0,'max_run_duration_seconds':300}})
     ar.run_partner_st_job(job,CFG)
     assert called==[('partner_st',['1','2','3'])]
     assert repo.ingest.call_args.kwargs['bounded'] is True

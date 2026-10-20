@@ -14,7 +14,7 @@ from sterbrust_matching.decision_history import decision_fingerprint, warning_fi
 from sterbrust_matching.product_identity import PROPERTY_POLICIES, canonical_property_name
 from sterbrust_matching.property_normalization import DEFAULT_PROPERTY_POLICIES
 
-from .change_detection import card_group_values, card_hashes
+from .change_detection import card_group_values, card_hashes, history_json, history_values_equal, commercial_values_equal, commercial_history_value
 from .commercial import ReadOnlySupplierProduct
 from .commercial_persistence import HttpCapture, observation_from_snapshot, product_card_from_snapshot
 from .models import ProductCard
@@ -507,6 +507,12 @@ class PostgresRepository:
                error_count: int = 0, supplier_code: str | None = None,
                schema_signals: list[str] | None = None,
                crawl_settings: dict[str, Any] | None = None, bounded: bool = False) -> IngestCounts:
+        import time
+        self.last_ingest_timings={'history_seconds':0.0}
+        def record_history(*args):
+            began=time.perf_counter()
+            try:return self._record_history(*args)
+            finally:self.last_ingest_timings['history_seconds']+=time.perf_counter()-began
         counts = IngestCounts()
         card_codes = {card.supplier_code for card in cards}
         if supplier_code is None:
@@ -592,9 +598,15 @@ class PostgresRepository:
                 else:
                     counts.unchanged_products += 1
                 cursor.execute(
-                    "SELECT id, commercial_hash, raw_data FROM offers WHERE source_product_id=%s AND offer_kind='default'", (product_id,)
+                    """SELECT id, commercial_hash, raw_data,
+                       jsonb_build_object('sku',sku,'price',price::text,'old_price',old_price::text,
+                         'currency',currency,'availability_raw',availability_raw,
+                         'availability_normalized',availability_normalized,'quantity',quantity::text)
+                       FROM offers WHERE source_product_id=%s AND offer_kind='default'""", (product_id,)
                 )
                 previous_offer = cursor.fetchone()
+                old_commercial = previous_offer[3] if previous_offer else None
+                commercial_changed = previous_offer is not None and not commercial_values_equal(old_commercial,values['commercial'])
                 price_type, price_raw, price_source = self._price_provenance(card)
                 offer_raw_data = {"source": f"{supplier_code} default offer",
                                   "_stage3b": {"commercial_value": values["commercial"]}}
@@ -614,19 +626,19 @@ class PostgresRepository:
                          price_source=EXCLUDED.price_source,
                         raw_data=EXCLUDED.raw_data, commercial_hash=EXCLUDED.commercial_hash,
                         last_seen_at=EXCLUDED.last_seen_at, last_success_at=EXCLUDED.last_success_at,
-                        last_changed_at=CASE WHEN offers.commercial_hash IS DISTINCT FROM EXCLUDED.commercial_hash
+                        last_changed_at=CASE WHEN %s
                           THEN EXCLUDED.last_changed_at ELSE offers.last_changed_at END, active=true, missed_crawls=0,
                         updated_at=now() RETURNING id""",
                     (supplier_id, product_id, card.external_id, card.sku, card.name, card.price, card.old_price,
                       card.currency or None, card.availability_raw, card.availability_normalized, card.quantity,
                       price_type, price_raw, price_source,
                      json.dumps(offer_raw_data, ensure_ascii=False, default=str), hashes["commercial"], hashes["identity"],
-                     observed_at, observed_at, observed_at, observed_at),
+                     observed_at, observed_at, observed_at, observed_at, commercial_changed),
                 )
                 offer_id = cursor.fetchone()[0]
                 if previous_offer is None:
                     counts.new_offers += 1
-                elif previous_offer[1] != hashes["commercial"]:
+                elif commercial_changed:
                     counts.changed_offers += 1
                 else:
                     counts.unchanged_offers += 1
@@ -636,15 +648,14 @@ class PostgresRepository:
                         history_group = "other" if changed_group == "options" else changed_group
                         new_value = values[history_group]
                         old_value = old_values.get(history_group)
-                        if old_value != new_value:
-                            self._record_history(cursor, crawl_run_id, supplier_id, product_id, None,
-                                                 history_group, old_value, new_value, observed_at)
+                        if record_history(cursor, crawl_run_id, supplier_id, product_id, None,
+                                                history_group, old_value, new_value, observed_at):
                             counts.change_history_events += 1
-                if crawl_run_id is not None and previous_offer is not None and previous_offer[1] != hashes["commercial"]:
-                    old_commercial = ((previous_offer[2] or {}).get("_stage3b") or {}).get("commercial_value")
-                    self._record_history(cursor, crawl_run_id, supplier_id, None, offer_id,
-                                         "commercial", old_commercial, values["commercial"], observed_at)
-                    counts.change_history_events += 1
+                if crawl_run_id is not None and commercial_changed:
+                    if record_history(cursor, crawl_run_id, supplier_id, None, offer_id,
+                                            "commercial", commercial_history_value(old_commercial),
+                                            commercial_history_value(values["commercial"]), observed_at):
+                        counts.change_history_events += 1
                 self._upsert_product_urls(cursor, product_id, card, observed_at)
                 if previous is None or product_changed:
                     self._replace_details(cursor, supplier_id, product_id, offer_id, card, observed_at)
@@ -1001,18 +1012,20 @@ class PostgresRepository:
     def _record_history(cursor, crawl_run_id: int, supplier_id: int,
                         source_product_id: int | None, offer_id: int | None,
                         field_group: str, old_value: Any, new_value: Any,
-                        changed_at: str) -> None:
-        if old_value == new_value:
-            return
+                        changed_at: str) -> bool:
+        if history_values_equal(old_value,new_value):
+            return False
+        old_json,new_json=history_json(old_value),history_json(new_value)
         cursor.execute(
             """INSERT INTO entity_change_history
                (crawl_run_id, supplier_id, source_product_id, offer_id, field_group,
                 old_value, new_value, changed_at)
-               VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s)""",
+               SELECT %s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s
+               WHERE %s::jsonb IS DISTINCT FROM %s::jsonb""",
             (crawl_run_id, supplier_id, source_product_id, offer_id, field_group,
-             json.dumps(old_value, ensure_ascii=False, default=str),
-             json.dumps(new_value, ensure_ascii=False, default=str), changed_at),
+             old_json,new_json,changed_at,old_json,new_json),
         )
+        return cursor.rowcount == 1
 
     @staticmethod
     def _upsert_product_urls(cursor, product_id: int, card: ProductCard, observed_at: str) -> None:

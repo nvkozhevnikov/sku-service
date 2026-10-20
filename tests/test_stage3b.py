@@ -103,6 +103,7 @@ class FixtureTransport:
 
 
 class RecordingCursor:
+    rowcount = 1
     def __init__(self, rows=None):
         self.calls = []
         self.rows = rows or []

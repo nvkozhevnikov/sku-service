@@ -76,11 +76,13 @@ class PostgresJobQueue:
         return connect_postgres(self.config, autocommit=True)
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
-                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None) -> EnqueueResult:
+                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative') -> EnqueueResult:
         from universal_supplier.partner_pilot import enabled,limit_value,validate_config
         if pilot_limit is not None:
             if not enabled():raise PermissionError("PILOT_MODE_NOT_ENABLED")
             limit_value(pilot_limit);validate_config(self.config)
+            from universal_supplier.partner_pilot import rate_profile
+            rate_profile(pilot_profile)
         if enabled() and pilot_limit is None:raise PermissionError('PILOT_FULL_CRAWL_DISABLED')
         scheduled_for = scheduled_for or utcnow()
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
@@ -108,8 +110,8 @@ class PostgresJobQueue:
             if pilot_limit is not None:
                 if code!='partner_st' or adapter_name!='partner_st' or trigger_type!='manual':raise ValueError('PILOT_PARTNER_MANUAL_ONLY')
                 cursor.execute("SELECT sp.id,sp.external_id,coalesce(sp.canonical_url,sp.source_url) FROM source_products sp WHERE sp.supplier_id=%s AND sp.active AND sp.external_id_is_stable ORDER BY sp.id LIMIT %s",(supplier_id,pilot_limit))
-                snapshot['partner_pilot']=__import__('universal_supplier.partner_pilot',fromlist=['snapshot']).snapshot(pilot_limit,cursor.fetchall())
-                snapshot['rate_settings']={**(rate_settings or {}),'max_concurrency':1,'min_request_interval_seconds':2.0,'max_attempts':1,'request_timeout_seconds':20.0,'max_run_duration_seconds':300.0}
+                snapshot['partner_pilot']=__import__('universal_supplier.partner_pilot',fromlist=['snapshot']).snapshot(pilot_limit,cursor.fetchall(),pilot_profile)
+                snapshot['rate_settings']={**(rate_settings or {}),**rate_profile(pilot_profile)}
             if active:
                 cursor.execute(
                     """INSERT INTO crawl_jobs

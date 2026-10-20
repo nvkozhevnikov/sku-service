@@ -5,6 +5,11 @@ from urllib.parse import urlsplit
 
 DATABASE=('127.0.0.1',55461,'rc_verify_vi_20261019')
 SYSTEM='7698346631476390904'
+RATE_PROFILES={'conservative':(1,2.0),'compare_2':(2,1.0),'compare_4':(4,0.5),'compare_4_fast':(4,0.2)}
+def rate_profile(name):
+    if name not in RATE_PROFILES:raise ValueError('UNKNOWN_PILOT_RATE_PROFILE')
+    workers,interval=RATE_PROFILES[name]
+    return {'max_concurrency':workers,'min_request_interval_seconds':interval,'max_attempts':1,'request_timeout_seconds':20.0,'max_run_duration_seconds':300.0}
 PGDATA=Path('C:/Users/man503/.codex/visualizations/2026/10/19/01a153ff-dc7c-77b3-a6be-d05f81a86e5c/rc-pg-20261019')
 
 def enabled():return os.environ.get('STERBRUST_PARTNER_PILOT')=='YES'
@@ -38,13 +43,15 @@ def safe_url(url):
     return url
 
 def digest(batch):return hashlib.sha256(json.dumps(batch,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-def snapshot(limit,rows):
+def snapshot(limit,rows,profile='conservative'):
     limit_value(limit)
     batch=[{'source_product_id':int(sid),'external_id':str(ext),'url':safe_url(url)} for sid,ext,url in rows]
-    p={'limit':limit,'batch':batch,'batch_sha256':digest(batch),'mode':'SAVED_URL_LIVE','database':list(DATABASE),'system_identifier':SYSTEM}
+    rate_profile(profile)
+    p={'rate_profile':profile,'limit':limit,'batch':batch,'batch_sha256':digest(batch),'mode':'SAVED_URL_LIVE','database':list(DATABASE),'system_identifier':SYSTEM}
     validate_snapshot(p);return p
 
 def validate_snapshot(p):
+    rate_profile(p.get('rate_profile','conservative'))
     limit=limit_value(p['limit']);batch=p['batch']
     if p.get('mode')!='SAVED_URL_LIVE' or p.get('database')!=list(DATABASE) or p.get('system_identifier')!=SYSTEM:raise ValueError('PILOT_SNAPSHOT_SCOPE')
     if not isinstance(batch,list) or not 1<=len(batch)<=limit or p.get('batch_sha256')!=digest(batch):raise ValueError('PILOT_BATCH_LIMIT_OR_HASH')

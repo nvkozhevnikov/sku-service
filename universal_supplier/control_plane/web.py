@@ -450,6 +450,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 raw=values.get('max_products','')
                 if not raw.isascii() or not raw.isdecimal():raise ValueError('Лимит должен быть целым числом от 1 до 50')
                 kwargs['pilot_limit']=limit_value(int(raw))
+                from universal_supplier.partner_pilot import rate_profile
+                kwargs['pilot_profile']=values.get('pilot_profile','conservative')
+                rate_profile(kwargs['pilot_profile'])
             except ValueError as error:raise HTTPException(400,str(error))
         try:result = queue.enqueue(supplier_id, trigger_type="manual", crawl_type="full", requested_by_user_id=user.id or None,**kwargs)
         except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))

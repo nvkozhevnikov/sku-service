@@ -145,7 +145,9 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         validate_config(config);validate_snapshot(pilot)
         if job.supplier_code!='partner_st' or job.adapter_name!='partner_st' or job.trigger_type!='manual':raise PermissionError('PILOT_JOB_NAMESPACE')
         if not enabled() or __import__('os').environ.get('STERBRUST_ALLOW_SUPPLIER_HTTP')!='YES':raise PermissionError('PILOT_HTTP_NOT_APPROVED')
-        if rate.max_concurrency!=1 or rate.min_request_interval_seconds<2 or rate.max_attempts!=1 or rate.max_run_duration_seconds>300:raise ValueError('PILOT_RATE_SNAPSHOT_INVALID')
+        from universal_supplier.partner_pilot import rate_profile
+        expected=rate_profile(pilot.get('rate_profile','conservative'))
+        if any(getattr(rate,k)!=v for k,v in expected.items()):raise ValueError('PILOT_RATE_SNAPSHOT_INVALID')
     elif enabled():raise PermissionError('PILOT_FULL_JOB_DISABLED')
     baseline = crawl.get("baseline_discovered_count", 1222)
     repository = PostgresRepository(config)
@@ -156,6 +158,10 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         supplier_code=job.supplier_code,
     )
     progress = _tracker(repository, run_id)
+    import time
+    timings={'http_phase_seconds':None,'http_request_seconds_sum':None,'parsing_seconds_sum':None,'sql_ingest_seconds':None,'history_seconds':None,'automatic_matching_seconds':None}
+    active_stage=None
+    stage_started=None
     try:
         kwargs={}
         if pilot:
@@ -163,6 +169,25 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
             import os
             kwargs={'pilot':pilot,'evidence_root':Path(os.environ['PARTNER_PILOT_EVIDENCE_ROOT'])/str(job.id),'stop_requested':lambda:Path(os.environ['PARTNER_PILOT_STOP_FILE']).exists()}
         result = _run_with_progress(run_partner_st_live, progress.callback, baseline=baseline, rate_policy=rate,**kwargs)
+        from datetime import datetime
+        import json
+        duration=(datetime.fromisoformat(result.finished_at)-datetime.fromisoformat(result.started_at)).total_seconds()
+        timings.update(http_phase_seconds=duration,http_request_seconds_sum=sum(r.get('http_seconds',0) for r in result.rows),parsing_seconds_sum=sum(r.get('parsing_seconds',0) for r in result.rows))
+        http_phase={'stage_timings':dict(timings),'status':'finished','started_at':result.started_at,'finished_at':result.finished_at,
+                    'duration_seconds':duration,'selected_urls':len(result.discovered_urls),'processed':len(result.rows),
+                    'successful_cards':len(result.cards),'errors':len(result.errors),
+                    'cards_per_minute':None if duration<=0 else 60*len(result.cards)/duration,
+                    'request_metrics':result.request_metrics,'rows':list(result.rows),'captures':list(result.captures),
+                    'discovery':result.discovery_metadata,'termination_reason':result.termination_reason}
+        if pilot:
+            receipt=kwargs['evidence_root']/'HTTP_PHASE.json';receipt.parent.mkdir(parents=True,exist_ok=True)
+            payload=json.dumps(http_phase,ensure_ascii=False,sort_keys=True,default=str)
+            if receipt.exists():
+                if receipt.read_text(encoding='utf-8')!=payload:raise RuntimeError('HTTP_PHASE_RECEIPT_ALREADY_EXISTS')
+            else:
+                with receipt.open('x',encoding='utf-8') as f:f.write(payload)
+        _finish_metadata(repository,run_id,{'http_phase':http_phase,'request_metrics':result.request_metrics,
+                          'pilot_http_rows':list(result.rows) if pilot else [],'pilot_captures':list(result.captures) if pilot else []})
         if pilot and result.termination_reason and result.termination_reason.startswith('PILOT_'):
             _finish_metadata(repository,run_id,{'pilot_http_rows':list(result.rows),'pilot_captures':list(result.captures),'request_metrics':result.request_metrics,'termination_reason':result.termination_reason})
             raise RuntimeError(result.termination_reason)
@@ -173,6 +198,7 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         health = replace(result.health, deactivation_allowed=False) if deadline_exceeded else result.health
         progress.set_phase("INGESTING")
         from contextlib import nullcontext
+        active_stage='sql_ingest_seconds';stage_started=time.perf_counter()
         with repository.connection.transaction() if pilot else nullcontext():
             counts = repository.ingest(
                 list(result.cards), result.finished_at, crawl_run_id=run_id,
@@ -184,17 +210,26 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
             )
             if pilot:
                 repository.record_partner_pilot_captures(result.cards,result.captures)
+        timings['sql_ingest_seconds']=time.perf_counter()-stage_started
+        timings['history_seconds']=getattr(repository,'last_ingest_timings',{}).get('history_seconds')
+        active_stage=None
         post_error = None
         try:
             progress.set_phase("MATCHING")
+            active_stage='automatic_matching_seconds';stage_started=time.perf_counter()
             identity = run_post_ingest(config, job.supplier_code,[c.external_id for c in result.cards]) if pilot else _post_ingest_identity(config, job.supplier_code)
+            timings['automatic_matching_seconds']=time.perf_counter()-stage_started
+            active_stage=None
             progress.set_phase("REVIEW_SYNC")
         except Exception as error:
+            timings['automatic_matching_seconds']=time.perf_counter()-stage_started
+            active_stage=None
             post_error = f"{type(error).__name__}: {str(error)[:1800]}"
             identity = {"status": "POST_PROCESSING_FAILED", "error": post_error}
             repository.record_crawl_error(run_id, url=job.base_url, error_type="POST_PROCESSING_FAILED", message=post_error)
         effective = result.effective_rate_policy
         _finish_metadata(repository, run_id, {
+            "stage_timings":timings,
             "requested_rate_policy": rate.snapshot(), "effective_rate_policy": effective,
             "requested_effective_policy_match": rate.snapshot() == effective,
             "pilot_http_rows":list(result.rows) if pilot else [],
@@ -208,6 +243,18 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         progress.finish(repository.final_crawl_run_status(run_id))
         return _adapter_result(repository, run_id, counts)
     except Exception as error:
+        if active_stage is not None:timings[active_stage]=time.perf_counter()-stage_started
+        history=getattr(repository,'last_ingest_timings',{})
+        if isinstance(history,dict):timings['history_seconds']=history.get('history_seconds')
+        try:
+            _finish_metadata(repository,run_id,{'stage_timings':timings,'failed_stage':active_stage})
+        except Exception:pass
+        try:
+            repository.record_crawl_error(run_id,url=job.base_url,error_type='INGEST_OR_PIPELINE_FAILED',
+                                          message=f'{type(error).__name__}: {str(error)[:1800]}')
+        except Exception:
+            # fail_crawl_run metadata is the final fallback if error persistence is unavailable.
+            pass
         repository.fail_crawl_run(run_id, finished_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), message=str(error))
         progress.finish("failed")
         raise

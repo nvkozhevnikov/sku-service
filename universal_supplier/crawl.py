@@ -119,14 +119,21 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
     def deadline_expired() -> bool:
         return runtime_clock.monotonic() >= deadline or (batch is not None and (pilot_stop.is_set() or bool(stop_requested and stop_requested())))
 
+    stage_times = {}
     def process(item: tuple[int, str]):
         position, url = item
         # A future can be queued just before the deadline and start after it.
         # Refuse the HTTP call in that case as well.
         if deadline_expired():
             return position, None, None, None, True
+        import time
+        timings={'http_seconds':0.0,'parsing_seconds':0.0}
+        stage_times[position]=timings
         try:
-            fetched = transport.get(url) if batch is None else transport.get_validated(url,validate_target)
+            began=time.perf_counter()
+            try:
+                fetched = transport.get(url) if batch is None else transport.get_validated(url,validate_target)
+            finally:timings['http_seconds']=time.perf_counter()-began
             if batch is not None:
                 from .http_capture import has_blocking_interstitial,sanitise_html
                 from pathlib import Path
@@ -141,7 +148,9 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
                 failure = CrawlFailure(url, f"HTTP_{fetched.status_code}",
                                        f"HTTP status {fetched.status_code}", fetched.status_code)
                 return position, None, failure, fetched, False
-            card=adapter.parse_product(fetched)
+            began=time.perf_counter()
+            try:card=adapter.parse_product(fetched)
+            finally:timings['parsing_seconds']=time.perf_counter()-began
             if batch is not None:
                 if card.external_id!=allowed[url] or card.supplier_code!='partner_st':
                     safety_errors.append('PILOT_SOURCE_ID_CHANGED');pilot_stop.set();raise ValueError('PILOT_SOURCE_ID_CHANGED')
@@ -192,6 +201,7 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
                 if card:
                     cards.append(card)
                 rows.append({
+                    **stage_times.get(position,{}),
                     "position": position, "requested_url": url,
                     "final_url": fetched.final_url if fetched else "",
                     "http_status": fetched.status_code if fetched else "",
