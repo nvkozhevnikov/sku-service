@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import date
 from difflib import SequenceMatcher
 import hashlib
 import json
+import re
 from typing import Any
 
 from universal_supplier.postgres import PostgresConfig
@@ -12,6 +15,7 @@ from universal_supplier.effective_identity import effective_identity_mapping_sql
 from sterbrust_matching.normalization import normalize_brand, normalize_model, normalize_model_strict, normalized_name
 from sterbrust_matching.product_identity import classify_product_kind
 from .security import AuthUser, normalize_username
+from .sql_text import like_contains
 
 
 REVIEW_AUTOMATIC_DECISIONS = {
@@ -21,6 +25,36 @@ REVIEW_AUTOMATIC_DECISIONS = {
 FINAL_MANUAL_DECISIONS = {"MANUAL_CONFIRMED", "MANUAL_CONFIRMED_NEW", "MANUAL_ACCESSORY", "MARKED_REVIEWED"}
 CONFIRMED_IDENTITY_DECISIONS = {"EXACT_EXISTING", "HIGH_CONFIDENCE_EXISTING"}
 SYNCED_EXISTING_IDENTITY = "SYNCED_EXISTING_IDENTITY"
+BULK_DECISIONS = {"postpone": "POSTPONED", "mark_reviewed": "MARKED_REVIEWED"}
+_DIGITS_RE = re.compile(r"[0-9]+")
+
+
+class CaseAlreadyResolved(ValueError):
+    """A bulk action reached a RESOLVED case; explicit single decisions are not affected."""
+
+
+def parse_filter_date(value: str, label: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError as error:
+        raise ValueError(f"Некорректная дата: {label}") from error
+
+
+@contextmanager
+def integrity_as_value_error(message: str):
+    """Constraint violations become a form error with a Russian message, not a 500."""
+    try:
+        yield
+    except Exception as error:
+        try:
+            from psycopg.errors import IntegrityError
+        except ImportError:  # pragma: no cover - psycopg is a runtime dependency
+            raise error
+        if isinstance(error, IntegrityError):
+            raise ValueError(message) from error
+        raise
 
 
 def review_proposal_id(decision: object, best_id: object) -> str | None:
@@ -173,7 +207,8 @@ class PostgresAdminStore:
         username = normalize_username(username)
         if role not in {"ADMIN", "OPERATOR", "VIEWER"}:
             raise ValueError("Недопустимая роль")
-        with self._connect() as c, c.transaction(), c.cursor() as q:
+        with integrity_as_value_error("Пользователь с таким именем уже существует"), \
+                self._connect() as c, c.transaction(), c.cursor() as q:
             q.execute("INSERT INTO app_users(username,display_name,password_hash,role) VALUES (%s,%s,%s,%s) RETURNING id", (username, display_name.strip(), password_hash, role))
             user_id = q.fetchone()["id"]
             self._audit(q, actor_id, "USER_CREATED", "user", user_id, None, {"username": username, "display_name": display_name.strip(), "role": role, "is_active": True}, None)
@@ -187,6 +222,12 @@ class PostgresAdminStore:
             before = q.fetchone()
             if not before:
                 raise KeyError("Пользователь не найден")
+            if not active and before["is_active"] and before["role"] == "ADMIN":
+                # Lock every other active admin row so two concurrent
+                # deactivations cannot both see "one more admin left".
+                q.execute("SELECT id FROM app_users WHERE role='ADMIN' AND is_active AND id<>%s FOR UPDATE", (user_id,))
+                if not q.fetchall():
+                    raise ValueError("Нельзя отключить последнего активного администратора")
             q.execute("UPDATE app_users SET is_active=%s,session_version=session_version+(%s AND is_active)::int,updated_at=now() WHERE id=%s", (active, not active, user_id))
             after = dict(before); after["is_active"] = active
             self._audit(q, actor_id, "USER_ACTIVE_CHANGED", "user", user_id, dict(before), after, None)
@@ -326,12 +367,14 @@ class PostgresAdminStore:
         if status: clauses.append("rc.lifecycle_status=%s"); params.append(status)
         if supplier: clauses.append("s.code=%s"); params.append(supplier)
         if decision: clauses.append("rc.automatic_decision=%s"); params.append(decision)
-        if assignee and not str(assignee).strip().isdigit(): raise ValueError("Некорректный исполнитель")
-        if assignee: clauses.append("rc.assigned_to_user_id=%s"); params.append(int(assignee))
-        if brand: clauses.append("sp.brand_raw ILIKE %s"); params.append(f"%{brand}%")
-        if category: clauses.append("coalesce(pid.identity_characteristics->>'category','') ILIKE %s"); params.append(f"%{category}%")
-        if opened_from: clauses.append("rc.opened_at::date >= %s::date"); params.append(opened_from)
-        if opened_to: clauses.append("rc.opened_at::date <= %s::date"); params.append(opened_to)
+        if assignee and not _DIGITS_RE.fullmatch(str(assignee).strip()): raise ValueError("Некорректный исполнитель")
+        if assignee: clauses.append("rc.assigned_to_user_id=%s"); params.append(int(str(assignee).strip()))
+        if brand: clauses.append("sp.brand_raw ILIKE %s"); params.append(like_contains(brand))
+        if category: clauses.append("coalesce(pid.identity_characteristics->>'category','') ILIKE %s"); params.append(like_contains(category))
+        opened_from_date = parse_filter_date(opened_from, "открыто с")
+        opened_to_date = parse_filter_date(opened_to, "открыто по")
+        if opened_from_date: clauses.append("rc.opened_at::date >= %s::date"); params.append(opened_from_date)
+        if opened_to_date: clauses.append("rc.opened_at::date <= %s::date"); params.append(opened_to_date)
         qtext = " AND ".join(clauses)
         with self._connect() as c, c.cursor() as q:
             q.execute(f"""SELECT rc.*,sp.external_id,sp.name,sp.brand_raw,sp.sku,s.code AS supplier_code,s.name AS supplier_name,u.display_name AS assignee_name
@@ -418,14 +461,19 @@ class PostgresAdminStore:
         item = self.review_case(case_id)
         if not item: raise KeyError("Карточка проверки не найдена")
         with self._connect() as c, c.cursor() as q:
-            pattern = f"%{search.strip()}%"
+            pattern = like_contains(search.strip())
             q.execute("""SELECT sterbrust_product_id,name,brand_raw,model_raw,article_raw,category_path,product_url FROM sterbrust_products
                          WHERE active AND (sterbrust_product_id ILIKE %s OR name ILIKE %s OR brand_raw ILIKE %s OR model_raw ILIKE %s OR article_raw ILIKE %s)
                          AND NOT EXISTS (SELECT 1 FROM candidate_rejections cr WHERE cr.source_product_id=%s AND cr.sterbrust_product_id=sterbrust_products.sterbrust_product_id AND cr.evidence_fingerprint=%s)
                          ORDER BY name,sterbrust_product_id LIMIT %s""", (pattern, pattern, pattern, pattern, pattern, item["source_product_id"], item["source_identity_fingerprint"], limit))
             return list(q.fetchall())
 
-    def decide(self, case_id: int, user_id: int, decision_class: str, *, sterbrust_product_id: str | None = None, parent_sterbrust_product_id: str | None = None, comment: str = "") -> int:
+    def decide(self, case_id: int, user_id: int, decision_class: str, *, sterbrust_product_id: str | None = None, parent_sterbrust_product_id: str | None = None, comment: str = "", bulk: bool = False) -> int:
+        with integrity_as_value_error("Решение не сохранено: данные изменились, обновите карточку"):
+            return self._decide(case_id, user_id, decision_class, sterbrust_product_id=sterbrust_product_id,
+                                parent_sterbrust_product_id=parent_sterbrust_product_id, comment=comment, bulk=bulk)
+
+    def _decide(self, case_id: int, user_id: int, decision_class: str, *, sterbrust_product_id: str | None, parent_sterbrust_product_id: str | None, comment: str, bulk: bool) -> int:
         comment = comment.strip()
         if decision_class not in FINAL_MANUAL_DECISIONS | {"POSTPONED"}: raise ValueError("Недопустимое решение")
         if decision_class in {"MANUAL_CONFIRMED_NEW", "MANUAL_ACCESSORY"} and not comment: raise ValueError("Для этого решения обязателен комментарий")
@@ -433,6 +481,10 @@ class PostgresAdminStore:
         with self._connect() as c, c.transaction(), c.cursor() as q:
             q.execute("SELECT * FROM review_cases WHERE id=%s FOR UPDATE", (case_id,)); case = q.fetchone()
             if not case: raise KeyError("Карточка проверки не найдена")
+            if bulk and case["lifecycle_status"] == "RESOLVED":
+                # Checked under the row lock: a bulk POSTPONED/MARKED_REVIEWED
+                # must never supersede a final decision such as MANUAL_CONFIRMED.
+                raise CaseAlreadyResolved("Карточка уже решена")
             catalog_id = None
             if sterbrust_product_id:
                 q.execute("SELECT catalog_product_id FROM sterbrust_products WHERE sterbrust_product_id=%s AND active", (sterbrust_product_id,)); candidate = q.fetchone()
@@ -476,23 +528,26 @@ class PostgresAdminStore:
             return int(row["id"]) if row else 0
 
     def assign(self, case_ids: list[int], user_id: int | None, actor_id: int) -> int:
-        with self._connect() as c, c.transaction(), c.cursor() as q:
+        with integrity_as_value_error("Исполнитель не найден"), self._connect() as c, c.transaction(), c.cursor() as q:
             q.execute("UPDATE review_cases SET assigned_to_user_id=%s,lifecycle_status=CASE WHEN lifecycle_status='OPEN' THEN 'ASSIGNED' ELSE lifecycle_status END,updated_at=now() WHERE id=ANY(%s) AND lifecycle_status<>'RESOLVED'", (user_id, case_ids))
             count = q.rowcount
             self._audit(q, actor_id, "REVIEW_BULK_ASSIGN", "review_case_set", ",".join(map(str, case_ids)), None, {"assigned_to_user_id": user_id, "count": count}, None)
             return count
 
-    def bulk_update(self, case_ids: list[int], action: str, actor_id: int, comment: str = "") -> int:
-        decision_class = {"postpone": "POSTPONED", "mark_reviewed": "MARKED_REVIEWED"}.get(action)
+    def bulk_update(self, case_ids: list[int], action: str, actor_id: int, comment: str = "") -> dict[str, int]:
+        """Apply a bulk action; RESOLVED cards are skipped and counted, never overwritten."""
+        decision_class = BULK_DECISIONS.get(action)
         if not decision_class: raise ValueError("Недопустимое групповое действие")
-        count = 0
+        result = {"updated": 0, "skipped_resolved": 0, "failed": 0}
         for case_id in case_ids:
             try:
-                self.decide(case_id, actor_id, decision_class, comment=comment)
-                count += 1
+                self.decide(case_id, actor_id, decision_class, comment=comment, bulk=True)
+                result["updated"] += 1
+            except CaseAlreadyResolved:
+                result["skipped_resolved"] += 1
             except (KeyError, ValueError):
-                continue
-        return count
+                result["failed"] += 1
+        return result
 
 
 class InMemoryAdminStore:
@@ -518,7 +573,12 @@ class InMemoryAdminStore:
     def create_user(self, username, display_name, password_hash, role, actor_id=None):
         uid = max([u["id"] for u in self._users] or [0]) + 1; self._users.append({"id":uid,"username":normalize_username(username),"display_name":display_name,"password_hash":password_hash,"role":role,"is_active":True}); self.audit(actor_id,"USER_CREATED","user",uid,None,{"role":role}); return uid
     def set_user_active(self, user_id, active, actor_id):
-        row=next(u for u in self._users if u["id"]==user_id)
+        if user_id == actor_id and not active: raise ValueError("Нельзя отключить собственную учётную запись")
+        row=next((u for u in self._users if u["id"]==user_id), None)
+        if row is None: raise KeyError("Пользователь не найден")
+        if not active and row.get("is_active", True) and row["role"] == "ADMIN" and not any(
+                u["id"] != user_id and u["role"] == "ADMIN" and u.get("is_active", True) for u in self._users):
+            raise ValueError("Нельзя отключить последнего активного администратора")
         if row.get("is_active", True) and not active: row["session_version"]=row.get("session_version",1)+1
         row["is_active"]=active; self.audit(actor_id,"USER_ACTIVE_CHANGED","user",user_id,None,{"is_active":active})
     def audit(self,user_id,action,entity_type,entity_id,before,after,comment=None,correlation_id=None): self._audit_events.append({"id":len(self._audit_events)+1,"user_id":user_id,"action":action,"entity_type":entity_type,"entity_id":str(entity_id),"before_state":deepcopy(before),"after_state":deepcopy(after),"comment":comment})
@@ -539,7 +599,9 @@ class InMemoryAdminStore:
     def decide(self,case_id,user_id,decision_class,**values):
         comment=values.get("comment","").strip()
         if decision_class in {"MANUAL_CONFIRMED_NEW","MANUAL_ACCESSORY"} and not comment: raise ValueError("Для этого решения обязателен комментарий")
-        case=next(c for c in self._cases if c["id"]==case_id); case["lifecycle_status"]="POSTPONED" if decision_class=="POSTPONED" else "RESOLVED"; case["resolved_decision_class"]=None if decision_class=="POSTPONED" else decision_class
+        case=next(c for c in self._cases if c["id"]==case_id)
+        if values.get("bulk") and case.get("lifecycle_status") == "RESOLVED": raise CaseAlreadyResolved("Карточка уже решена")
+        case["lifecycle_status"]="POSTPONED" if decision_class=="POSTPONED" else "RESOLVED"; case["resolved_decision_class"]=None if decision_class=="POSTPONED" else decision_class
         self._decisions.append({"case_id":case_id,"decision_class":decision_class,"comment":comment}); self.audit(user_id,"REVIEW_DECISION_"+decision_class,"review_case",case_id,None,{"decision_class":decision_class},comment or None); return len(self._decisions)
     def reject_candidate(self,case_id,user_id,sterbrust_product_id,comment):
         if not comment.strip(): raise ValueError("Для отклонения кандидата обязателен комментарий")
@@ -549,7 +611,10 @@ class InMemoryAdminStore:
         self._rejections.append({"case_id":case_id,"sterbrust_product_id":sterbrust_product_id,"comment":comment}); self.audit(user_id,"CANDIDATE_REJECTED","review_case",case_id,None,{"sterbrust_product_id":sterbrust_product_id},comment); return len(self._rejections)
     def assign(self,case_ids,user_id,actor_id): return 0
     def bulk_update(self,case_ids,action,actor_id,comment=""):
-        if action not in {"postpone","mark_reviewed"}: raise ValueError("Недопустимое групповое действие")
-        decision="POSTPONED" if action=="postpone" else "MARKED_REVIEWED"
-        for case_id in case_ids: self.decide(case_id,actor_id,decision,comment=comment)
-        return len(case_ids)
+        if action not in BULK_DECISIONS: raise ValueError("Недопустимое групповое действие")
+        result={"updated":0,"skipped_resolved":0,"failed":0}
+        for case_id in case_ids:
+            try: self.decide(case_id,actor_id,BULK_DECISIONS[action],comment=comment,bulk=True); result["updated"]+=1
+            except CaseAlreadyResolved: result["skipped_resolved"]+=1
+            except (KeyError,StopIteration,ValueError): result["failed"]+=1
+        return result

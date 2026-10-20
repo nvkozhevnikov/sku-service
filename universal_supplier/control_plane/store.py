@@ -4,12 +4,17 @@ from universal_supplier.effective_identity import effective_manual_mapping_sql,a
 import csv
 from dataclasses import dataclass
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from universal_supplier.postgres import PostgresConfig
 from .heartbeat import read_components
 from .scheduler import next_occurrences
+from .sql_text import like_contains
+
+LOGGER = logging.getLogger(__name__)
+MAX_PAGE = 100_000
 
 
 DECISIONS = (
@@ -57,7 +62,7 @@ class ProductFilters:
     page_size: int = 50
 
     def __post_init__(self) -> None:
-        if self.page < 1 or self.page_size not in {25, 50, 100}:
+        if self.page < 1 or self.page > MAX_PAGE or self.page_size not in {25, 50, 100}:
             raise ValueError("invalid pagination")
         if self.decision and self.decision not in DECISIONS:
             raise ValueError("invalid decision")
@@ -79,7 +84,7 @@ def product_where(filters: ProductFilters) -> tuple[str, list[Any]]:
             params.append(value)
     if filters.category:
         clauses.append("coalesce(cat.category_path,'') ILIKE %s")
-        params.append(f"%{filters.category}%")
+        params.append(like_contains(filters.category))
     if filters.content in {"complete", "missing"}:
         expression = "(coalesce(sp.description_text,'')<>'' AND coalesce(sp.brand_raw,'')<>'')"
         clauses.append(expression if filters.content == "complete" else f"NOT {expression}")
@@ -87,7 +92,7 @@ def product_where(filters: ProductFilters) -> tuple[str, list[Any]]:
         clauses.append("media.image_count>0" if filters.media == "complete" else "media.image_count=0")
     if filters.search:
         clauses.append("(sp.external_id ILIKE %s OR sp.sku ILIKE %s OR sp.name ILIKE %s OR pid.own_model ILIKE %s OR pid.reference_model ILIKE %s OR pid.best_sterbrust_id ILIKE %s)")
-        params.extend([f"%{filters.search}%"] * 6)
+        params.extend([like_contains(filters.search)] * 6)
     issue={
         "without_price":"o.price IS NULL","zero_price":"o.price=0","without_currency":"o.currency IS NULL",
         "without_sku":"nullif(btrim(sp.sku),'') IS NULL","without_brand":"nullif(btrim(sp.brand_raw),'') IS NULL",
@@ -97,6 +102,29 @@ def product_where(filters: ProductFilters) -> tuple[str, list[Any]]:
     }.get(filters.quality_issue)
     if issue: clauses.append(f"({issue})")
     return " AND ".join(clauses), params
+
+
+# Per-supplier counts come from LATERAL subqueries: joining products and errors
+# directly multiplied the rows (products x errors) before GROUP BY.
+DASHBOARD_SQL = """SELECT s.id,s.code,s.name,s.enabled,s.base_url,s.rate_settings,s.crawl_settings,
+                       product_count.products,
+                       error_count.errors_30d,
+                       last_run.id AS last_run_id,last_run.status AS last_status,last_run.started_at AS last_crawl,
+                       last_run.metadata AS last_run_metadata,
+                       last_run.discovered_count AS last_discovered_count,last_run.new_count AS last_new_count,
+                       last_run.changed_count AS last_changed_count,last_run.error_count AS last_error_count,
+                       CASE WHEN last_run.finished_at IS NULL THEN NULL ELSE round(extract(epoch FROM (last_run.finished_at-last_run.started_at)))::int END AS last_duration_seconds,
+                       active.status AS job_status,active.id AS job_id,
+                       ss.enabled AS schedule_enabled,ss.cron_expression,ss.timezone
+                FROM suppliers s
+                LEFT JOIN LATERAL (SELECT count(*) AS products FROM source_products sp
+                                   WHERE sp.supplier_id=s.id AND sp.active) product_count ON true
+                LEFT JOIN LATERAL (SELECT count(*) AS errors_30d FROM crawl_errors ce
+                                   WHERE ce.supplier_id=s.id AND ce.created_at>now()-interval '30 days') error_count ON true
+                LEFT JOIN LATERAL (SELECT id,status,started_at,finished_at,discovered_count,new_count,changed_count,error_count,metadata FROM crawl_runs WHERE supplier_id=s.id ORDER BY started_at DESC LIMIT 1) last_run ON true
+                LEFT JOIN LATERAL (SELECT id,status FROM crawl_jobs WHERE supplier_id=s.id AND status IN ('queued','running') ORDER BY id LIMIT 1) active ON true
+                LEFT JOIN supplier_schedules ss ON ss.supplier_id=s.id
+                ORDER BY s.name,s.id"""
 
 
 class PostgresControlPlaneStore:
@@ -112,38 +140,23 @@ class PostgresControlPlaneStore:
             with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute("SELECT 1 AS ok,current_setting('server_version') AS version")
                 row = cursor.fetchone()
-        except Exception as error:
-            return {"application": "ok", "postgresql": "error", "error": str(error)[:200]}
+        except Exception:
+            LOGGER.warning("health: PostgreSQL check failed", exc_info=True)
+            return {"application": "ok", "postgresql": "error"}
         status = {"application": "ok", "postgresql": "ok", "version": row["version"]}
         # Background loops are reported, not enforced: their state never changes the web status code.
         try:
             with self._connect() as connection, connection.cursor() as cursor:
                 components = read_components(cursor)
-        except Exception as error:
-            return {**status, "components": "unavailable", "components_error": str(error)[:200]}
+        except Exception:
+            LOGGER.warning("health: component heartbeats unavailable", exc_info=True)
+            return {**status, "components": "unavailable", "degraded": True}
         return {**status, "components": components,
                 "degraded": any(item["status"] in {"stale", "failing"} for item in components.values())}
 
     def dashboard(self) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("""SELECT s.id,s.code,s.name,s.enabled,s.base_url,s.rate_settings,s.crawl_settings,
-                       count(DISTINCT sp.id) AS products,
-                       count(DISTINCT ce.id) FILTER (WHERE ce.created_at>now()-interval '30 days') AS errors_30d,
-                       last_run.id AS last_run_id,last_run.status AS last_status,last_run.started_at AS last_crawl,
-                       last_run.metadata AS last_run_metadata,
-                       last_run.discovered_count AS last_discovered_count,last_run.new_count AS last_new_count,
-                       last_run.changed_count AS last_changed_count,last_run.error_count AS last_error_count,
-                       CASE WHEN last_run.finished_at IS NULL THEN NULL ELSE round(extract(epoch FROM (last_run.finished_at-last_run.started_at)))::int END AS last_duration_seconds,
-                       active.status AS job_status,active.id AS job_id,
-                       ss.enabled AS schedule_enabled,ss.cron_expression,ss.timezone
-                FROM suppliers s
-                LEFT JOIN source_products sp ON sp.supplier_id=s.id AND sp.active
-                LEFT JOIN crawl_errors ce ON ce.supplier_id=s.id
-                LEFT JOIN LATERAL (SELECT id,status,started_at,finished_at,discovered_count,new_count,changed_count,error_count,metadata FROM crawl_runs WHERE supplier_id=s.id ORDER BY started_at DESC LIMIT 1) last_run ON true
-                LEFT JOIN LATERAL (SELECT id,status FROM crawl_jobs WHERE supplier_id=s.id AND status IN ('queued','running') ORDER BY id LIMIT 1) active ON true
-                LEFT JOIN supplier_schedules ss ON ss.supplier_id=s.id
-                GROUP BY s.id,last_run.id,last_run.status,last_run.started_at,last_run.finished_at,last_run.discovered_count,last_run.new_count,last_run.changed_count,last_run.error_count,last_run.metadata,active.status,active.id,ss.enabled,ss.cron_expression,ss.timezone
-                ORDER BY s.name,s.id""")
+            cursor.execute(DASHBOARD_SQL)
             rows = list(cursor.fetchall())
         for row in rows:
             row["next_runs"] = next_occurrences(row["cron_expression"], row["timezone"], count=3) if row.get("schedule_enabled") and row.get("cron_expression") else []

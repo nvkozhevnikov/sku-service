@@ -231,8 +231,11 @@ def test_ambiguous_three_digit_fraction_is_not_thousands():
 def test_title_represents_has_no_catastrophic_backtracking():
     model = "x" * 40
     title = "x" * 39 + " y" + "x" * 60
-    started = time.perf_counter()
-    assert title_represents(title, model) is False
-    assert time.perf_counter() - started < 0.1
+    timings = []
+    for _ in range(5):  # best of five: a loaded CI machine must not make a linear match look slow
+        started = time.perf_counter()
+        assert title_represents(title, model) is False
+        timings.append(time.perf_counter() - started)
+    assert min(timings) < 0.1
     assert title_represents("Станок 250×300 мм", "250x300")
     assert title_represents("Станок BMS 230 DG", "BMS-230DG")

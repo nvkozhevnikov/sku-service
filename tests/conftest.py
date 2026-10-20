@@ -107,3 +107,12 @@ def pytest_runtest_call(item):
     except FileNotFoundError as error:
         _skip_for_missing_evidence(error)
         raise
+
+
+@pytest.fixture(autouse=True)
+def _plain_http_test_client(monkeypatch):
+    """TestClient talks to http://testserver; a Secure cookie would never be sent back.
+
+    Production keeps the Secure default; tests that check it delete this variable.
+    """
+    monkeypatch.setenv("CONTROL_PLANE_INSECURE_HTTP", "YES")

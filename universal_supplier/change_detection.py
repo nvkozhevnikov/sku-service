@@ -27,6 +27,21 @@ def _money(value: Any) -> Any:
     return quantized if quantized == value else value
 
 
+def _quantity(value: Any) -> Any:
+    """Give equal quantities one textual form ("5" == "5.000", "2.5" == "2.50").
+
+    Integral values keep the plain integer text and already-canonical values
+    keep their text, so existing hashes do not change; Decimal.normalize()
+    alone would turn 100 into "1E+2".
+    """
+    if not isinstance(value, Decimal) or not value.is_finite():
+        return value
+    integral = value.to_integral_value()
+    if integral == value:
+        return integral.quantize(Decimal(1))
+    return value.normalize()
+
+
 def identity_value(card: ProductCard) -> dict[str, Any]:
     value = {"external_id": card.external_id, "sku": card.sku, "name": card.name,
              "brand": card.brand, "manufacturer": card.manufacturer,
@@ -46,7 +61,7 @@ def card_hashes(card: ProductCard) -> dict[str, str]:
         "documents": stable_hash([asdict(item) for item in card.media if item.media_type in {"document", "video"}]),
         "categories": stable_hash([asdict(item) for item in card.categories]),
         "options": stable_hash([asdict(item) for item in card.options]),
-        "commercial": stable_hash({"sku": card.sku, "price": _money(card.price), "old_price": _money(card.old_price), "currency": card.currency, "availability": card.availability_normalized, "quantity": card.quantity}),
+        "commercial": stable_hash({"sku": card.sku, "price": _money(card.price), "old_price": _money(card.old_price), "currency": card.currency, "availability": card.availability_normalized, "quantity": _quantity(card.quantity)}),
     }
 
 

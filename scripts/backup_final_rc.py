@@ -51,7 +51,10 @@ def backup(args):
             raise RuntimeError("Backup source-count preflight rejected")
         snapshot = conn.execute("SELECT pg_export_snapshot()").fetchone()[0]
         timestamp = str(conn.execute("SELECT clock_timestamp()").fetchone()[0])
-        target.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(target.parent, 0o700)
+        # Pre-create owner-only: pg_dump truncates an existing file and keeps its mode.
+        os.close(os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
         command = [str(args.pg_dump), "--format=custom", "--no-owner", "--no-privileges",
                    "--snapshot=" + snapshot, "--file=" + str(pending)]
         result = subprocess.run(command, env=env, capture_output=True, timeout=1800)
@@ -64,6 +67,7 @@ def backup(args):
             raise RuntimeError("Custom dump inventory failed; partial retained")
         digest = hashlib.file_digest(pending.open("rb"), "sha256").hexdigest()
         pending.rename(target)
+        os.chmod(target, 0o600)
         target.with_suffix(".dump.sha256").write_text(digest + "  " + target.name + "\n", encoding="ascii")
         metadata = {"status":"READ_ONLY_BACKUP_VERIFIED_NOT_RESTORED", "identity":list(identity),
                     "snapshot_timestamp":timestamp, "counts":counts, "namespaces":namespaces,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify immutable 001-011 and apply all migrations safely/idempotently."""
+"""Verify immutable 001-017 and apply all migrations safely/idempotently."""
 from __future__ import annotations
 
 import hashlib
@@ -43,6 +43,19 @@ def migration_body(sql: str) -> str:
     return sql
 
 
+# Released after the 001-015 baseline file was frozen; pinned here so the file
+# itself (and its own test) stays unchanged.
+POST_BASELINE_IMMUTABLE = {
+    "016_review_decisions_source_product_index.sql": "cb75f74a4261fcdda518f0379ad786863728e85c6769a7763b5c712d2d03fb89",
+    "017_session_revocation_login_throttle_heartbeats.sql": "8c84fa11c677a722e07272bf9e7af39254b9bc6062e680282ca72642faec21b8",
+}
+
+
+def unknown_applied(applied: dict[str, str], known: set[str]) -> list[str]:
+    """Migrations recorded in the database that this checkout does not have."""
+    return sorted(name for name in applied if name not in known)
+
+
 def expected_hashes() -> dict[str, str]:
     baseline_path = ROOT / "stage6e_migration_baseline_sha256.json"
     if not baseline_path.exists():
@@ -50,7 +63,7 @@ def expected_hashes() -> dict[str, str]:
     if not baseline_path.exists():
         baseline_path = ROOT / "stage3d_migration_baseline_sha256.json"
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    return baseline["files"]
+    return {**baseline["files"], **POST_BASELINE_IMMUTABLE}
 
 
 def main() -> None:
@@ -78,6 +91,11 @@ def main() -> None:
                 )
                 cursor.execute("SELECT filename, sha256 FROM schema_migrations")
                 applied = dict(cursor.fetchall())
+                unknown = unknown_applied(applied, set(actual))
+                if unknown:
+                    # The database is newer than this code (or was migrated from
+                    # another branch): refuse instead of running on a schema we do not know.
+                    raise RuntimeError(f"Database has migrations missing from migrations/: {unknown}")
                 for path in MIGRATIONS:
                     digest = actual[path.name]
                     if path.name in applied:

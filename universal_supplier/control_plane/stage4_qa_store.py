@@ -11,6 +11,7 @@ from typing import Any
 
 from universal_supplier.postgres import PostgresConfig
 
+from .sql_text import like_contains
 from .store import PostgresControlPlaneStore, ProductFilters
 
 
@@ -131,7 +132,7 @@ class ReadOnlyStage4QaStore(PostgresControlPlaneStore):
             if filters.brand: clauses.append("sp.brand_raw=%s"); params.append(filters.brand)
             if filters.search:
                 clauses.append("(sp.external_id ILIKE %s OR sp.sku ILIKE %s OR sp.name ILIKE %s)")
-                params.extend([f"%{filters.search}%"] * 3)
+                params.extend([like_contains(filters.search)] * 3)
             where = " AND ".join(clauses)
             latest = """LEFT JOIN LATERAL (SELECT price_state,price,old_price,currency,availability_normalized,
                 observed_at,region_code,capture_id FROM offer_commercial_observations co

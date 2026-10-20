@@ -32,7 +32,8 @@ services:
       SESSION_SIGNING_SECRET: preview-session-secret-at-least-32-bytes
       CONTROL_PLANE_ALLOWED_HOSTS: 127.0.0.1,localhost
       SCHEDULER_ENABLED: "NO"
-      HTTPS_ENABLED: "NO"
+      # Local preview over plain HTTP only.
+      CONTROL_PLANE_INSECURE_HTTP: "YES"
       CONTROL_PLANE_DEMO_SNAPSHOT: ${CONTROL_PLANE_DEMO_SNAPSHOT:-NO}
     volumes:
       - ./:/app

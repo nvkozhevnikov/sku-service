@@ -3,7 +3,7 @@
 <a class="back" href="/commercial-qa">← Ручной сбор</a>
 <div class="pagehead"><div><span class="eyebrow">ЗАПУСК {{run.id}}</span><h2>{{run.source}}</h2><p>{% if run.mode == 'qa_write' %}Запись только в {{run.target}}{% else %}Проверка без записи в PostgreSQL{% endif %}</p></div><span class="badge">{{run.status}}</span></div>
 <p>Обработано {{run.processed or 0}} из {{run.total or run.limit}} · manifest SHA-256: <code>{{run.manifest_sha256 or '—'}}</code></p>
-{% if run.status in ['queued','running'] %}<div class="notice">Сбор выполняется. Страница обновляется каждые 3 секунды.</div><script>setTimeout(()=>location.reload(),3000)</script>{% endif %}
+{% if run.status in ['queued','running'] %}<div class="notice">Сбор выполняется. Страница обновляется каждые 3 секунды.</div><script nonce="{{csp_nonce}}">setTimeout(()=>location.reload(),3000)</script>{% endif %}
 {% if run.error %}<div class="notice error">{{run.error}}</div>{% endif %}
 {% if run.site_summary %}<section class="metrics"><article><span>Карточек</span><strong>{{run.site_summary.fetched_cards}}</strong></article><article><span>Новые observations</span><strong>{{run.site_summary.observations_created}}</strong></article><article><span>REVIEW</span><strong>{{run.site_summary.reviews}}</strong></article><article><span>Ошибки</span><strong>{{run.site_summary.errors}}</strong></article></section>{% endif %}
 {% if run.counts_before %}<section class="panel"><h3>SQL counts до и после</h3><table><thead><tr><th>Таблица</th><th>До</th><th>После</th></tr></thead><tbody>{% for table,before in run.counts_before.items() %}<tr><td>{{table}}</td><td>{{before}}</td><td>{{run.counts_after.get(table, '—') if run.counts_after else '—'}}</td></tr>{% endfor %}</tbody></table></section>{% endif %}

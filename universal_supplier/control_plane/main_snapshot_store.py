@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from universal_supplier.postgres import PostgresConfig
+from .sql_text import like_contains
 from .store import PostgresControlPlaneStore, ProductFilters
 
 MAIN_SNAPSHOT_HOST = "127.0.0.1"
@@ -81,7 +82,7 @@ class ReadOnlyMainSnapshotStore(PostgresControlPlaneStore):
         if filters.brand: clauses.append("sp.brand_raw=%s"); params.append(filters.brand)
         if filters.search:
             clauses.append("(sp.external_id ILIKE %s OR sp.sku ILIKE %s OR sp.name ILIKE %s)")
-            params.extend([f"%{filters.search}%"]*3)
+            params.extend([like_contains(filters.search)]*3)
         where=" AND ".join(clauses)
         offer="LEFT JOIN LATERAL (SELECT price,currency,availability_normalized FROM offers WHERE source_product_id=sp.id AND active ORDER BY id LIMIT 1) o ON true"
         if filters.availability: where += " AND o.availability_normalized=%s"; params.append(filters.availability)

@@ -30,6 +30,8 @@ FULL_ALLOWED_SOURCES = frozenset((*FULL_SOURCE_CODES, "all"))
 MAX_UI_LIMIT = 3
 MAX_MANUAL_LIMIT = 100
 MIN_PAUSE_SECONDS = 20.0
+MAX_RETAINED_RUNS = 50
+_ACTIVE_STATUSES = frozenset({"queued", "running"})
 
 
 class CommercialQaUnavailable(RuntimeError):
@@ -82,7 +84,7 @@ class DisabledCommercialQaService:
     def overview(self) -> dict[str, Any]:
         return {"enabled": False, "reason": self.reason, "runs": [], "manifest": {}, "xml": None}
 
-    def start(self, source: str, limit: int, dry_run: bool) -> CommercialQaRun:
+    def start(self, source: str, limit: int, dry_run: bool, **kwargs: Any) -> CommercialQaRun:
         raise CommercialQaUnavailable(self.reason)
 
     def run(self, run_id: str) -> dict[str, Any] | None:
@@ -141,49 +143,119 @@ class CommercialQaService:
         self.server_system_identifier = server_system_identifier
         self.server_mode = server_mode
         self._runs: dict[str, CommercialQaRun] = {}
+        # Per run: (scalar fields as last written, rows list object id, rows written).
+        self._journaled: dict[str, tuple[dict[str, Any], int, int]] = {}
         self._lock = Lock()
         self._load_journal()
 
     def _record_event(self, run: CommercialQaRun) -> None:
-        """Append a complete state checkpoint without storing DB credentials."""
+        """Append only what changed since the last line (no DB credentials are stored).
+
+        Line kinds: ``snapshot`` (scalar fields), ``patch`` (changed fields),
+        ``row`` (one appended row), ``rows`` (whole list replaced). A status
+        change is fsynced; progress lines are flushed only.
+        """
         run_dir = self.artifacts_dir / run.id
         run_dir.mkdir(parents=True, exist_ok=True)
-        body = (json.dumps(run.public(), ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+        state = run.public()
+        rows = run.rows or []
+        state.pop("rows", None)
+        previous = self._journaled.get(run.id)
+        events: list[dict[str, Any]] = []
+        if previous is None:
+            events.append({"id": run.id, "event": "snapshot", "fields": state})
+            written_fields, rows_id, rows_written = state, id(run.rows), 0
+        else:
+            written_fields, rows_id, rows_written = previous
+            changed = {key: value for key, value in state.items() if written_fields.get(key) != value}
+            if changed:
+                events.append({"id": run.id, "event": "patch", "fields": changed})
+        if rows_id == id(run.rows) and len(rows) >= rows_written:
+            events.extend({"id": run.id, "event": "row", "row": row} for row in rows[rows_written:])
+        else:
+            events.append({"id": run.id, "event": "rows", "rows": rows})
+        if not events:
+            return
+        body = "".join(json.dumps(event, ensure_ascii=False, sort_keys=True, default=str) + "\n" for event in events)
+        durable = previous is None or written_fields.get("status") != state.get("status")
         with (run_dir / "events.jsonl").open("ab") as handle:
-            handle.write(body)
+            handle.write(body.encode("utf-8"))
             handle.flush()
-            os.fsync(handle.fileno())
+            if durable:
+                os.fsync(handle.fileno())
+        self._journaled[run.id] = (state, id(run.rows), len(rows))
+
+    @staticmethod
+    def _replay(events: Path, run_id: str) -> dict[str, Any] | None:
+        """Rebuild one run from its journal, streaming line by line."""
+        state: dict[str, Any] | None = None
+        rows: list[Any] = []
+        with events.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(item, dict) or item.get("id") != run_id:
+                    continue
+                kind = item.get("event")
+                if kind is None:  # legacy journal line: a complete checkpoint
+                    state = {key: value for key, value in item.items() if key != "rows"}
+                    rows = list(item.get("rows") or [])
+                elif kind == "snapshot" and isinstance(item.get("fields"), dict):
+                    state = dict(item["fields"]); rows = []
+                elif state is None:
+                    continue
+                elif kind == "patch" and isinstance(item.get("fields"), dict):
+                    state.update(item["fields"])
+                elif kind == "row":
+                    rows.append(item.get("row"))
+                elif kind == "rows" and isinstance(item.get("rows"), list):
+                    rows = list(item["rows"])
+        if state is None:
+            return None
+        state["rows"] = rows
+        return state
+
+    def _evict_old_runs(self) -> None:
+        """Keep the newest MAX_RETAINED_RUNS in memory; active runs are never evicted."""
+        finished = sorted((item for item in self._runs.values() if item.status not in _ACTIVE_STATUSES),
+                          key=lambda item: item.started_at, reverse=True)
+        active = len(self._runs) - len(finished)
+        for item in finished[max(0, MAX_RETAINED_RUNS - active):]:
+            del self._runs[item.id]
+            self._journaled.pop(item.id, None)
 
     def _load_journal(self) -> None:
         if not self.artifacts_dir.is_dir():
             return
         fields = set(CommercialQaRun.__dataclass_fields__)
+        journals = []
         for run_dir in self.artifacts_dir.iterdir():
             if not run_dir.is_dir() or not re.fullmatch(r"[0-9a-f]{32}", run_dir.name):
                 continue
             events = run_dir / "events.jsonl"
-            if not events.is_file():
-                continue
-            last = None
-            for line in events.read_text(encoding="utf-8", errors="replace").splitlines():
-                try:
-                    item = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(item, dict) and item.get("id") == run_dir.name:
-                    last = item
+            if events.is_file():
+                journals.append((events.stat().st_mtime, run_dir.name, events))
+        # Only the newest runs are replayed into memory; older journals stay on disk.
+        for _, run_id, events in sorted(journals, reverse=True)[:MAX_RETAINED_RUNS]:
+            last = self._replay(events, run_id)
             if last is None:
                 continue
             try:
                 run = CommercialQaRun(**{key: value for key, value in last.items() if key in fields})
             except (TypeError, ValueError):
                 continue
-            if run.status in {"queued", "running"}:
+            rows = run.rows
+            run.rows = rows if rows else None
+            self._journaled[run.id] = ({k: v for k, v in run.public().items() if k != "rows"}, id(run.rows), len(rows or []))
+            if run.status in _ACTIVE_STATUSES:
                 run.status = "interrupted"
                 run.finished_at = _utc_now()
                 run.error = "Панель была остановлена; автоматический повтор запрещён. Проверьте отчёт и БД."
                 self._record_event(run)
             self._runs[run.id] = run
+        self._evict_old_runs()
 
     @staticmethod
     def _database_counts(repository: Any) -> dict[str, int]:
@@ -498,6 +570,7 @@ class CommercialQaService:
             except OSError:
                 del self._runs[run.id]
                 raise CommercialQaUnavailable("Не удалось создать журнал запуска; сбор не начат.")
+            self._evict_old_runs()
         Thread(target=self._execute, args=(run.id,), name=f"commercial-qa-{source}", daemon=True).start()
         return run
 

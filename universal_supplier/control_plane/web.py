@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import logging
 import os
 from pathlib import Path
+import re
+import secrets
 from urllib.parse import parse_qs, quote, urlparse
 import tempfile
 import time
@@ -28,8 +31,9 @@ from .queue import InMemoryJobQueue, PostgresJobQueue
 from .rate_control import DomainRatePolicy, OPTIMUM_DEFAULT_RATE_POLICY, PARTNER_ST_DEFAULT_RATE_POLICY
 from .scheduler import controls_to_schedule, schedule_to_controls, validate_schedule
 from .security import AuthUser, LoginThrottle, PostgresLoginThrottle, SessionSigner, dummy_password_hash, hash_password, verify_password
-from .store import PostgresControlPlaneStore, ProductFilters, SnapshotControlPlaneStore, UnavailableControlPlaneStore
+from .store import MAX_PAGE, PostgresControlPlaneStore, ProductFilters, SnapshotControlPlaneStore, UnavailableControlPlaneStore
 
+LOGGER = logging.getLogger(__name__)
 PACKAGE = Path(__file__).resolve().parent
 ROOT = Path(__file__).resolve().parents[2]
 SUPPORTED_WEB_CRAWL_TYPES = frozenset({"full"})
@@ -50,6 +54,7 @@ RU_LABELS = {
     "SUPPLIER_ENABLED_CHANGED":"Изменено состояние поставщика", "SCHEDULE_CHANGED":"Изменено расписание",
     "MANUAL_CRAWL_ENQUEUED":"Ручной сбор поставлен в очередь", "CANDIDATE_REJECTED":"Кандидат отклонён",
     "REVIEW_REQUIRED_SOURCE_CHANGED":"Требуется повторная проверка после изменения",
+    "LOGIN_SUCCEEDED":"Успешный вход", "LOGIN_FAILED":"Неудачный вход",
 }
 
 PRODUCT_KIND_LABELS = {
@@ -140,10 +145,50 @@ def safe_next(value: str | None) -> str:
     return "/" if parsed.scheme or parsed.netloc else value
 
 
+_ID_RE = re.compile(r"[0-9]+")
+
+
+def is_id(value) -> bool:
+    """ASCII digits only: str.isdigit() also accepts '²' and other digits int() rejects."""
+    return bool(_ID_RE.fullmatch(str(value).strip()))
+
+
 def optional_int(value: str | None, label: str) -> int | None:
     if value in {None, ""}: return None
-    if not str(value).strip().isdigit(): raise HTTPException(400, f"Некорректное значение: {label}")
-    return int(value)
+    if not is_id(value): raise HTTPException(400, f"Некорректное значение: {label}")
+    return int(str(value).strip())
+
+
+def session_cookie_secure() -> bool:
+    """Secure by default; plain HTTP must be opted into explicitly."""
+    return os.environ.get("CONTROL_PLANE_INSECURE_HTTP") != "YES"
+
+
+CONTENT_SECURITY_POLICY = ("default-src 'self'; script-src 'self' 'nonce-{nonce}'; frame-ancestors 'none'; "
+                           "base-uri 'none'; form-action 'self'")
+PUBLIC_COMPONENT_STATES = frozenset({"ok", "stale", "failing"})
+HEALTHY_DATABASE_STATES = frozenset({"ok", "demo_snapshot"})
+
+
+def public_health(status: dict) -> tuple[dict, int]:
+    """Unauthenticated /health body: states only. Versions, errors, DB identity go to the log."""
+    healthy = status.get("postgresql") in HEALTHY_DATABASE_STATES
+    body: dict = {"application": "ok" if status.get("application") == "ok" else "error",
+                  "postgresql": "ok" if healthy else "error"}
+    components = status.get("components")
+    degraded = bool(status.get("degraded")) or components == "unavailable"
+    if isinstance(components, dict):
+        public = {}
+        for name, item in components.items():
+            state = item.get("status") if isinstance(item, dict) else None
+            # not_running: the loop is silent, which is what "stale" means publicly.
+            public[str(name)] = state if state in PUBLIC_COMPONENT_STATES else ("stale" if state == "not_running" else "failing")
+        body["components"] = public
+        degraded = degraded or any(state != "ok" for state in public.values())
+    body["degraded"] = degraded
+    if not healthy or degraded:
+        LOGGER.warning("health check not ok: %s", status)
+    return body, 200 if healthy else 503
 
 
 def filters_from_request(request: Request, *, forced_decision: str = "") -> ProductFilters:
@@ -220,7 +265,22 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             "safety_banner": "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
             "commercial_qa_available": bool(getattr(commercial_qa_service, "enabled", False)),
             "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
-            "control_plane_read_only": read_only_source, **values}
+            "control_plane_read_only": read_only_source,
+            "csp_nonce": getattr(request.state, "csp_nonce", ""), **values}
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = nonce
+        response = await call_next(request)
+        headers = response.headers
+        headers["X-Frame-Options"] = "DENY"
+        headers["X-Content-Type-Options"] = "nosniff"
+        headers["Referrer-Policy"] = "no-referrer"
+        headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY.format(nonce=nonce)
+        if headers.get("content-type", "").startswith("text/html"):
+            headers["Cache-Control"] = "no-store"
+        return response
 
     @app.middleware("http")
     async def block_qa_source_writes(request: Request, call_next):
@@ -256,18 +316,27 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     async def login(request: Request):
         require_trusted_origin(request); values = await form_values(request)
         throttle_key = (values.get("username", "").strip().lower(), request.client.host if request.client else "")
+        def audit_login(action: str, user_id, reason: str) -> None:
+            # Never the password; a failed audit write must not break login.
+            try: admin_store.audit(user_id, action, "user", user_id if user_id is not None else throttle_key[0][:150], None,
+                                   {"username": throttle_key[0][:150], "client": throttle_key[1], "reason": reason})
+            except Exception: LOGGER.warning("could not audit %s", action, exc_info=True)
         if login_throttle.locked(throttle_key):
+            audit_login("LOGIN_FAILED", None, "throttled")
             return templates.TemplateResponse(request, "login.html", context(request, users_exist=admin_store.users_exist(), error="Слишком много неудачных попыток входа. Повторите позже", active=""), status_code=429)
         found = admin_store.user_by_username(values.get("username", ""))
         # Always run scrypt so unknown usernames cost the same as wrong passwords.
         password_ok = verify_password(values.get("password", ""), found[1] if found else dummy_password_hash())
         if not found or not found[0].is_active or not password_ok:
             login_throttle.failure(throttle_key)
+            audit_login("LOGIN_FAILED", found[0].id if found else None,
+                        "unknown_user" if not found else "inactive" if not found[0].is_active else "bad_password")
             return templates.TemplateResponse(request, "login.html", context(request, users_exist=admin_store.users_exist(), error="Неверное имя пользователя или пароль", active=""), status_code=401)
         login_throttle.reset(throttle_key)
         user, _ = found; admin_store.touch_login(user.id); token, _ = signer.issue(user)
+        audit_login("LOGIN_SUCCEEDED", user.id, "password")
         response = RedirectResponse(safe_next(values.get("next")), 303)
-        response.set_cookie(signer.cookie_name, token, httponly=True, samesite="lax", secure=os.environ.get("HTTPS_ENABLED") == "YES", max_age=signer.ttl_seconds, path="/")
+        response.set_cookie(signer.cookie_name, token, httponly=True, samesite="lax", secure=session_cookie_secure(), max_age=signer.ttl_seconds, path="/")
         return response
 
     @app.post("/logout")
@@ -317,7 +386,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     def filtered_review_cases(request: Request):
         q = request.query_params; optional_int(q.get("assignee"), "исполнитель")
-        return admin_store.review_cases(status=q.get("status", ""), supplier=q.get("supplier", ""), decision=q.get("decision", ""), assignee=q.get("assignee", ""), brand=q.get("brand", ""), category=q.get("category", ""), opened_from=q.get("opened_from", ""), opened_to=q.get("opened_to", ""))
+        try: return admin_store.review_cases(status=q.get("status", ""), supplier=q.get("supplier", ""), decision=q.get("decision", ""), assignee=q.get("assignee", ""), brand=q.get("brand", ""), category=q.get("category", ""), opened_from=q.get("opened_from", ""), opened_to=q.get("opened_to", ""))
+        except ValueError as error: raise HTTPException(400, str(error)) from error
 
     @app.get("/review", response_class=HTMLResponse)
     def review(request: Request):
@@ -358,23 +428,25 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.post("/review/bulk/assign")
     async def bulk_assign(request: Request):
         user = guard(request, MUTATING_ROLES); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
-        case_ids = [int(x) for x in values.get("case_ids", "").split(",") if x.strip().isdigit()]
-        admin_store.assign(case_ids, optional_int(values.get("assigned_to_user_id"), "исполнитель"), user.id)
+        case_ids = [int(x) for x in values.get("case_ids", "").split(",") if is_id(x)]
+        try: admin_store.assign(case_ids, optional_int(values.get("assigned_to_user_id"), "исполнитель"), user.id)
+        except (ValueError, KeyError) as error: return page_error(request, str(error))
         return RedirectResponse("/review?bulk_saved=1", 303)
 
     @app.post("/review/bulk")
     async def safe_bulk(request: Request):
         user = guard(request, MUTATING_ROLES); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
-        case_ids = [int(value) for key, value in values.items() if key.startswith("case_") and value.isdigit()]
+        case_ids = [int(value) for key, value in values.items() if key.startswith("case_") and is_id(value)]
         if not case_ids: return page_error(request, "Выберите хотя бы одну карточку")
         action = values.get("bulk_action", "")
+        skipped = 0
         try:
             if action == "assign":
                 admin_store.assign(case_ids, optional_int(values.get("assigned_to_user_id"), "исполнитель"), user.id)
             else:
-                admin_store.bulk_update(case_ids, action, user.id, values.get("comment", ""))
+                skipped = int((admin_store.bulk_update(case_ids, action, user.id, values.get("comment", "")) or {}).get("skipped_resolved", 0))
         except (ValueError, KeyError) as error: return page_error(request, str(error))
-        return RedirectResponse("/review?bulk_saved=1", 303)
+        return RedirectResponse(f"/review?bulk_saved=1&skipped_resolved={skipped}" if skipped else "/review?bulk_saved=1", 303)
 
     @app.get("/suppliers", response_class=HTMLResponse)
     def suppliers(request: Request):
@@ -592,8 +664,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         rule_type=values.get("rule_type","FORCE_REVIEW"); config_value=values.get("config_value","").strip(); config={}
         if rule_type in {"BRAND_OVERRIDE","CATEGORY_OVERRIDE"}: config={"value":config_value}
         elif rule_type=="DO_NOT_USE_SUPPLIER_FIELD": config={"field":config_value}
-        elif rule_type=="PROPERTY_MAPPING_OVERRIDE" and config_value.isdigit(): config={"canonical_property_id":int(config_value)}
-        before=None; created=stage6e_service.add_rule({"supplier_id":values.get("supplier_id"),"scope":values.get("scope","product"),"entity_key":values.get("entity_key",""),"rule_type":rule_type,"config":config,"reason":values["reason"].strip()},user.id)
+        elif rule_type=="PROPERTY_MAPPING_OVERRIDE" and is_id(config_value): config={"canonical_property_id":int(config_value)}
+        before=None
+        try: created=stage6e_service.add_rule({"supplier_id":values.get("supplier_id"),"scope":values.get("scope","product"),"entity_key":values.get("entity_key",""),"rule_type":rule_type,"config":config,"reason":values["reason"].strip()},user.id)
+        except (ValueError,KeyError) as error: return page_error(request,f"Правило не сохранено: {error}")
         admin_store.audit(user.id,"BUSINESS_RULE_CREATED","business_rule",created["id"],before,dict(created))
         return RedirectResponse("/rules?saved=1",303)
 
@@ -678,7 +752,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/sterbrust-preview", response_class=HTMLResponse)
     def sterbrust_preview(request: Request):
-        guard(request); result=stage6e_service.preview(page=max(1,optional_int(request.query_params.get("page"),"страница") or 1),page_size=100)
+        guard(request); result=stage6e_service.preview(page=min(MAX_PAGE,max(1,optional_int(request.query_params.get("page"),"страница") or 1)),page_size=100)
         return templates.TemplateResponse(request,"sterbrust_preview.html",context(request,result=result,active="preview"))
 
     def _xml_payload(request: Request):
@@ -716,7 +790,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             except FeedGenerationError as exc:
                 error = "XML не выдан: " + "; ".join(exc.violations[:20])
             except Exception as exc:
-                error = f"XML не выдан: {type(exc).__name__}: {str(exc)[:500]}"
+                LOGGER.exception("XML export failed")
+                viewer = current_user(request)
+                detail = f": {str(exc)[:500]}" if viewer and viewer.role == "ADMIN" else ""
+                error = f"XML не выдан: {type(exc).__name__}{detail}"
         return mode, filters, summary, stats, preview_text, error, data, filename
 
     @app.get("/exports/xml", response_class=HTMLResponse)
@@ -775,9 +852,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.get("/changes/export.{extension}")
     def changes_export(request:Request,extension:str):
         user=guard(request); period=request.query_params.get("period","7d")
-        if period not in {"last_run","24h","7d","between"} or (period=="between" and not (request.query_params.get("run_a","").isdigit() and request.query_params.get("run_b","").isdigit())):
+        if period not in {"last_run","24h","7d","between"} or (period=="between" and not (is_id(request.query_params.get("run_a","")) and is_id(request.query_params.get("run_b","")))):
             raise HTTPException(400,"Для диапазона нужны корректные Run A и Run B")
-        try: rows=store.change_rows(period=period,run_a=int(request.query_params["run_a"]) if request.query_params.get("run_a","").isdigit() else None,run_b=int(request.query_params["run_b"]) if request.query_params.get("run_b","").isdigit() else None)
+        try: rows=store.change_rows(period=period,run_a=int(request.query_params["run_a"]) if is_id(request.query_params.get("run_a","")) else None,run_b=int(request.query_params["run_b"]) if is_id(request.query_params.get("run_b","")) else None)
         except ValueError as error: raise HTTPException(400,str(error))
         columns=(("supplier_name","Поставщик"),("external_id","External ID"),("article","Артикул"),("field","Поле"),("old_value","Было"),("new_value","Стало"),("changed_at","Время"),("run_id","Run ID"))
         admin_store.audit(user.id or None,"EXPORT_CREATED","changes",extension,None,{"rows":len(rows),"period":period})
@@ -901,7 +978,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         guard(request)
         try:
             data=final_release_store().page(request.query_params.get("classification",""),
-                                           request.query_params.get("supplier",""),int(request.query_params.get("page","1")))
+                                           request.query_params.get("supplier",""),min(MAX_PAGE,int(request.query_params.get("page","1"))))
         except ValueError as error: raise HTTPException(400,str(error))
         return templates.TemplateResponse(request,"final_release.html",context(request,release=data,active="rc_final"))
 
@@ -911,14 +988,15 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         if not filename.endswith((".xml",".csv",".xlsx")): raise HTTPException(404,"Файл не найден")
         try: body=final_release_store().file(filename)
         except ValueError: raise HTTPException(404,"Файл не прошёл SHA/allowlist проверку")
+        except OSError: raise HTTPException(404,"Файл не найден")
         return Response(body,media_type="application/octet-stream",headers={"Content-Disposition":f'attachment; filename="{filename}"'})
 
     @app.get("/health")
     def health():
-        status = store.health(); return JSONResponse(status, status_code=200 if status.get("postgresql") in {"ok", "demo_snapshot"} else 503)
+        body, status_code = public_health(store.health()); return JSONResponse(body, status_code=status_code)
     @app.get("/ready")
     def ready():
-        status = store.health(); ok = status.get("postgresql") in {"ok", "demo_snapshot"}; return JSONResponse({"ready":ok}, status_code=200 if ok else 503)
+        status = store.health(); ok = status.get("postgresql") in HEALTHY_DATABASE_STATES; return JSONResponse({"ready":ok}, status_code=200 if ok else 503)
     return app
 
 
@@ -929,7 +1007,7 @@ def create_unavailable_app(message: str) -> FastAPI:
     app.state.store = store; app.state.auth_required = True
 
     @app.get("/health")
-    def health(): return JSONResponse(store.health(), status_code=503)
+    def health(): return JSONResponse(public_health(store.health())[0], status_code=503)
     @app.get("/ready")
     def ready(): return JSONResponse({"ready": False}, status_code=503)
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])

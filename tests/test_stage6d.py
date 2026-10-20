@@ -109,11 +109,14 @@ def test_login_failure_success_cookie_flags_and_logout():
     assert client.post("/logout", data={"csrf_token":csrf}, follow_redirects=False).status_code == 303
 
 
-def test_session_cookie_becomes_secure_when_https_is_enabled(monkeypatch):
-    monkeypatch.setenv("HTTPS_ENABLED", "YES")
+def test_session_cookie_is_secure_unless_insecure_http_is_explicit(monkeypatch):
+    monkeypatch.delenv("CONTROL_PLANE_INSECURE_HTTP", raising=False)
     admin = InMemoryAdminStore([user()]); client = TestClient(create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()), admin_store=admin, session_secret=SECRET, auth_required=True))
     response = client.post("/login", data={"username":"user1","password":PASSWORD}, follow_redirects=False)
     assert "secure" in response.headers["set-cookie"].lower()
+    monkeypatch.setenv("CONTROL_PLANE_INSECURE_HTTP", "YES")
+    response = client.post("/login", data={"username":"user1","password":PASSWORD}, follow_redirects=False)
+    assert "secure" not in response.headers["set-cookie"].lower()
 
 
 @pytest.mark.parametrize("path", ["/", "/products?page_size=25", "/review", "/suppliers", "/runs", "/scheduler", "/settings"])

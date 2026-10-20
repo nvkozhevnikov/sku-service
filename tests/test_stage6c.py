@@ -153,7 +153,7 @@ def test_web_pages_filters_banner_health_and_enqueue_only():
     filtered = client.get("/products?supplier=optimum&page_size=25")
     assert "Optimum" in filtered.text and "server-side filtering" in filtered.text
     health = client.get("/health")
-    assert health.status_code == 200 and health.json()["postgresql"] == "demo_snapshot"
+    assert health.status_code == 200 and health.json()["postgresql"] == "ok"
     response = client.post("/suppliers/1/start", data={"crawl_type": "full"}, follow_redirects=False)
     assert response.status_code == 303 and queue.jobs[0]["status"] == "queued"
     assert not any(token in route.path.lower() for route in client.app.routes for token in ("sterbrust/write", "import", "product/create"))

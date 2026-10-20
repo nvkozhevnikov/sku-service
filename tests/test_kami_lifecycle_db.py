@@ -410,3 +410,41 @@ def test_human_authority_over_different_automatic_candidate(fixture):
     selected=next(r for r in snapshot.selected_rows if r.source_product_id==f['source'])
     assert selected.current_match_catalog_product_id==catalog
     assert selected.effective_manual_catalog_product_id==f['catalog']
+
+
+# Security review 2026-10, item 11: the dashboard query before the LATERAL rewrite.
+LEGACY_DASHBOARD_SQL = """SELECT s.id,s.code,s.name,s.enabled,s.base_url,s.rate_settings,s.crawl_settings,
+       count(DISTINCT sp.id) AS products,
+       count(DISTINCT ce.id) FILTER (WHERE ce.created_at>now()-interval '30 days') AS errors_30d,
+       last_run.id AS last_run_id,last_run.status AS last_status,last_run.started_at AS last_crawl,
+       last_run.metadata AS last_run_metadata,
+       last_run.discovered_count AS last_discovered_count,last_run.new_count AS last_new_count,
+       last_run.changed_count AS last_changed_count,last_run.error_count AS last_error_count,
+       CASE WHEN last_run.finished_at IS NULL THEN NULL ELSE round(extract(epoch FROM (last_run.finished_at-last_run.started_at)))::int END AS last_duration_seconds,
+       active.status AS job_status,active.id AS job_id,
+       ss.enabled AS schedule_enabled,ss.cron_expression,ss.timezone
+FROM suppliers s
+LEFT JOIN source_products sp ON sp.supplier_id=s.id AND sp.active
+LEFT JOIN crawl_errors ce ON ce.supplier_id=s.id
+LEFT JOIN LATERAL (SELECT id,status,started_at,finished_at,discovered_count,new_count,changed_count,error_count,metadata FROM crawl_runs WHERE supplier_id=s.id ORDER BY started_at DESC LIMIT 1) last_run ON true
+LEFT JOIN LATERAL (SELECT id,status FROM crawl_jobs WHERE supplier_id=s.id AND status IN ('queued','running') ORDER BY id LIMIT 1) active ON true
+LEFT JOIN supplier_schedules ss ON ss.supplier_id=s.id
+GROUP BY s.id,last_run.id,last_run.status,last_run.started_at,last_run.finished_at,last_run.discovered_count,last_run.new_count,last_run.changed_count,last_run.error_count,last_run.metadata,active.status,active.id,ss.enabled,ss.cron_expression,ss.timezone
+ORDER BY s.name,s.id"""
+
+
+def test_dashboard_lateral_counts_match_legacy_group_by(fixture):
+    from universal_supplier.control_plane.store import DASHBOARD_SQL
+    f=fixture;c=f['c']
+    run=c.execute("SELECT id FROM crawl_runs WHERE supplier_id=%s ORDER BY id DESC LIMIT 1",(f['supplier'],)).fetchone()[0]
+    for index in range(3):  # several products x several errors: the legacy join multiplied these rows
+        c.execute("""INSERT INTO source_products(supplier_id,external_id,external_id_is_stable,name,source_url,first_seen_at,last_seen_at,last_success_at)
+            VALUES(%s,%s,true,'Scratch extra','https://example.invalid/extra/',now(),now(),now())""",(f['supplier'],f"{f['external']}-x{index}"))
+    for age in ('1 day','2 days','40 days'):
+        c.execute("""INSERT INTO crawl_errors(crawl_run_id,supplier_id,url,error_type,message,created_at)
+            VALUES(%s,%s,'https://example.invalid/e','TIMEOUT','scratch',now()-%s::interval)""",(run,f['supplier'],age))
+    legacy=c.execute(LEGACY_DASHBOARD_SQL).fetchall()
+    current=c.execute(DASHBOARD_SQL).fetchall()
+    assert current==legacy
+    partner=next(row for row in current if row[0]==f['supplier'])
+    assert partner[8]>=2  # errors_30d counts each recent error once

@@ -13,6 +13,12 @@ psql --set=ON_ERROR_STOP=1 \
 -- The password is read from the environment (psql 15+ \getenv), never from argv,
 -- so it is not visible in the process list.
 \getenv app_db_password APP_DB_PASSWORD
+-- The generated CREATE/ALTER ROLE text contains the password: keep it out of the
+-- server log (statement logging and the statement echoed with an error).
+BEGIN;
+SET LOCAL log_statement = 'none';
+SET LOCAL log_min_error_statement = 'panic';
+SET LOCAL log_min_duration_statement = -1;
 SELECT format(
   'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
   :'app_db_user', :'app_db_password'
@@ -22,6 +28,7 @@ SELECT format(
   'ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
   :'app_db_user', :'app_db_password'
 ) \gexec
+COMMIT;
 
 SELECT format('CREATE DATABASE %I OWNER %I ENCODING %L', :'app_db_name', :'app_db_user', 'UTF8')
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'app_db_name') \gexec

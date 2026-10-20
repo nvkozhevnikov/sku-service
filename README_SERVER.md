@@ -12,6 +12,10 @@ docs/SUPPLIER_NEUTRAL_V2_CONTRACT.md. Real Linux restore/deployment is NOT verif
 2. Copy .env.server.example to .env.server, mode0600. Supply independent
    admin/app/session secrets separately. DB_HOST/PORT/NAME/USER/PASSWORD/SSLMODE
    configure application. Never commit/log populated .env.
+   The session cookie is `Secure` by default, so the panel must be served over
+   HTTPS. Only for plain-HTTP access (for example an SSH tunnel to 127.0.0.1)
+   set `CONTROL_PLANE_INSECURE_HTTP=YES` explicitly; `HTTPS_ENABLED` is no
+   longer read.
 3. Receive separate dump/SHA/metadata. Use fresh approved persistent PG17.11
    storage, never a copied Windows data-directory.
 4. Validate config:

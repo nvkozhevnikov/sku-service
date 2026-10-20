@@ -22,7 +22,9 @@ Internal web control plane, persistent PostgreSQL job queue, timezone-aware supp
 1. Copy `.env.example` to `.env` and replace every `CHANGE_ME` value. Keep `STAGE3B_DB_CONFIRM=NO` and `STAGE3D_DB_CONFIRM=NO`; these are unrelated historical gates.
 2. Start Docker Desktop.
 3. From this directory run `docker compose up -d postgres web orchestrator`.
-4. Open `http://127.0.0.1:8080/`. Health endpoints are `/health` and `/ready`.
+4. Open `http://127.0.0.1:8080/`. Health endpoints are `/health` and `/ready`; `/health` returns only states (`postgresql`: `ok`/`error`, component states, `degraded`), details go to the log.
+
+The session cookie is `Secure` by default. `.env.example` sets `CONTROL_PLANE_INSECURE_HTTP=YES` for this local plain-HTTP setup only; never set it for a server reachable over the network.
 
 View service state with `docker compose ps` and logs with `docker compose logs -f web orchestrator`. Stop with `docker compose down` (data remains in `universal_supplier_pgdata`).
 

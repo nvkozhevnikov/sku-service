@@ -248,6 +248,32 @@ def validate_fetch_targets(fetch, allowed_hosts: Sequence[str], *, resolve_dns: 
             validate_supplier_url(str(target), allowed_hosts, resolve_dns=resolve_dns)
 
 
+RULE_SCOPES = frozenset({"supplier", "product", "category", "property"})
+RULE_TYPES = frozenset({"IGNORE_PRODUCT", "DO_NOT_IMPORT", "FORCE_REVIEW", "BRAND_OVERRIDE", "CATEGORY_OVERRIDE",
+                        "PROPERTY_MAPPING_OVERRIDE", "DO_NOT_USE_SUPPLIER_FIELD"})
+PROPERTY_SCOPE_RULE_TYPES = frozenset({"PROPERTY_MAPPING_OVERRIDE", "DO_NOT_USE_SUPPLIER_FIELD"})
+
+
+def validate_rule_values(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate an operator business rule before SQL (no 500 on a bad form value)."""
+    result = dict(values)
+    raw_supplier = str(values.get("supplier_id") or "").strip()
+    if raw_supplier and not re.fullmatch(r"[0-9]+", raw_supplier):
+        raise ValueError("Некорректный поставщик")
+    result["supplier_id"] = int(raw_supplier) if raw_supplier else None
+    scope = str(values.get("scope") or "")
+    rule_type = str(values.get("rule_type") or "")
+    if scope not in RULE_SCOPES:
+        raise ValueError("Недопустимая область правила")
+    if rule_type not in RULE_TYPES:
+        raise ValueError("Недопустимый тип правила")
+    if scope == "property" and rule_type not in PROPERTY_SCOPE_RULE_TYPES:
+        raise ValueError("Область «свойство» допустима только для правил свойств")
+    if scope == "supplier" and result["supplier_id"] is None:
+        raise ValueError("Для правила поставщика выберите поставщика")
+    return result
+
+
 def raw_normalized_diff(current: Mapping[str, Any], proposed: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     keys = sorted(set(current) | set(proposed))
     return {key: {"current": current.get(key), "proposed": proposed.get(key)}
@@ -504,7 +530,7 @@ class InMemoryStage6EService:
                 "summary": {key:0 for key in ("price_changes","availability_changes","quantity_changes","no_changes","blocked_by_conflict","needs_review","new_products","accessories","excluded_by_rule","missing_supplier_data","anomaly_guard_blocked")}}
 
     def add_rule(self, values: Mapping[str, Any], user_id: int) -> dict[str, Any]:
-        row = {"id": len(self.rules)+1, **dict(values), "created_by": user_id, "active": True}
+        row = {"id": len(self.rules)+1, **validate_rule_values(values), "created_by": user_id, "active": True}
         self.rules.append(row)
         return row
 
@@ -700,10 +726,11 @@ class PostgresStage6EService:
 
     def add_rule(self, values: Mapping[str, Any], user_id: int) -> dict[str, Any]:
         import json
+        values = validate_rule_values(values)
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("""INSERT INTO business_rules(supplier_id,scope,entity_key,rule_type,config,reason,created_by)
               VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s) RETURNING *""",
-              (values.get("supplier_id") or None, values["scope"], values.get("entity_key") or None,
+              (values["supplier_id"], values["scope"], values.get("entity_key") or None,
                values["rule_type"], json.dumps(values.get("config", {})), values["reason"], user_id))
             return cursor.fetchone()
 
@@ -844,21 +871,31 @@ class PostgresStage6EService:
         from universal_supplier.models import ProductCard
         from universal_supplier.postgres import PostgresRepository
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("""SELECT rp.*,s.code AS supplier_code FROM reparse_previews rp
-              JOIN source_products sp ON sp.id=rp.source_product_id JOIN suppliers s ON s.id=sp.supplier_id
-              WHERE rp.id=%s FOR UPDATE""",(preview_id,))
+            # Atomic claim on an autocommit connection (a SELECT ... FOR UPDATE
+            # there holds no lock): exactly one concurrent request wins.
+            cursor.execute("""UPDATE reparse_previews rp SET persisted=true
+              FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+              WHERE rp.id=%s AND NOT rp.persisted AND sp.id=rp.source_product_id
+              RETURNING rp.*,s.code AS supplier_code""",(preview_id,))
             preview=cursor.fetchone()
-            if not preview: raise KeyError("Предпросмотр не найден")
-            if preview["persisted"]: raise ValueError("Предпросмотр уже сохранён")
-        card=ProductCard.from_jsonable(preview["proposed_data"])
-        repository=PostgresRepository(self.config)
+            if not preview:
+                cursor.execute("SELECT persisted FROM reparse_previews WHERE id=%s",(preview_id,))
+                existing=cursor.fetchone()
+                if not existing: raise KeyError("Предпросмотр не найден")
+                raise ValueError("Предпросмотр уже сохранён")
         try:
-            repository.ingest([card],datetime.now(timezone.utc).isoformat(),supplier_code=preview["supplier_code"])
-        finally:
-            repository.close()
-        with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("UPDATE reparse_previews SET persisted=true WHERE id=%s RETURNING *",(preview_id,))
-            return cursor.fetchone()
+            card=ProductCard.from_jsonable(preview["proposed_data"])
+            repository=PostgresRepository(self.config)
+            try:
+                repository.ingest([card],datetime.now(timezone.utc).isoformat(),supplier_code=preview["supplier_code"])
+            finally:
+                repository.close()
+        except Exception:
+            # Release the claim so the operator can retry after a failed ingest.
+            with self._connect() as connection, connection.cursor() as cursor:
+                cursor.execute("UPDATE reparse_previews SET persisted=false WHERE id=%s",(preview_id,))
+            raise
+        return {key: value for key, value in preview.items() if key != "supplier_code"}
 
     def preview(self, page: int = 1, page_size: int = 100) -> dict[str, Any]:
         # All classes are scanned in bounded chunks; only one requested page is retained.

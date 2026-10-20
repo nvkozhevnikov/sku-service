@@ -27,7 +27,7 @@
 </section>
 <section class="panel"><h3>Диагностический XML</h3><p>{{data.xml.notice}}</p><p>Обновляется после успешной записи. SHA-256: <code>{{data.xml.sha256}}</code></p>{% if data.xml.sha256 %}<a class="button secondary" href="/commercial-qa/xml">Открыть XML</a> <a class="button secondary" href="/commercial-qa/xml/download">Скачать XML</a>{% endif %}</section>
 <section class="panel"><h3>Локальная история ручных запусков</h3><p>Состояния сохраняются в JSONL рядом с отчётами. Прерванные задания не перезапускаются автоматически.</p><table><thead><tr><th>Время</th><th>Источник</th><th>Обработано</th><th>Статус</th><th>Новые observations</th></tr></thead><tbody>{% for run in data.runs %}<tr><td>{{run.started_at}}</td><td>{{run.source}}</td><td>{{run.processed or 0}} / {{run.total or run.limit}}</td><td><a href="/commercial-qa/runs/{{run.id}}">{{run.status}}</a></td><td>{{run.site_summary.observations_created if run.site_summary else 'ожидание'}}</td></tr>{% else %}<tr><td colspan="5">Локальных запусков пока нет.</td></tr>{% endfor %}</tbody></table></section>
-<script>
+<script nonce="{{csp_nonce}}">
 const source = document.getElementById('commercial-source');
 const scope = document.getElementById('commercial-scope');
 const mode = document.getElementById('commercial-mode');

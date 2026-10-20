@@ -185,5 +185,5 @@ def test_iter_export_rows_uses_server_side_cursor_in_transaction():
 
 def test_compose_and_dockerfiles_hardened():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8"); server = (ROOT / "docker-compose.server.yml").read_text(encoding="utf-8")
-    assert "${SESSION_SIGNING_SECRET:?set in .env}" in compose and "HTTPS_ENABLED: ${HTTPS_ENABLED:-NO}" in server
+    assert "${SESSION_SIGNING_SECRET:?set in .env}" in compose and "CONTROL_PLANE_INSECURE_HTTP: ${CONTROL_PLANE_INSECURE_HTTP:-NO}" in server
     assert "\nUSER app" in (ROOT / "Dockerfile.server").read_text(encoding="utf-8") and "\nUSER app" in (ROOT / "Dockerfile").read_text(encoding="utf-8")

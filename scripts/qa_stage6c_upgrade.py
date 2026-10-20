@@ -12,10 +12,20 @@ import psycopg
 from psycopg import sql
 
 ROOT = Path(__file__).resolve().parents[1]
-DB = os.environ.get("QA_UPGRADE_DB_NAME", "stage6c_upgrade_qa")
+QA_DATABASE_PREFIX = "universal_supplier_qa_"
+DB = os.environ.get("QA_UPGRADE_DB_NAME", "universal_supplier_qa_stage6c_upgrade")
+
+
+def checked_qa_database(name: str, application_database: str) -> str:
+    """This script DROPs its target: refuse anything that is not a dedicated QA database."""
+    if not name.startswith(QA_DATABASE_PREFIX) or name == application_database:
+        raise SystemExit(f"Refusing to drop {name!r}: QA_UPGRADE_DB_NAME must start with "
+                         f"{QA_DATABASE_PREFIX!r} and differ from DB_NAME")
+    return name
 
 
 def main() -> None:
+    checked_qa_database(DB, os.environ.get("DB_NAME", ""))
     admin = dict(host=os.environ["DB_HOST"], port=os.environ.get("DB_PORT", "5432"),
                  dbname="postgres", user=os.environ["POSTGRES_ADMIN_USER"],
                  password=os.environ["POSTGRES_ADMIN_PASSWORD"], sslmode=os.environ.get("DB_SSLMODE", "disable"))
