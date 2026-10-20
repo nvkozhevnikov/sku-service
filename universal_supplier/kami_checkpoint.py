@@ -1,11 +1,16 @@
 """Bounded atomic checkpoint replacement, tolerant of transient Windows readers."""
 import json
+import os
 import time
 
 
-def write_checkpoint(path, state, *, attempts=20, delay=0.1):
+def write_checkpoint(path, state, *, attempts=20, delay=0.1, durable=False):
     temporary = path.with_suffix('.partial')
-    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+    payload=json.dumps(state, ensure_ascii=False, indent=2)
+    if durable:
+        with temporary.open('w',encoding='utf-8') as handle:
+            handle.write(payload);handle.flush();os.fsync(handle.fileno())
+    else:temporary.write_text(payload,encoding='utf-8')
     for attempt in range(attempts):
         try:
             temporary.replace(path)
