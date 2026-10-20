@@ -154,3 +154,19 @@ def test_bounded_ingest_skips_all_global_reconciliation_and_missing(monkeypatch)
     from universal_supplier.state import discovery_health
     repo.ingest([], '2026-10-20T00:00:00Z',supplier_code='partner_st',crawl_run_id=1,discovery_health=discovery_health(1225,1225),bounded=True)
     assert calls==[False]
+
+def test_correct_cluster_guard_checks_host_address_before_enabling_writes(monkeypatch):
+    from universal_supplier.partner_pilot import PGDATA,SYSTEM
+    monkeypatch.setenv('STERBRUST_PARTNER_PILOT','YES')
+    class C:
+        sql=[]
+        def cursor(self,**kw):return self
+        def __enter__(self):return self
+        def __exit__(self,*a):pass
+        def execute(self,q):self.sql.append(q)
+        def fetchone(self):return (CFG.dbname,SYSTEM,'17.11',str(PGDATA),'127.0.0.1',55461)
+        def close(self):pytest.fail('valid identity should remain connected')
+    c=C();monkeypatch.setattr('psycopg.connect',lambda **kw:c)
+    assert connect_postgres(CFG,autocommit=True) is c
+    assert 'host(inet_server_addr())' in c.sql[0]
+    assert c.sql[1]=='SET default_transaction_read_only=off'

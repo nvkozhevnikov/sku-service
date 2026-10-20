@@ -20,7 +20,7 @@ def connect_postgres(config,**kwargs):
     c=psycopg.connect(**config.kwargs(),**kwargs,options='-c default_transaction_read_only=on')
     try:
         with c.cursor(row_factory=tuple_row) as q:
-            q.execute("SELECT current_database(),system_identifier::text,current_setting('server_version'),current_setting('data_directory'),inet_server_addr()::text,inet_server_port() FROM pg_control_system()")
+            q.execute("SELECT current_database(),system_identifier::text,current_setting('server_version'),current_setting('data_directory'),host(inet_server_addr()),inet_server_port() FROM pg_control_system()")
             db,system,version,data,host,port=q.fetchone()
             if (db,system,version,host,port)!=(DATABASE[2],SYSTEM,'17.11',DATABASE[0],DATABASE[1]) or Path(data).resolve()!=PGDATA.resolve():raise PermissionError('PILOT_CLUSTER_IDENTITY_MISMATCH')
         if not opts:c.execute('SET default_transaction_read_only=off')
