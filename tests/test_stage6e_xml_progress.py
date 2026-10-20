@@ -242,6 +242,10 @@ def test_progress_templates_compile():
     templates = Path(__file__).parents[1] / "universal_supplier" / "control_plane" / "templates"
     environment = Environment(loader=FileSystemLoader(templates))
     environment.filters["ru"] = str
+    from universal_supplier.control_plane.presentation import phase_summary
+    environment.globals["phase_summary"] = phase_summary
+    from universal_supplier.control_plane.presentation import phase_summary
+    environment.globals["phase_summary"] = phase_summary
     environment.globals["url_for"] = lambda *args, **kwargs: "/static"
     environment.get_template("run_detail.html")
     environment.get_template("runs.html")
@@ -254,6 +258,8 @@ def test_initial_discovery_progress_bar_is_indeterminate():
     templates = Path(__file__).parents[1] / "universal_supplier" / "control_plane" / "templates"
     environment = Environment(loader=FileSystemLoader(templates))
     environment.filters["ru"] = str
+    from universal_supplier.control_plane.presentation import phase_summary
+    environment.globals["phase_summary"] = phase_summary
     environment.globals["url_for"] = lambda *args, **kwargs: "/static"
     item = SimpleNamespace(id=1, supplier_name="QA", started_at="now", finished_at=None,
                            status="running", metadata={"progress": {"phase_label_ru": "Поиск товаров",

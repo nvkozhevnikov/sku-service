@@ -1,0 +1,8 @@
+{% set facts=phase_summary(item) %}
+<section class="panel"><h3>Этапы обработки</h3><dl>
+{% for label,key in [('HTTP-запрошено (включая служебные)','http_requested'),('HTTP-успешно (2xx)','http_successful'),('HTML разобрано','parsed'),('PostgreSQL сохранено','sql_count')] %}<dt>{{label}}</dt><dd>{{facts[key] if facts[key] is not none else 'нет данных'}}</dd>{% endfor %}
+<dt>PostgreSQL</dt><dd>{{facts.sql_state}}</dd><dt>Matching</dt><dd>{{facts.matching_status}}{% if facts.matching is not none %}: {{facts.matching}}{% endif %}</dd>
+<dt>Скорость HTTP, карточек/мин</dt><dd>{{facts.http_speed if facts.http_speed is not none else 'нет данных'}}</dd></dl>
+{% if facts.termination %}<p>Причина остановки: {{facts.termination}}</p>{% endif %}
+{% if facts.buckets %}<pre>{{facts.buckets | tojson(indent=2)}}</pre>{% endif %}
+<p>Прогресс HTTP не подтверждает сохранение в PostgreSQL. Отсутствующие измерения не равны нулю.</p></section>

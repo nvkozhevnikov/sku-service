@@ -163,6 +163,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     templates = Jinja2Templates(directory=PACKAGE / "templates")
     templates.env.filters["ru"] = russian_label
     templates.env.filters["product_kind_ru"] = product_kind_label
+    from .presentation import phase_summary, price_label, duration_label, mark_quality_repeats
+    templates.env.globals.update(phase_summary=phase_summary,price_label=price_label,duration_label=duration_label)
     templates.env.filters["relation_ru"] = relation_type_label
 
     def payload(request: Request):

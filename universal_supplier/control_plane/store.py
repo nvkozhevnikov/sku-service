@@ -335,30 +335,30 @@ class PostgresControlPlaneStore:
     def product_history(self, supplier_code: str, external_id: str) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("""SELECT h.changed_at,h.field_group,h.field_name,h.old_value,h.new_value,h.crawl_run_id,s.code AS supplier_code
-              FROM entity_change_history h JOIN source_products sp ON sp.id=h.source_product_id
+              FROM entity_change_history h LEFT JOIN offers ho ON ho.id=h.offer_id JOIN source_products sp ON sp.id=coalesce(h.source_product_id,ho.source_product_id)
               JOIN suppliers s ON s.id=sp.supplier_id WHERE s.code=%s AND sp.external_id=%s
               ORDER BY h.changed_at DESC,h.id DESC""", (supplier_code,external_id))
             history = list(cursor.fetchall())
-            if supplier_code in {"intervesp", "beka_mak", "beka_mak_tr", "kami"}:
-                cursor.execute("""SELECT co.observed_at,co.price_state,co.price,co.currency,
-                    co.availability_normalized,co.capture_id,s.code AS supplier_code
-                    FROM offer_commercial_observations co
-                    JOIN source_products sp ON sp.id=co.source_product_id
-                    JOIN suppliers s ON s.id=sp.supplier_id
-                    WHERE s.code=%s AND sp.external_id=%s
-                    ORDER BY co.observed_at DESC,co.id DESC""", (supplier_code, external_id))
-                for row in cursor.fetchall():
-                    price_display = (f"{row['price']} {row['currency'] or ''}".strip()
-                                     if row["price_state"] == "numeric_public" and row["price"] is not None
-                                     else "Цена по запросу" if row["price_state"] == "price_on_request"
-                                     else "Цена не указана")
-                    history.append({"changed_at": row["observed_at"], "field_group": "commercial_observation",
-                                    "field_name": "Коммерческое наблюдение", "old_value": None,
-                                    "new_value": f"{price_display}; наличие: {row['availability_normalized'] or 'unknown'}",
-                                    "crawl_run_id": None, "capture_id": row["capture_id"],
-                                    "supplier_code": row["supplier_code"]})
-                history.sort(key=lambda row: row["changed_at"], reverse=True)
+            cursor.execute("""SELECT co.observed_at,co.price_state,co.price,co.currency,
+                co.availability_normalized,co.capture_id,s.code AS supplier_code
+                FROM offer_commercial_observations co
+                JOIN source_products sp ON sp.id=co.source_product_id
+                JOIN suppliers s ON s.id=sp.supplier_id
+                WHERE s.code=%s AND sp.external_id=%s
+                ORDER BY co.observed_at DESC,co.id DESC""", (supplier_code, external_id))
+            for row in cursor.fetchall():
+                price_display = (f"{row['price']} {row['currency'] or ''}".strip()
+                                 if row["price_state"] == "numeric_public" and row["price"] is not None
+                                 else "Цена по запросу" if row["price_state"] == "price_on_request"
+                                 else "Цена не указана")
+                history.append({"changed_at": None, "observed_at": row["observed_at"], "field_group": "commercial_observation",
+                                "field_name": "Коммерческое наблюдение", "old_value": None,
+                                "new_value": f"{price_display}; наличие: {row['availability_normalized'] or 'unknown'}",
+                                "crawl_run_id": None, "capture_id": row["capture_id"],
+                                "supplier_code": row["supplier_code"]})
+            history.sort(key=lambda row: str(row.get("changed_at") or row.get("observed_at") or ""), reverse=True)
             return history
+
 
     def runs(self, limit: int = 100) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -375,6 +375,8 @@ class PostgresControlPlaneStore:
             if row:
                 cursor.execute("SELECT * FROM crawl_errors WHERE crawl_run_id=%s ORDER BY created_at,id", (run_id,))
                 row["errors"] = list(cursor.fetchall())
+                cursor.execute("SELECT field_group,count(*) AS count FROM entity_change_history WHERE crawl_run_id=%s GROUP BY field_group ORDER BY field_group",(run_id,))
+                row['history_groups']=list(cursor.fetchall())
         return row
 
     def run_progress(self, run_id: int) -> dict | None:
