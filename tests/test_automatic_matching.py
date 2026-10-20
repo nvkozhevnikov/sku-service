@@ -184,7 +184,7 @@ def test_shared_runtime_preview_and_authorized_apply_use_identical_plans(monkeyp
     cfg=SimpleNamespace(host='127.0.0.1',port=55461,dbname='sterbrust_unified_rc_20261019')
     monkeypatch.setattr('universal_supplier.postgres.PostgresRepository',Repo)
     monkeypatch.setattr('universal_supplier.matching_service.load_registry_from_postgres',lambda c:registry())
-    monkeypatch.setattr('universal_supplier.identity_service._load_cards',lambda c,s:
+    monkeypatch.setattr('universal_supplier.identity_service._load_cards',lambda c,s,**kw:
         ([card(external_id='old'),card(external_id='new'),card(external_id='not-in-batch')],{('partner_st','old'):1,('partner_st','new'):2}))
     monkeypatch.setattr(service,'_materialize_decision',lambda c,s,card:None)
     monkeypatch.setattr('universal_supplier.control_plane.admin_store.PostgresAdminStore',

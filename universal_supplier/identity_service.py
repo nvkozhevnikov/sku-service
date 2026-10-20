@@ -235,12 +235,17 @@ def _registry_rows(context: RegistryContext) -> dict[str, dict]:
     return result
 
 
-def _load_cards(connection, supplier_code: str | None) -> tuple[list[ProductCard], dict[tuple[str, str], int]]:
+def _load_cards(connection, supplier_code: str | None, *, external_ids=None) -> tuple[list[ProductCard], dict[tuple[str, str], int]]:
     params: tuple[Any, ...] = ()
     where = "sp.active"
     if supplier_code:
         where += " AND s.code=%s"
         params = (supplier_code,)
+    if external_ids is not None:
+        selected=sorted(set(map(str,external_ids)))
+        if not selected:return [], {}
+        where += " AND sp.external_id=ANY(%s)"
+        params += (selected,)
     with connection.cursor() as q:
         q.execute(f"""SELECT sp.id,s.code,sp.external_id,coalesce(sp.sku,''),sp.name,sp.source_url,
                              coalesce(sp.canonical_url,sp.source_url),coalesce(sp.brand_raw,''),

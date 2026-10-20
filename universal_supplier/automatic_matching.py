@@ -81,7 +81,7 @@ def hydrate_card(card, registry=None):
 
 
 def plan_card(card, registry: RegistryContext, existing=None, *, active=True,
-              stable_identity=True):
+              stable_identity=True, timings=None):
     """Revalidate one existing target directly; never fuzzy-rematch its identity."""
     existing = existing or {}
     target = str(existing.get("sterbrust_product_id") or "")
@@ -115,6 +115,8 @@ def plan_card(card, registry: RegistryContext, existing=None, *, active=True,
                     "warnings": json.dumps(result.warnings, ensure_ascii=False)}
     else:
         decision = match_cards([card], registry)[0]
+    import time
+    guard_started=time.perf_counter() if timings is not None else None
     source = _source(card)
     from sterbrust_matching.normalization import normalize_brand
     identity = card.raw_data.get("source_identity") or {}
@@ -153,6 +155,7 @@ def plan_card(card, registry: RegistryContext, existing=None, *, active=True,
         if registry.by_model.get(normalize_model(source.model)):
             bucket = "REVIEW"
             decision = {**decision, "status": "REVIEW", "match_method": "MISSING_BRAND_FOR_MODEL_CANDIDATE"}
+    if timings is not None:timings['identity_guards_seconds']=timings.get('identity_guards_seconds',0.0)+time.perf_counter()-guard_started
     return {**base, "bucket": bucket, "reason": decision["match_method"],
             "decision": decision, "write_action": "PRESERVE_EXISTING" if target else
             "ACCEPT_EXACT" if bucket == "AUTO" else "RECORD_PROPOSAL"}
@@ -189,31 +192,45 @@ def run_post_ingest(config, supplier_code, external_ids=None):
     from .postgres import PostgresRepository
     from .identity_service import _load_cards
     from .matching_service import load_registry_from_postgres
+    import time
+    from contextlib import contextmanager
+    started=time.perf_counter()
+    timings={'identity_guards_seconds':0.0,'sql_persistence_seconds':None,'review_sync_seconds':None}
+    @contextmanager
+    def measured(name):
+        at=time.perf_counter()
+        try:yield
+        finally:timings[name]=time.perf_counter()-at
     policy = runtime_matching_policy(config)
     repository = PostgresRepository(config)
     try:
-        registry = load_registry_from_postgres(repository.connection)
-        cards, source_ids = _load_cards(repository.connection, supplier_code)
-        contexts = repository.load_existing_link_contexts(supplier_code)
-        # Preserve even legacy stored links whose acceptance provenance is not
-        # current. A missing context must never make a stored ID replaceable.
-        with repository.connection.cursor() as q:
-            q.execute("""SELECT sp.external_id,sb.sterbrust_product_id
-                         FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
-                         JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id
-                         WHERE s.code=%s""", (supplier_code,))
-            for external, target in q.fetchall():
-                contexts.setdefault(str(external), {"sterbrust_product_id": str(target)})
-            q.execute("""SELECT sp.external_id FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
-                         WHERE s.code=%s AND NOT sp.external_id_is_stable""", (supplier_code,))
-            unstable = {str(r[0]) for r in q.fetchall()}
+        with measured('canonical_registry_load_seconds'):
+            registry = load_registry_from_postgres(repository.connection)
         selected = None if external_ids is None else set(map(str, external_ids))
+        with measured('supplier_source_load_seconds'):
+            cards, source_ids = _load_cards(repository.connection, supplier_code,external_ids=selected)
+        with measured('existing_link_context_load_seconds'):
+            contexts = repository.load_existing_link_contexts(supplier_code)
+            # Preserve even legacy stored links whose acceptance provenance is not
+            # current. A missing context must never make a stored ID replaceable.
+            with repository.connection.cursor() as q:
+                q.execute("""SELECT sp.external_id,sb.sterbrust_product_id
+                             FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+                             JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id
+                             WHERE s.code=%s""", (supplier_code,))
+                for external, target in q.fetchall():
+                    contexts.setdefault(str(external), {"sterbrust_product_id": str(target)})
+                q.execute("""SELECT sp.external_id FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+                             WHERE s.code=%s AND NOT sp.external_id_is_stable""", (supplier_code,))
+                unstable = {str(r[0]) for r in q.fetchall()}
         selected_cards = [c for c in cards if selected is None or c.external_id in selected]
-        plans = [plan_card(c, registry, contexts.get(c.external_id),
-                           stable_identity=c.external_id not in unstable)
-                 for c in selected_cards]
+        with measured('candidate_planning_seconds'):
+            plans = [plan_card(c, registry, contexts.get(c.external_id),
+                               stable_identity=c.external_id not in unstable,timings=timings)
+                     for c in selected_cards]
         persisted = Counter()
         affected = []
+        persistence_started=time.perf_counter()
         if policy["apply_allowed"]:
             from datetime import datetime, timezone
             at = datetime.now(timezone.utc).isoformat()
@@ -227,11 +244,14 @@ def run_post_ingest(config, supplier_code, external_ids=None):
                             source_id = source_ids[(supplier_code, card.external_id)]
                             _materialize_decision(repository.connection, source_id, hydrate_card(card, registry))
                             affected.append(source_id)
+        if policy['apply_allowed']:timings['sql_persistence_seconds']=time.perf_counter()-persistence_started
         review = {}
         if affected:
             from .control_plane.admin_store import PostgresAdminStore
-            review = PostgresAdminStore(config).generate_review_cases(supplier_code, source_ids=affected)
-        return {"status": "succeeded", **policy, **summarize(plans),
+            with measured('review_sync_seconds'):
+                review = PostgresAdminStore(config).generate_review_cases(supplier_code, source_ids=affected)
+        timings['total_matching_seconds']=time.perf_counter()-started
+        return {"timings":timings,"timing_notes":"identity_guards_seconds is nested in candidate planning; canonical registry is complete; null stages did not run","status": "succeeded", **policy, **summarize(plans),
                 "persistence": dict(persisted), "review_sync": review,
                 "matching_applied": any(k != "PRESERVED_EXISTING_MAPPING" for k in persisted)}
     finally:
