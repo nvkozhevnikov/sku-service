@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 import tempfile
+import time
 import uuid
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -18,6 +20,7 @@ from universal_supplier.stage6e import (
     effective_crawl_settings, product_workbook, safe_export_filename, validate_supplier_url,
     validate_fetch_targets, xlsx_bytes,
 )
+from universal_supplier.url_safety import is_http_url
 from universal_supplier.xml_export import XmlExportService
 from .admin_store import InMemoryAdminStore, PostgresAdminStore
 from .commercial_qa import CommercialQaService, CommercialQaUnavailable
@@ -81,6 +84,35 @@ def relation_type_label(value):
 async def form_values(request: Request) -> dict[str, str]:
     body = (await request.body()).decode("utf-8")
     return {key: values[-1] for key, values in parse_qs(body, keep_blank_values=True).items()}
+
+
+async def form_dependency(request: Request) -> dict[str, str]:
+    """Read the form on the event loop so a plain ``def`` handler can run in the threadpool."""
+    return await form_values(request)
+
+
+INTERACTIVE_MAX_ATTEMPTS = 2
+INTERACTIVE_REQUEST_TIMEOUT_SECONDS = 15.0
+INTERACTIVE_TOTAL_BUDGET_SECONDS = 60.0
+
+
+def interactive_fetch_policy(policy: DomainRatePolicy) -> DomainRatePolicy:
+    """Clamp a supplier policy for one operator-triggered fetch: a panel request must not hang for minutes."""
+    return replace(policy,
+        max_attempts=min(policy.max_attempts, INTERACTIVE_MAX_ATTEMPTS),
+        request_timeout_seconds=min(policy.request_timeout_seconds, INTERACTIVE_REQUEST_TIMEOUT_SECONDS),
+        max_run_duration_seconds=min(policy.max_run_duration_seconds, INTERACTIVE_TOTAL_BUDGET_SECONDS))
+
+
+def interactive_transport(policy: DomainRatePolicy):
+    from universal_supplier.http import HttpTransport
+    return HttpTransport(domain_policy=interactive_fetch_policy(policy),
+                         deadline=time.monotonic() + INTERACTIVE_TOTAL_BUDGET_SECONDS)
+
+
+def safe_http_url(value) -> str:
+    """Return the URL only for http(s) with a host; anything else (javascript:, data:, relative) renders no link."""
+    return str(value).strip() if is_http_url(value) else ""
 
 
 def allowed_hosts() -> list[str]:
@@ -162,6 +194,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     templates.env.filters["ru"] = russian_label
     templates.env.filters["product_kind_ru"] = product_kind_label
     templates.env.filters["relation_ru"] = relation_type_label
+    templates.env.filters["safe_http_url"] = safe_http_url
 
     def payload(request: Request):
         return signer.read(request.cookies.get(signer.cookie_name)) if auth_required else {"uid": 0, "role": "ADMIN", "csrf": "test-csrf"}
@@ -762,8 +795,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         return templates.TemplateResponse(request,"parser_inspector.html",context(request,suppliers=store.suppliers(),result=None,selected_supplier=supplier_code,known_url=known_url,active="inspector"))
 
     @app.post("/parser-inspector", response_class=HTMLResponse)
-    async def parser_inspector_submit(request: Request):
-        user=guard(request,MUTATING_ROLES); require_trusted_origin(request); values=await form_values(request); check_csrf(request,values)
+    def parser_inspector_submit(request: Request, values: dict[str, str] = Depends(form_dependency)):
+        # Plain def: the blocking HTTP fetch runs in Starlette's threadpool, not on the event loop.
+        user=guard(request,MUTATING_ROLES); require_trusted_origin(request); check_csrf(request,values)
         supplier=next((x for x in store.suppliers() if str(x.get("code"))==values.get("supplier")),None)
         if not supplier: return page_error(request,"Поставщик не найден")
         from urllib.parse import urlparse
@@ -772,8 +806,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         except ValueError as error: return page_error(request,str(error))
         rate=DomainRatePolicy.from_mapping(supplier.get("rate_settings") or {})
         try:
-            from universal_supplier.http import HttpTransport
-            transport=HttpTransport(domain_policy=rate)
+            transport=interactive_transport(rate)
             validator=lambda target: validate_supplier_url(target,allowed,resolve_dns=True)
             fetched=transport.get_validated(checked,validator)
             validate_fetch_targets(fetched,allowed,resolve_dns=True)
@@ -800,18 +833,17 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         return templates.TemplateResponse(request,"reparse.html",context(request,target=target,preview=None,active="products"))
 
     @app.post("/products/{supplier_code}/{external_id}/reparse", response_class=HTMLResponse)
-    async def product_reparse_run(request: Request,supplier_code:str,external_id:str):
-        user=guard(request,MUTATING_ROLES); require_trusted_origin(request); values=await form_values(request); check_csrf(request,values)
+    def product_reparse_run(request: Request,supplier_code:str,external_id:str,values: dict[str, str] = Depends(form_dependency)):
+        user=guard(request,MUTATING_ROLES); require_trusted_origin(request); check_csrf(request,values)
         target=stage6e_service.reparse_target(supplier_code,external_id) if hasattr(stage6e_service,"reparse_target") else None
         if not target: raise HTTPException(404,"Товар для повторной проверки не найден")
         from urllib.parse import urlparse
         allowed=[urlparse(str(target["base_url"])).hostname or ""]
         try:
             checked=validate_supplier_url(str(target["source_url"]),allowed,resolve_dns=True)
-            from universal_supplier.http import HttpTransport
             default_policy=PARTNER_ST_DEFAULT_RATE_POLICY if supplier_code=="partner_st" else OPTIMUM_DEFAULT_RATE_POLICY
             overlay=default_policy.snapshot(); overlay.update(target.get("rate_settings") or {})
-            transport=HttpTransport(domain_policy=DomainRatePolicy.from_mapping(overlay))
+            transport=interactive_transport(DomainRatePolicy.from_mapping(overlay))
             fetched=transport.get_validated(checked,lambda value: validate_supplier_url(value,allowed,resolve_dns=True))
             validate_fetch_targets(fetched,allowed,resolve_dns=True)
             if supplier_code=="partner_st":

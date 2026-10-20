@@ -75,6 +75,8 @@ class FullQaUiControlsTests(unittest.TestCase):
     def test_full_run_template_shows_persisted_review_and_http_error(self):
         template_dir = Path(__file__).resolve().parents[1] / "universal_supplier" / "control_plane" / "templates"
         environment = Environment(loader=FileSystemLoader(template_dir), autoescape=True)
+        from universal_supplier.control_plane.web import safe_http_url
+        environment.filters["safe_http_url"] = safe_http_url
         run = {"id": "test", "source": "beka_mak", "mode": "qa_write", "target": "stage4_commercial_qa",
                "status": "partial", "processed": 3, "total": 3, "manifest_sha256": "a" * 64,
                "rows": [

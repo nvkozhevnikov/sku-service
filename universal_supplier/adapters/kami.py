@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from bs4 import BeautifulSoup
 from universal_supplier.models import CategoryNode, FetchRecord, MediaItem, ProductCard, PropertyValue
 from universal_supplier.characteristic_evidence import unit_from_label
+from universal_supplier.url_safety import is_http_url
 
 
 def canonical_source_url(url: str) -> str:
@@ -172,8 +173,11 @@ class KamiAdapter:
         categories = (CategoryNode(_text(category_node), urljoin(url, category_node['href']), 0),) if category_node else ()
         media = []
         for link in grid.select('a.productPreview__picture[href]'):
+            image_url = urljoin(url, link['href'])
+            if not is_http_url(image_url):
+                continue
             img = link.select_one('img')
-            media.append(MediaItem('image', urljoin(url, link['href']), img.get('alt', '') if img else '', len(media), not media))
+            media.append(MediaItem('image', image_url, img.get('alt', '') if img else '', len(media), not media))
         document_urls = set()
         for link in grid.select('.productTabs__content a[href]'):
             target = urljoin(url, link['href'])

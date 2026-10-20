@@ -10,6 +10,8 @@ from universal_supplier.control_plane.store import PostgresControlPlaneStore
 def test_rc_matching_page_shows_status_filters_both_sides_and_evidence():
     template_root = Path(__file__).resolve().parents[1] / "universal_supplier" / "control_plane" / "templates"
     env = Environment(loader=FileSystemLoader(template_root), autoescape=select_autoescape(["html"]))
+    from universal_supplier.control_plane.web import safe_http_url
+    env.filters["safe_http_url"] = safe_http_url
     body = env.get_template("commercial_proposals.html").render(
         url_for=lambda *_args, **_kwargs: "/static/file.css", current_user=None,
         safety_banner="import disabled", unavailable="", active="commercial_qa",

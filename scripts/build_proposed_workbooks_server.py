@@ -16,6 +16,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from universal_supplier.stage6e import spreadsheet_safe_text, strip_xml_illegal
+
 
 SPECS = (
     ("STERBRUST_UPDATE_EXISTING.xlsx", "Существующие товары: предложение обновления", "Existing", "existing", (
@@ -42,6 +48,10 @@ SPECS = (
 )
 
 
+def _text(value) -> str:
+    return spreadsheet_safe_text(strip_xml_illegal(str(value)))
+
+
 def _value(row: dict, key: str):
     value = row.get(key)
     if key == "source_offers":
@@ -49,12 +59,12 @@ def _value(row: dict, key: str):
     if key == "selection_status" and value == "PROPOSED_ONLY_SUPPLIERS_DISABLED":
         return "Предложение, не применено"
     if key == "match_conflicts":
-        return "; ".join(value) if isinstance(value, list) else value or ""
+        return _text("; ".join(map(str, value)) if isinstance(value, list) else value or "")
     if key in {"price", "section_id"}:
         return float(value) if value not in (None, "") else None
     if key == "observed_at" and value:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
-    return "" if value is None else str(value)
+    return "" if value is None else _text(value)
 
 
 def build(input_path: Path, output_dir: Path) -> dict[str, int]:

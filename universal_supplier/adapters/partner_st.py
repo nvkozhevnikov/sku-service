@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from universal_supplier.http import HttpTransport
+from universal_supplier.url_safety import is_http_url
 from universal_supplier.models import (
     CategoryNode, DiscoveryResult, FetchRecord, MediaItem, OptionValue,
     ProductCard, ProductOption, PropertyValue,
@@ -125,16 +126,19 @@ class PartnerStAdapter:
             images.extend(str(item) for item in raw_image)
         for node in soup.select("a.cm-image-previewer[href], meta[property='og:image'][content]"):
             images.append(str(node.get("href") or node.get("content") or ""))
-        for position, url in enumerate(dict.fromkeys(urljoin(fetch.final_url, item) for item in images if item)):
+        image_urls = (urljoin(fetch.final_url, item) for item in images if item)
+        for position, url in enumerate(dict.fromkeys(url for url in image_urls if is_http_url(url))):
             media.append(MediaItem("image", url, position=position, is_primary=position == 0))
         document_extensions = re.compile(r"\.(?:pdf|docx?|xlsx?|zip)(?:\?|$)", re.I)
         for node in soup.find_all("a", href=True):
             url = urljoin(fetch.final_url, node["href"])
+            if not is_http_url(url):
+                continue
             if document_extensions.search(url) or "dispatch=attachments.getfile" in url:
                 media.append(MediaItem("document", url, node.get_text(" ", strip=True), len(media)))
         for node in soup.select("iframe[src], video[src], source[src]"):
             url = urljoin(fetch.final_url, node.get("src"))
-            if url:
+            if is_http_url(url):
                 media.append(MediaItem("video", url, node.get("title", ""), len(media)))
         media = list(dict.fromkeys(media))
 
