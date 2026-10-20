@@ -78,8 +78,10 @@ class HttpFetcher:
         self.started_monotonic = self.clock.monotonic()
         self.deadline = self.started_monotonic + self.policy.max_run_duration_seconds
         # DNS is resolved for the production client; an injected client owns its own transport.
-        self.url_validator = url_validator or host_validator(
-            OPTIMUM_HOSTS, resolve_dns=(client is None) if resolve_dns is None else resolve_dns)
+        resolve = (client is None) if resolve_dns is None else resolve_dns
+        self.url_validator = url_validator or host_validator(OPTIMUM_HOSTS, resolve_dns=resolve)
+        # A resolving validator blocks on getaddrinfo: run it off the event loop.
+        self._validator_blocks = url_validator is not None or resolve
         self.client = client or httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT}, timeout=self.policy.request_timeout_seconds,
             follow_redirects=False,
@@ -99,6 +101,11 @@ class HttpFetcher:
         if self.clock.monotonic() >= self.deadline:
             self.metrics.mark_deadline_exceeded()
             raise MaxRunDurationExceeded("MAX_RUN_DURATION_EXCEEDED")
+
+    async def _validate(self, url: str) -> str:
+        if self._validator_blocks:
+            return await asyncio.to_thread(self.url_validator, url)
+        return self.url_validator(url)
 
     async def _send(self, url: str):
         if not isinstance(self.client, httpx.AsyncClient):
@@ -122,7 +129,7 @@ class HttpFetcher:
     async def get(self, url: str) -> FetchResult:
         self.ensure_within_deadline()
         async with self.semaphore:
-            current = self.url_validator(url)
+            current = await self._validate(url)
             total_attempts = 0
             for _ in range(MAX_REDIRECTS + 1):
                 self.ensure_within_deadline()
@@ -140,7 +147,7 @@ class HttpFetcher:
                 location = headers.get("location") or headers.get("Location")
                 if int(response.status_code) in REDIRECT_STATUSES and location:
                     # Validate every hop before any I/O: host allowlist, ports 80/443, public address.
-                    current = self.url_validator(urljoin(target, location))
+                    current = await self._validate(urljoin(target, location))
                     continue
                 return FetchResult(url, target, response.status_code, response.text, total_attempts)
             raise UnsafeUrlError("Слишком много перенаправлений")

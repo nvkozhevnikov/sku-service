@@ -376,3 +376,29 @@ def test_full_xml_supplier_code_attribute_is_quoted_safely():
     root = ET.fromstring(body)
     supplier = root.find(".//supplier")
     assert supplier.get("code") == 'a" evil="1' and supplier.get("evil") is None
+
+
+def test_optimum_production_validator_resolves_dns_off_the_event_loop(monkeypatch):
+    calls = []
+    monkeypatch.setattr(optimum_fetch.asyncio, "to_thread",
+                        lambda func, *args: calls.append(args) or _completed(func(*args)))
+    resolved = []
+    monkeypatch.setattr("universal_supplier.url_safety.socket.getaddrinfo",
+                        lambda host, port: resolved.append(host) or public_resolver(host, port))
+
+    async def run():
+        production = HttpFetcher(rate_policy=quiet_policy(), clock=FakeAsyncClock())
+        injected = HttpFetcher(rate_policy=quiet_policy(), clock=FakeAsyncClock(), client=FakeAsyncClient([]))
+        try:
+            assert production._validator_blocks and not injected._validator_blocks
+            assert await production._validate("https://optimum.su/catalog/a/") == "https://optimum.su/catalog/a/"
+        finally:
+            await production.close(); await injected.close()
+
+    asyncio.run(run())
+    assert calls == [("https://optimum.su/catalog/a/",)]
+    assert resolved == ["optimum.su"]  # the fake resolver answered: no real DNS query
+
+
+async def _completed(value):
+    return value

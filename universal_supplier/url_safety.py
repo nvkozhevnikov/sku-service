@@ -44,7 +44,7 @@ def _forbidden_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -
 
 def validate_public_http_url(url: str, allowed_hosts: Iterable[str] | None = None, *,
                              resolve_dns: bool = False,
-                             resolver: Callable[..., list] = socket.getaddrinfo) -> str:
+                             resolver: Callable[..., list] | None = None) -> str:
     """Return ``url`` unchanged or raise UnsafeUrlError.
 
     ``allowed_hosts=None`` means "any public host" (used only for generic
@@ -75,7 +75,7 @@ def validate_public_http_url(url: str, allowed_hosts: Iterable[str] | None = Non
         raise UnsafeUrlError("Локальные и служебные адреса запрещены")
     if resolve_dns and literal is None:
         # A resolver failure is a network error (OSError), not an unsafe URL.
-        infos = resolver(host, port or (443 if parsed.scheme.lower() == "https" else 80))
+        infos = (resolver or socket.getaddrinfo)(host, port or (443 if parsed.scheme.lower() == "https" else 80))
         for *_, sockaddr in infos:
             if _forbidden_address(ipaddress.ip_address(sockaddr[0])):
                 raise UnsafeUrlError("DNS указывает на локальный или служебный адрес")
@@ -83,7 +83,7 @@ def validate_public_http_url(url: str, allowed_hosts: Iterable[str] | None = Non
 
 
 def host_validator(allowed_hosts: Iterable[str], *, resolve_dns: bool = True,
-                   resolver: Callable[..., list] = socket.getaddrinfo) -> Callable[[str], str]:
+                   resolver: Callable[..., list] | None = None) -> Callable[[str], str]:
     hosts = tuple(allowed_hosts)
     return lambda url: validate_public_http_url(url, hosts, resolve_dns=resolve_dns, resolver=resolver)
 

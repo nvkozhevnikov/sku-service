@@ -116,3 +116,21 @@ def _plain_http_test_client(monkeypatch):
     Production keeps the Secure default; tests that check it delete this variable.
     """
     monkeypatch.setenv("CONTROL_PLANE_INSECURE_HTTP", "YES")
+
+
+_LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "testserver"})
+
+
+@pytest.fixture(autouse=True)
+def _no_external_dns(monkeypatch):
+    """Supplier hosts are never resolved from tests; loopback (scratch DB, TestClient) is allowed."""
+    import socket
+    real = socket.getaddrinfo
+
+    def guarded(host, *args, **kwargs):
+        name = host.decode() if isinstance(host, bytes) else str(host)
+        if name not in _LOOPBACK_NAMES:
+            raise AssertionError(f"test tried to resolve external host {name!r}")
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded)
