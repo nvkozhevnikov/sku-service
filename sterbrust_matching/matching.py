@@ -101,6 +101,14 @@ def _candidate_id_order(key: object) -> tuple[int, int, str]:
     return (0, int(text), text) if text.isdigit() else (1, 0, text)
 
 
+def _evidence_id_order(key: object) -> tuple[int, int, str]:
+    """Order emitted IDs only; never alter candidate ranking or raw ID values."""
+    text = str(key) if key is not None else ""
+    if re.fullmatch(r"[0-9]+", text) and int(text) > 0:
+        return (0, int(text), text)
+    return (1, 0, text)
+
+
 def _best_similarity_key(row: tuple) -> tuple:
     """Highest similarity first; equal similarity resolves to the smallest ID."""
     return (-row[5], _candidate_id_order(row[0].key))
@@ -407,7 +415,7 @@ def match_product(source: Product, candidates: Iterable[Product], existing_link:
             return MatchResult(
                 "REVIEW", "DUPLICATE_SUPPLIER_ARTICLE", 1.0, None,
                 {"supplier_code": source.supplier_code, "normalized_article": source_article,
-                 "candidate_keys": [candidate.key for candidate in exact_supplier_rows],
+                 "candidate_keys": sorted((candidate.key for candidate in exact_supplier_rows), key=_evidence_id_order),
                  "candidate_count": len(exact_supplier_rows)},
                 {}, False,
             )
@@ -468,7 +476,7 @@ def match_product(source: Product, candidates: Iterable[Product], existing_link:
         return MatchResult(status, method, confidence, row[0].key,
                            {"brand_equal": row[3], "model_equal": row[4], "manufacturer_article_equal": row[2], "name_similarity": round(row[5], 4)}, {}, True)
     if len(strong) > 1:
-        return MatchResult("REVIEW", "NON_UNIQUE_STRONG_CANDIDATES", 0.8, None, {"candidate_keys": [r[0].key for r in strong]}, {}, False)
+        return MatchResult("REVIEW", "NON_UNIQUE_STRONG_CANDIDATES", 0.8, None, {"candidate_keys": sorted((r[0].key for r in strong), key=_evidence_id_order)}, {}, False)
     if conflict_rows:
         best = min(conflict_rows, key=_best_similarity_key)
         if best[3] and best[4] and set(best[1]).issubset({"product_kind", "model_role"}):
