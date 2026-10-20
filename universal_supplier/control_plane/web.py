@@ -341,7 +341,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.post("/logout")
     async def logout(request: Request):
-        user = guard(request); values = await form_values(request); check_csrf(request, values)
+        user = guard(request); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
         if auth_required: admin_store.revoke_sessions(user.id, user.id, "logout")
         response = RedirectResponse("/login", 303); response.delete_cookie(signer.cookie_name, path="/"); return response
 
