@@ -214,7 +214,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             "control_plane_read_only": read_only_source,
             "partner_pilot_enabled":__import__('universal_supplier.partner_pilot',fromlist=['enabled']).enabled(),
             "manifest_sources":__import__('universal_supplier.control_plane.source_jobs',fromlist=['RUNTIME_SOURCES']).RUNTIME_SOURCES,
-            "source_runtime_enabled":__import__('universal_supplier.control_plane.source_runtime',fromlist=['runtime_enabled']).runtime_enabled(), **values}
+            "source_runtime_enabled":__import__('universal_supplier.control_plane.source_runtime',fromlist=['runtime_enabled']).runtime_enabled(),
+            "source_wrappers":__import__('universal_supplier.control_plane.source_jobs',fromlist=['SOURCES']).SOURCES, **values}
 
     @app.get('/automatic-matching', response_class=HTMLResponse)
     def automatic_matching(request: Request):
@@ -469,15 +470,41 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         admin_store.audit(user.id,"MISSING_POLICY_CHANGED","supplier",supplier_id,None,policy)
         return RedirectResponse(f"/suppliers/{supplier_id}?saved=1",303)
 
+    @app.get('/suppliers/{supplier_id}/source-canary',response_class=HTMLResponse)
+    def preview_source_canary(request:Request,supplier_id:int):
+        guard(request,MUTATING_ROLES)
+        from .source_runtime import runtime_enabled
+        if not runtime_enabled():raise HTTPException(403,'Режим collectors не включён')
+        if getattr(type(store),'read_only',False):raise HTTPException(403,'Источник доступен только для чтения')
+        limit=optional_int(request.query_params.get('max_products'),'количество карточек')
+        try:
+            from .source_canary import limit_value
+            limit_value(limit)
+            if not hasattr(queue,'preview_source_canary'):raise ValueError('Очередь не поддерживает безопасный preview canary')
+            preview=queue.preview_source_canary(supplier_id,limit)
+        except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
+        return templates.TemplateResponse(request,'source_canary.html',context(request,preview=preview,supplier_id=supplier_id,active='suppliers'))
+
     @app.post("/suppliers/{supplier_id}/start")
     async def start_now(request: Request, supplier_id: int):
         user = guard(request, MUTATING_ROLES); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
         if values.get("crawl_type", "full") not in SUPPORTED_WEB_CRAWL_TYPES: raise HTTPException(400, "Можно поставить в очередь только полный сбор")
         from universal_supplier.partner_pilot import enabled,limit_value
         mode=values.get('launch_mode','full')
-        if mode not in ('full','test','source'):raise HTTPException(400,'Неизвестный режим запуска')
+        if mode not in ('full','test','source','source_canary'):raise HTTPException(400,'Неизвестный режим запуска')
         if enabled() and mode!='test':raise HTTPException(403,'Разрешён только ограниченный тест Partner-ST')
         kwargs={}
+        if mode=='source_canary':
+            from .source_runtime import runtime_enabled
+            from .source_canary import limit_value
+            if not runtime_enabled():raise HTTPException(403,'Режим collectors не включён')
+            try:
+                limit=limit_value(optional_int(values.get('max_products'),'количество карточек'))
+                if values.get('collection_mode')!='REFRESH' or values.get('resume_job_id'):raise ValueError('Canary поддерживает только REFRESH известных URL, без discovery/resume')
+                source=next((s for s in store.suppliers() if s['id']==supplier_id),None)
+                if not source or not source.get('enabled'):raise ValueError('Поставщик выключен; запуск canary заблокирован. Нужно отдельное подтверждение временного включения.')
+                kwargs.update(source_mode='REFRESH',source_limit=limit,source_preview_sha256=values.get('source_preview_sha256',''))
+            except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
         if mode=='source':
             from .source_runtime import runtime_enabled
             if not runtime_enabled():raise HTTPException(403,'Режим collectors не включён')

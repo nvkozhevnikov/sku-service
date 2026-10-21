@@ -22,6 +22,8 @@ def prepare_snapshot(snapshot,mode,*,known_rows=(),resume=None,config=None):
         settings['host_policy_approval']=(resume['settings'].get('crawl_settings') or {}).get('host_policy_approval')
         compile_policy(code,'https://'+out['domain'],out['rate_settings'],approval=settings.get('host_policy_approval'))
         verify_resume(code,owner,sha,original,config)
+        if original.get('canary'):
+            settings.update(source_canary=True,max_products=original['canary']['max_products'],max_run_duration_seconds=300)
         settings.update(resume_owner_job_id=owner,resume_input_sha256=sha,persist_source_data=True)
     else:
         policy=compile_policy(code,'https://'+out['domain'],out['rate_settings'],approval=settings.get('host_policy_approval'))
@@ -34,6 +36,9 @@ def prepare_snapshot(snapshot,mode,*,known_rows=(),resume=None,config=None):
 
 def verify_resume(code,owner,sha,original,config):
     """Read-only SQL reconciliation, rechecked by worker under its host lease."""
+    if original.get('canary'):
+        from .source_canary import validate_config
+        validate_config(config)
     folder=job_dir(code,owner)
     if not (folder/'checkpoint.json').is_file():raise ValueError('RESUME_CHECKPOINT_MISSING')
     import json

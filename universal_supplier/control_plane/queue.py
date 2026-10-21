@@ -75,6 +75,27 @@ class PostgresJobQueue:
         import psycopg
         return connect_postgres(self.config, autocommit=True)
 
+    def _canary_preview(self,connection,cursor,supplier_id,supplier,limit):
+        from .source_canary import limit_value,validate_config,validate_connection,build_preview
+        limit_value(limit);validate_config(self.config);validate_connection(connection)
+        cursor.execute('''WITH known AS (
+            SELECT DISTINCT ON (coalesce(canonical_url,source_url)) id,external_id,coalesce(canonical_url,source_url) AS url
+            FROM source_products WHERE supplier_id=%s AND active AND external_id_is_stable
+            ORDER BY coalesce(canonical_url,source_url),id)
+            SELECT id,external_id,url,count(*) OVER() FROM known ORDER BY id LIMIT %s''',(supplier_id,limit))
+        return build_preview(supplier_id,supplier,cursor.fetchall(),self.config,limit)
+
+    def preview_source_canary(self,supplier_id,limit):
+        from .source_canary import limit_value,validate_config
+        limit_value(limit);validate_config(self.config)
+        with self._connect() as connection:
+            connection.read_only=True
+            with connection.transaction(),connection.cursor() as cursor:
+                cursor.execute('SELECT code,adapter_name,base_url,enabled,crawl_settings,rate_settings FROM suppliers WHERE id=%s',(supplier_id,))
+                supplier=cursor.fetchone()
+                if supplier is None:raise ValueError('Поставщик не найден')
+                return self._canary_preview(connection,cursor,supplier_id,supplier,limit)
+
     def stop_source(self,supplier_id,job_id):
         from .source_runtime import runtime_enabled,job_dir
         from .source_jobs import RUNTIME_SOURCES as SOURCES
@@ -106,7 +127,14 @@ class PostgresJobQueue:
         return True
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
-                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None) -> EnqueueResult:
+                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None) -> EnqueueResult:
+        if source_limit is not None:
+            from .source_canary import limit_value,validate_config
+            limit_value(source_limit);validate_config(self.config)
+            if source_mode!='REFRESH' or trigger_type!='manual' or crawl_type!='full' or pilot_limit is not None or resume_job_id is not None:
+                raise ValueError('CANARY_MANUAL_REFRESH_ONLY')
+            if not isinstance(source_preview_sha256,str) or len(source_preview_sha256)!=64:raise ValueError('Сначала просмотрите и подтвердите выбранную партию canary')
+        elif source_preview_sha256 is not None:raise ValueError('CANARY_LIMIT_REQUIRED')
         from universal_supplier.partner_pilot import enabled,limit_value,validate_config
         if pilot_limit is not None:
             if not enabled():raise PermissionError("PILOT_MODE_NOT_ENABLED")
@@ -125,7 +153,7 @@ class PostgresJobQueue:
                 raise KeyError(f"unknown supplier_id={supplier_id}")
             code, adapter_name, base_url, enabled, crawl_settings, rate_settings = supplier
             if not enabled:
-                raise ValueError(f"supplier {code} is disabled")
+                raise ValueError(f"Поставщик {code} выключен (disabled); запуск заблокирован. Требуется отдельное подтверждение временного включения.")
             cursor.execute(
                 """SELECT id FROM crawl_jobs
                    WHERE supplier_id=%s AND status IN ('queued','running')
@@ -137,7 +165,12 @@ class PostgresJobQueue:
                 "domain": normalized_domain(base_url), "crawl_type": crawl_type,
                 "crawl_settings": crawl_settings or {}, "rate_settings": rate_settings or {},
             }
-            if source_mode is not None:
+            if source_limit is not None:
+                preview=self._canary_preview(connection,cursor,supplier_id,supplier,source_limit)
+                if preview['confirmation_sha256']!=source_preview_sha256:
+                    raise ValueError('Партия, количество, политика или target изменились; заново откройте preview canary')
+                snapshot=preview['snapshot']
+            elif source_mode is not None:
                 if trigger_type!='manual' or pilot_limit is not None:raise ValueError('SOURCE_MANUAL_ONLY')
                 from .source_controls import prepare_snapshot
                 known=[];parent=None

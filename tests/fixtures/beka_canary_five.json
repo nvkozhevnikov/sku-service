@@ -1,0 +1,34 @@
+{
+  "classification": "PACKAGED-EVIDENCE_READONLY_SQL_NOT_NEW_HTTP",
+  "source_readiness_sha256": "a45e8ce5c7f032e8ffa3bddf75a6820f0740f5ee837358808789d3fe6dcb28c9",
+  "supplier_code": "beka_mak",
+  "supplier_id": 11,
+  "total_known": 109,
+  "entries": [
+    {
+      "source_product_id": 5352,
+      "source_external_id": "19240",
+      "url": "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_230dg/"
+    },
+    {
+      "source_product_id": 5354,
+      "source_external_id": "19224",
+      "url": "https://beka-mak.su/product/poluavtomaticheskiy_lentochnopilnyy_stanok_beka_mak_bmsy_440dgh/"
+    },
+    {
+      "source_product_id": 5358,
+      "source_external_id": "19241",
+      "url": "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_270dg/"
+    },
+    {
+      "source_product_id": 5359,
+      "source_external_id": "19236",
+      "url": "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_280/"
+    },
+    {
+      "source_product_id": 5360,
+      "source_external_id": "19237",
+      "url": "https://beka-mak.su/product/ruchnoy_lentochnopilnyy_stanok_beka_mak_bms_320/"
+    }
+  ]
+}

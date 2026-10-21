@@ -72,6 +72,7 @@ class BoundedHostFetcher:
         self.breaker=CircuitBreaker(rate,clock=self.clock,metrics=self.metrics);self.stop_reason=None
         self._lock=threading.Lock();self.outcomes=[];self.receipt_sink=receipt_sink
         self.stop_sink=None
+        self.request_start_guard=None
     def stop(self,reason='OPERATOR_STOP'):
         with self._lock:
             first=self.stop_reason is None
@@ -103,6 +104,10 @@ class BoundedHostFetcher:
                 if initial[0]:initial[0]=False
                 else:self.limiter.wait(self.metrics,deadline=deadline)
                 if self.aborted():raise RequestAborted('HOST_STOPPED')
+                if self.request_start_guard:
+                    try:self.request_start_guard(target)
+                    except RequestAborted as error:
+                        self.stop(str(error));raise
                 if callback:callback(target)
             # The existing public client calls this for each redirect too.
             client.before_request=before_request

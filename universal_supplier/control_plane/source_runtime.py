@@ -64,6 +64,9 @@ def checked_input(value,code):
     if value['mode']=='REFRESH' and not entries:raise ValueError('REFRESH_HAS_NO_KNOWN_URLS')
     for u in value.get('seeds',[]):validate_node(code,u)
     if value['mode']=='DISCOVERY' and not value.get('seeds'):raise ValueError('DISCOVERY_SEEDS_REQUIRED')
+    if 'canary' in value:
+        from .source_canary import validate_input
+        validate_input(value)
     return value
 
 def read_input(code,owner,sha):
@@ -110,6 +113,13 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 'seeds':root_urls(code) if mode=='DISCOVERY' else [],'rate_policy':rate.snapshot(),'engine_sha256':engine_fingerprint()}
         original=checked_input(original,code)
         if original['rate_policy']!=rate.snapshot():raise ValueError('SOURCE_POLICY_SNAPSHOT_CHANGED')
+    canary=original.get('canary')
+    if settings.get('source_canary') or canary:
+        if not canary:raise ValueError('CANARY_SNAPSHOT_MISSING')
+        if job.trigger_type!='manual' or job.crawl_type!='full':raise ValueError('CANARY_MANUAL_JOB_REQUIRED')
+        from .source_canary import validate_input,validate_config
+        validate_config(config);validate_input(original,settings,config)
+        if not canary['supplier_enabled'] or canary['supplier_id']!=job.supplier_id:raise PermissionError('CANARY_SUPPLIER_DISABLED_OR_CHANGED')
     sha=digest(original);folder=job_dir(code,owner)
     frozen_json(folder/'input.json',original)
     if mode=='RESUME' and not (folder/'checkpoint.json').is_file():raise ValueError('RESUME_CHECKPOINT_MISSING')
@@ -125,7 +135,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         if lease_alive is not None and not lease_alive():return 'HOST_LEASE_LOST'
         try:return stop_file.read_text(encoding='utf-8').strip()[:1000] or 'OPERATOR_STOP'
         except FileNotFoundError:return False
-    backend=None;run_id=None;fetcher=None;rows=[];committed=[];matching_pending=[];errors=[];termination=None
+    backend=None;run_id=None;fetcher=None;dispatch_budget=None;rows=[];committed=[];matching_pending=[];errors=[];termination=None
     count_names=('new_products','changed_products','unchanged_products','new_offers','changed_offers','unchanged_offers')
     sql_counts={k:0 for k in count_names};counts_known=True
     http_started=clock.monotonic();http_seconds=0.;sql_seconds=0.;parse_seconds=0.;matching_seconds=None
@@ -142,7 +152,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if url==robots_url and robot is None:return True
             return robot is not None and robot.can_fetch(AGENT,url)
         robots_url='https://'+HOSTS[code]+'/robots.txt'
+        dispatch_budget=None
+        if canary:
+            from .source_canary import DispatchBudget
+            dispatch_budget=DispatchBudget(original,robots_url)
         def request_url(url):
+            if canary and url!=robots_url and url not in {e['url'] for e in original['entries']}:
+                if fetcher is not None:fetcher.stop('CANARY_URL_OUTSIDE_FROZEN_BATCH')
+                raise ValueError('CANARY_URL_OUTSIDE_FROZEN_BATCH')
             p=urlsplit(url)
             if url==robots_url:return url
             try:return validate_url(code,url)
@@ -151,6 +168,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             validator=request_url,robots_allowed=allowed,robots_delay_seconds=0,
             lease_acquired=True,clock=clock,stop_requested=stopped,source=code,approval=settings.get('host_policy_approval'),defer_first_start=True)
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
+        if dispatch_budget:fetcher.request_start_guard=dispatch_budget
         def archive(outcome):
             if outcome.response is None:return
             response=outcome.response
@@ -353,6 +371,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             'effective_rate_policy':rate.snapshot(),'termination_reason':termination,'resume_available':locals().get('resume_safe',False),
             'resume_uncertain':locals().get('plan',{}).get('uncertain',[]),'matching_applied':identity.get('matching_applied',False),
             'identity_post_processing':identity}
+        if canary:result['canary']={**canary,'product_requests':list(dispatch_budget.products) if dispatch_budget else [],'robots_requests':dispatch_budget.robots if dispatch_budget else 0}
         write_checkpoint(run_folder/'result.json',result,durable=True)
         if backend:
             try:backend.finish(result)

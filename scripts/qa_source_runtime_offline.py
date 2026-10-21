@@ -58,7 +58,13 @@ SUITE = (
     'commercial', 'commercial_persistence', 'optimum_source', 'http_capture',
     'matching_policy_v22',
     'export_security_adoption',
+    'source_canary',
 )
+if '--bounded-only' in sys.argv:
+    sys.argv.remove('--bounded-only')
+    SUITE=('source_canary','source_runtime','source_runtime_controls','source_resume','source_jobs',
+           'host_fetch','readiness_panel','partner_pilot','partner_stop_diagnostics','native_checkpoint',
+           'service_idempotency','f01_f03_identity_inputs','automatic_matching','stage6c1_optimum','stage6c1_partner')
 if '--export-only' in sys.argv:
     sys.argv.remove('--export-only')
     SUITE=('export_security_adoption',)

@@ -11,6 +11,14 @@ class SourceBackend:
         from universal_supplier.postgres import PostgresRepository
         self.repo=PostgresRepository(config);self.config=config;self.code=code;self.run_id=None;self.summary={};self.started=time.monotonic()
     def start(self,job,mode):
+        value=job.settings_snapshot.get('source_input')
+        if mode=='RESUME' and (job.settings_snapshot.get('crawl_settings') or {}).get('source_canary'):
+            from .source_runtime import read_input
+            settings=job.settings_snapshot['crawl_settings']
+            value=read_input(self.code,settings['resume_owner_job_id'],settings['resume_input_sha256'])
+        if value and value.get('canary'):
+            from .source_canary import validate_config,validate_live_selection
+            validate_config(self.config);validate_live_selection(self.repo.connection,value,allow_inactive=mode=='RESUME')
         self.run_id=self.repo.start_crawl_run(started_at=datetime.now(timezone.utc).isoformat(),baseline_discovered_count=None,
             supplier_code=self.code,metadata={'job_id':job.id,'source_mode':mode})
         with self.repo.connection.transaction(),self.repo.connection.cursor() as q:
