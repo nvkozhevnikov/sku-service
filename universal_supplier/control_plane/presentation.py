@@ -7,6 +7,14 @@ def phase_summary(row):
     meta=row.get('metadata') or row.get('last_run_metadata') or {}
     http=meta.get('http_phase') or {};requests=http.get('request_metrics') or {}
     identity=meta.get('identity_post_processing') or {}
+    runtime=meta.get('source_runtime')
+    if runtime:
+        metrics=runtime.get('request_metrics') or {}
+        return {'http_requested':metrics.get('requests_total'),'http_successful':metrics.get('http_2xx'),
+            'parsed':runtime.get('parsed_this_job'),'http_speed':runtime.get('http_cards_per_minute'),
+            'sql_count':runtime.get('sql_committed_this_job'),'sql_state':'Сверено с SQL' if runtime.get('sql_committed_this_job') else 'Новых commits не подтверждено',
+            'matching':identity.get('total'),'matching_status':identity.get('status','не запускался'),
+            'failure':meta.get('failure'),'termination':runtime.get('termination_reason'),'buckets':identity.get('by_source') or {}}
     committed='default_offer_counts' in meta
     matching_status=identity.get('status') or ('не запускался' if meta.get('failed_stage')=='sql_ingest_seconds' else 'результат не записан')
     return {'http_requested':requests.get('requests_total'),'http_successful':requests.get('http_2xx'),

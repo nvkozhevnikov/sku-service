@@ -22,6 +22,11 @@ SOURCES=('beka_mak','beka_mak_tr','intervesp','vekprom','kami','ltt_msk','ltt_si
 def validate_url(code,url):
     parsed=urlsplit(url)
     if parsed.port not in (None,443):raise ValueError('SOURCE_URL_NONSTANDARD_PORT')
+    if code=='intervesp':
+        # Source-wide candidate traversal; identity still comes from the own
+        # el_Main detail ID. The legacy Beka-Mak-only collector is unchanged.
+        if parsed.scheme!='https' or parsed.hostname not in ('intervesp.ru','www.intervesp.ru') or parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.path.startswith('/catalog/') or len(parsed.path.strip('/').split('/'))<2:raise ValueError('UNSAFE_INTERVESP_DETAIL')
+        return url
     if code=='kami':
         from universal_supplier.adapters.kami import canonical_source_url
         canonical_source_url(url)
@@ -74,11 +79,15 @@ def load_manifest(settings,code,*,deadline,clock):
         if hashlib.sha256(file.read_bytes()).hexdigest()!=entry['sha256']:raise ValueError('SOURCE_EVIDENCE_SHA256_MISMATCH')
     return path,data
 
-def make_source_runner(code,*,repository_factory=None,transport_factory=None,clock=time.monotonic):
+def make_source_runner(code,*,repository_factory=None,transport_factory=None,clock=time.monotonic,runtime_backend_factory=None,runtime_clock=None):
     if code not in SOURCES:raise ValueError('UNKNOWN_SOURCE_RUNNER')
     def run(job,config):
         if job.supplier_code!=code or job.adapter_name!=code:raise ValueError('SOURCE_JOB_NAMESPACE_MISMATCH')
         settings=job.settings_snapshot.get('crawl_settings') or {}
+        if settings.get('collection_mode') or settings.get('execution_mode')=='LIVE':
+            from .source_runtime import run_source
+            return run_source(job,config,backend_factory=runtime_backend_factory,
+                              client_factory=transport_factory,clock=runtime_clock)
         mode=settings.get('execution_mode','OFFLINE_SAVED')
         if mode not in ('OFFLINE_SAVED','LIVE'):raise ValueError('UNKNOWN_SOURCE_EXECUTION_MODE')
         # Check before constructing a transport, repository or reading a URL.
@@ -99,15 +108,6 @@ def make_source_runner(code,*,repository_factory=None,transport_factory=None,clo
                     from universal_supplier.postgres import PostgresRepository
                     repository=PostgresRepository(config)
                 else:repository=repository_factory(config)
-            if mode=='LIVE':
-                from universal_supplier.http_capture import UrllibPublicHttpClient
-                # Source collectors historically require at least20s pacing.
-                rate={'max_concurrency':1,'min_request_interval_seconds':20}
-                rate.update(job.settings_snapshot.get('rate_settings') or {})
-                if rate['min_request_interval_seconds']<20:raise ValueError('SOURCE_PACING_BELOW_EXISTING_FLOOR')
-                transport=(transport_factory or UrllibPublicHttpClient)()
-                pause=float(rate['min_request_interval_seconds'])
-                last_response=None
             for entry in entries:
                 if clock()>=deadline:terminated='MAX_RUN_DURATION_EXCEEDED';break
                 url=entry['url'];observed=datetime.fromisoformat(entry['observed_at']);response_hash=entry['sha256']
@@ -116,19 +116,6 @@ def make_source_runner(code,*,repository_factory=None,transport_factory=None,clo
                 if mode=='OFFLINE_SAVED':
                     body=(manifest.parent/entry['file']).read_bytes()
                     if hashlib.sha256(body).hexdigest()!=entry['sha256']:raise ValueError('SOURCE_EVIDENCE_CHANGED_DURING_RUN')
-                else:
-                    if last_response is not None:
-                        if clock()+pause>=deadline:terminated='MAX_RUN_DURATION_EXCEEDED';break
-                        time.sleep(pause)
-                    fetched=transport.get_validated(url,validator=lambda u:validate_url(code,u),timeout_seconds=min(20,deadline-clock()))
-                    last_response=clock()
-                    if fetched.status_code in (403,429):terminated='SOURCE_BLOCKED_HTTP_'+str(fetched.status_code);break
-                    if fetched.status_code!=200:rows.append({'url':url,'status':'REVIEW','reason':'HTTP_'+str(fetched.status_code)});continue
-                    final=fetched.final_url;redirects=fetched.redirects
-                    body=fetched.body;content_type=fetched.content_type
-                    from universal_supplier.ltt_uss_capture import charset_from_response
-                    charset=charset_from_response(fetched)
-                    response_hash=hashlib.sha256(body).hexdigest();observed=datetime.now(timezone.utc)
                 if len(body)>MAX_RESPONSE_BYTES:raise ValueError('SOURCE_RESPONSE_TOO_LARGE')
                 if has_blocking_interstitial(body):terminated='SOURCE_BLOCKED_INTERSTITIAL';break
                 evidence=sanitise_for_charset(body,charset) if code.startswith('ltt_') or code=='uss_stanko' else sanitise_html(body,content_type)

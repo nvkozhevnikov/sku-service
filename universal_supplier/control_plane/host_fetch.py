@@ -9,7 +9,7 @@ from datetime import datetime,timezone
 from urllib.parse import urlsplit
 import hashlib,json,math,os,threading
 from .rate_control import (DomainRatePolicy,DomainRateLimiter,RequestMetrics,
-    CircuitBreaker,SystemClock,request_with_resilience,retry_after_seconds)
+    CircuitBreaker,SystemClock,RequestAborted,request_with_resilience,retry_after_seconds)
 from universal_supplier.http_capture import has_blocking_interstitial
 
 
@@ -49,7 +49,7 @@ class FetchOutcome:
 
 class BoundedHostFetcher:
     def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
-                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None):
+                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False):
         if not source:raise ValueError('SOURCE_REQUIRED')
         rate=compile_policy(source,'https://'+host,rate.snapshot(),approval=approval)
         if not lease_acquired:raise PermissionError('HOST_LEASE_REQUIRED')
@@ -61,14 +61,22 @@ class BoundedHostFetcher:
         self.validator=validator;self.robots_allowed=robots_allowed;self.clock=clock or SystemClock()
         self.stop_requested=stop_requested or (lambda:False);self.stopped=threading.Event()
         self.metrics=RequestMetrics();self.limiter=DomainRateLimiter(rate,clock=self.clock)
+        if defer_first_start:
+            # A newly acquired session lease cannot know the previous job's
+            # last start. Use the SAME gate with a conservative initial delay.
+            self.limiter._next_start=self.clock.monotonic()+rate.min_request_interval_seconds
         self.breaker=CircuitBreaker(rate,clock=self.clock,metrics=self.metrics);self.stop_reason=None
         self._lock=threading.Lock();self.outcomes=[];self.receipt_sink=receipt_sink
+        self.stop_sink=None
     def stop(self,reason='OPERATOR_STOP'):
         with self._lock:
-            if self.stop_reason is None:self.stop_reason=reason
+            first=self.stop_reason is None
+            if first:self.stop_reason=reason
             self.stopped.set()
+        if first and self.stop_sink:self.stop_sink(reason)
     def aborted(self):
-        if self.stop_requested():self.stop()
+        reason=self.stop_requested()
+        if reason:self.stop(reason if isinstance(reason,str) else 'OPERATOR_STOP')
         return self.stopped.is_set()
     def _validate(self,url):
         self.validator(url)
@@ -76,6 +84,7 @@ class BoundedHostFetcher:
         if not self.robots_allowed(url):raise PermissionError('ROBOTS_DISALLOW')
     def _fetch(self,url,deadline):
         started=self.clock.monotonic();client=None;response=None;attempts=0;observed=None
+        stop_statuses={403,429}
         try:
             self._validate(url);client=self.client_factory();callback=getattr(client,'before_request',None)
             initial=[True]
@@ -86,23 +95,29 @@ class BoundedHostFetcher:
                     if not exceeded:self._target_urls.add(target)
                 if exceeded:
                     self.stop('HARD_HTTP_URL_BUDGET');raise ValueError('HARD_HTTP_URL_BUDGET')
-                if self.aborted():raise RuntimeError('HOST_STOPPED')
+                if self.aborted():raise RequestAborted('HOST_STOPPED')
                 if initial[0]:initial[0]=False
                 else:self.limiter.wait(self.metrics,deadline=deadline)
-                if self.aborted():raise RuntimeError('HOST_STOPPED')
+                if self.aborted():raise RequestAborted('HOST_STOPPED')
                 if callback:callback(target)
             # The existing public client calls this for each redirect too.
             client.before_request=before_request
             def send():
                 initial[0]=True
                 response=client.get_validated(url,validator=self._validate,timeout_seconds=min(self.rate.request_timeout_seconds,max(.001,deadline-self.clock.monotonic())))
+                self._validate(response.final_url)
+                for target in response.redirects:self._validate(target)
                 if response.status_code in (403,429):self.stop('SOURCE_BLOCKED_HTTP_'+str(response.status_code))
+                elif response.status_code==503 and (retry_after_seconds(response.headers or {}) or 0)>0:
+                    # Respect a temporary host refusal even on the final
+                    # attempt. A later job needs a fresh operator boundary.
+                    stop_statuses.add(503);self.stop('SOURCE_RETRY_AFTER_HTTP_503')
                 elif has_blocking_interstitial(response.body):self.stop('SOURCE_BLOCKED_INTERSTITIAL')
                 return response
-            response,attempts=request_with_resilience(send,self.rate,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=frozenset({403,429}),abort_requested=self.aborted)
+            response,attempts=request_with_resilience(send,self.rate,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=stop_statuses,abort_requested=self.aborted)
             observed=datetime.now(timezone.utc)
             outcome=FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,
-                self.stop_reason if response.status_code in (403,429) or has_blocking_interstitial(response.body) else None,
+                self.stop_reason if response.status_code in stop_statuses or has_blocking_interstitial(response.body) else None,
                 retry_after_seconds(response.headers) if getattr(response,'headers',None) else None)
             if self.receipt_sink:
                 try:self.receipt_sink(outcome)
@@ -115,7 +130,7 @@ class BoundedHostFetcher:
             if client and getattr(client,'session',None):client.session.close()
     def fetch(self,urls,*,limit,seconds):
         urls=list(urls)
-        if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=1000 or len(urls)>limit:raise ValueError('HARD_URL_BUDGET')
+        if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=4096 or len(urls)>limit:raise ValueError('HARD_URL_BUDGET')
         if len(urls)!=len(set(urls)):raise ValueError('DUPLICATE_URL')
         if isinstance(seconds,bool) or not isinstance(seconds,(int,float)) or not math.isfinite(seconds) or not 0<seconds<=3600:raise ValueError('TIME_BUDGET')
         for url in urls:self._validate(url)
@@ -135,4 +150,7 @@ class BoundedHostFetcher:
                         if self.clock.monotonic()>=deadline:self.stop('MAX_RUN_DURATION_EXCEEDED')
                 except BaseException:
                     self.stop('CONSUMER_STOP');raise
-        finally:self.stopped.set()
+        finally:
+            # A collector reuses this SAME host gate across robots, discovery
+            # and product batches. Closing one batch must not stop its job.
+            if pending:self.stop('CONSUMER_STOP')

@@ -90,7 +90,8 @@ def test_pilot_buttons_and_full_action_match_backend_mode(monkeypatch):
 def test_manifest_copy_and_conservative_scheduler_fail_closed(monkeypatch):
     monkeypatch.delenv('STERBRUST_PARTNER_PILOT',raising=False)
     store=PanelStore('beka_mak');c=TestClient(create_app(store=store,auth_required=False))
-    r=c.get('/suppliers/1');assert r.status_code==200 and 'не полный discovery' in r.text and '100URL / 300сек' in r.text
+    monkeypatch.delenv('STERBRUST_SOURCE_RUNTIME_ENABLED',raising=False)
+    r=c.get('/suppliers/1');assert r.status_code==200 and 'runtime выключен' in r.text and 'name="collection_mode"' not in r.text
     r=c.post('/scheduler/1',data={'min_request_interval_seconds':'1','max_concurrency':'1'},headers={'origin':'http://testserver'})
     assert r.status_code==400 and not store.saves
 

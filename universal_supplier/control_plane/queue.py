@@ -75,8 +75,38 @@ class PostgresJobQueue:
         import psycopg
         return connect_postgres(self.config, autocommit=True)
 
+    def stop_source(self,supplier_id,job_id):
+        from .source_runtime import runtime_enabled,job_dir
+        from .source_jobs import SOURCES
+        if not runtime_enabled():raise PermissionError('SOURCE_RUNTIME_NOT_ENABLED')
+        with self._connect() as connection,connection.cursor() as cursor:
+            cursor.execute('''SELECT s.code,j.status,j.settings_snapshot FROM crawl_jobs j
+                JOIN suppliers s ON s.id=j.supplier_id WHERE j.id=%s AND j.supplier_id=%s''',(job_id,supplier_id))
+            row=cursor.fetchone()
+        if not row or row[0] not in SOURCES or row[1]!='running' or not (row[2].get('crawl_settings') or {}).get('collection_mode'):raise ValueError('NO_ACTIVE_SOURCE_RUNTIME_JOB')
+        path=job_dir(row[0],job_id)/'STOP_REQUESTED'
+        if not path.parent.is_dir():raise ValueError('SOURCE_CHECKPOINT_NOT_STARTED')
+        try:
+            with path.open('x',encoding='utf-8') as f:f.write('OPERATOR_STOP')
+        except FileExistsError:pass
+
+    def source_resume_status(self,job_id):
+        from .source_controls import verify_resume
+        from .source_runtime import runtime_enabled,read_input
+        if not runtime_enabled():raise PermissionError('SOURCE_RUNTIME_NOT_ENABLED')
+        with self._connect() as c,c.cursor() as q:
+            q.execute('''SELECT s.code,j.status,r.metadata FROM crawl_jobs j
+                JOIN suppliers s ON s.id=j.supplier_id JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.id=%s''',(job_id,))
+            row=q.fetchone()
+        if not row or row[1] not in ('partial','failed','cancelled','stale_failed'):raise ValueError('RESUME_PARENT_NOT_TERMINAL')
+        rt=(row[2] or {}).get('source_runtime') or {}
+        owner=rt['owner_job_id'];sha=rt['input_sha256']
+        original=read_input(row[0],owner,sha)
+        verify_resume(row[0],owner,sha,original,self.config)
+        return True
+
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
-                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative') -> EnqueueResult:
+                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None) -> EnqueueResult:
         from universal_supplier.partner_pilot import enabled,limit_value,validate_config
         if pilot_limit is not None:
             if not enabled():raise PermissionError("PILOT_MODE_NOT_ENABLED")
@@ -107,6 +137,21 @@ class PostgresJobQueue:
                 "domain": normalized_domain(base_url), "crawl_type": crawl_type,
                 "crawl_settings": crawl_settings or {}, "rate_settings": rate_settings or {},
             }
+            if source_mode is not None:
+                if trigger_type!='manual' or pilot_limit is not None:raise ValueError('SOURCE_MANUAL_ONLY')
+                from .source_controls import prepare_snapshot
+                known=[];parent=None
+                if source_mode=='REFRESH':
+                    cursor.execute("SELECT external_id,coalesce(canonical_url,source_url) FROM source_products WHERE supplier_id=%s AND active AND external_id_is_stable ORDER BY id",(supplier_id,))
+                    known=cursor.fetchall()
+                elif source_mode=='RESUME':
+                    if type(resume_job_id) is not int or resume_job_id<1:raise ValueError('RESUME_PARENT_REQUIRED')
+                    cursor.execute('''SELECT j.status,j.supplier_id,j.settings_snapshot,r.metadata
+                        FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.id=%s FOR SHARE OF j''',(resume_job_id,))
+                    previous=cursor.fetchone()
+                    if not previous or previous[1]!=supplier_id:raise ValueError('RESUME_PARENT_NAMESPACE')
+                    parent={'status':previous[0],'supplier_code':code,'settings':previous[2],'result':(previous[3] or {}).get('source_runtime',{})}
+                snapshot=prepare_snapshot(snapshot,source_mode,known_rows=known,resume=parent,config=self.config)
             if pilot_limit is not None:
                 if code!='partner_st' or adapter_name!='partner_st' or trigger_type!='manual':raise ValueError('PILOT_PARTNER_MANUAL_ONLY')
                 cursor.execute("SELECT sp.id,sp.external_id,coalesce(sp.canonical_url,sp.source_url) FROM source_products sp WHERE sp.supplier_id=%s AND sp.active AND sp.external_id_is_stable ORDER BY sp.id LIMIT %s",(supplier_id,pilot_limit))

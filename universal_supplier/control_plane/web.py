@@ -195,7 +195,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             "release_replay_available": release_dispatch is not None,
             "control_plane_read_only": read_only_source,
             "partner_pilot_enabled":__import__('universal_supplier.partner_pilot',fromlist=['enabled']).enabled(),
-            "manifest_sources":__import__('universal_supplier.control_plane.source_jobs',fromlist=['SOURCES']).SOURCES, **values}
+            "manifest_sources":__import__('universal_supplier.control_plane.source_jobs',fromlist=['SOURCES']).SOURCES,
+            "source_runtime_enabled":__import__('universal_supplier.control_plane.source_runtime',fromlist=['runtime_enabled']).runtime_enabled(), **values}
 
     @app.get('/automatic-matching', response_class=HTMLResponse)
     def automatic_matching(request: Request):
@@ -446,9 +447,18 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         if values.get("crawl_type", "full") not in SUPPORTED_WEB_CRAWL_TYPES: raise HTTPException(400, "Можно поставить в очередь только полный сбор")
         from universal_supplier.partner_pilot import enabled,limit_value
         mode=values.get('launch_mode','full')
-        if mode not in ('full','test'):raise HTTPException(400,'Неизвестный режим запуска')
+        if mode not in ('full','test','source'):raise HTTPException(400,'Неизвестный режим запуска')
         if enabled() and mode!='test':raise HTTPException(403,'Разрешён только ограниченный тест Partner-ST')
         kwargs={}
+        if mode=='source':
+            from .source_runtime import runtime_enabled
+            if not runtime_enabled():raise HTTPException(403,'Режим collectors не включён')
+            kwargs['source_mode']=values.get('collection_mode','')
+            if kwargs['source_mode'] not in ('REFRESH','DISCOVERY','RESUME'):raise HTTPException(400,'Неизвестный режим collector')
+            if kwargs['source_mode']=='RESUME':
+                raw=values.get('resume_job_id','')
+                if not raw.isascii() or not raw.isdecimal() or int(raw)<1:raise HTTPException(400,'Нужен исходный job')
+                kwargs['resume_job_id']=int(raw)
         if mode=='test':
             try:
                 raw=values.get('max_products','')
@@ -462,6 +472,17 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
         admin_store.audit(user.id or None, "MANUAL_CRAWL_ENQUEUED", "crawl_job", result.job_id, None, {"supplier_id": supplier_id, "crawl_type": "full", "status": result.status, "deduplicated_job_id": result.deduplicated_job_id}, values.get("comment") or None, str(uuid.uuid4()))
         return RedirectResponse(f"/runs?enqueue_status={result.status}&job_id={result.job_id}", 303)
+
+    @app.post('/suppliers/{supplier_id}/stop-source')
+    async def stop_source(request:Request,supplier_id:int):
+        guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        values=await form_values(request);check_csrf(request,values)
+        try:
+            raw=values.get('job_id','')
+            if not raw.isascii() or not raw.isdecimal() or int(raw)<1:raise ValueError('Нужен активный job')
+            queue.stop_source(supplier_id,int(raw))
+        except (ValueError,PermissionError,AttributeError) as error:raise HTTPException(400,str(error))
+        return RedirectResponse(f'/suppliers/{supplier_id}',303)
 
     @app.post('/suppliers/{supplier_id}/stop-pilot')
     async def stop_pilot(request:Request,supplier_id:int):
@@ -580,6 +601,16 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     def run_detail(request: Request, run_id: int):
         guard(request); item = store.run(run_id)
         if not item: raise HTTPException(404, "Запуск не найден")
+        if request.query_params.get('check_source_resume')=='1' and (item.get('metadata') or {}).get('source_runtime'):
+            from copy import deepcopy
+            item=deepcopy(item)
+            try:
+                queue.source_resume_status(item['metadata']['job_id'])
+                item['metadata']['source_runtime']['resume_available']=True
+                item['metadata']['source_runtime']['resume_check']='SQL и checkpoint сверены; повторная сверка перед enqueue'
+            except (ValueError,PermissionError,KeyError,AttributeError) as error:
+                item['metadata']['source_runtime']['resume_available']=False
+                item['metadata']['source_runtime']['resume_check']='Продолжение заблокировано: '+str(error)
         return templates.TemplateResponse(request, "run_detail.html", context(request, item=item, active="runs"))
 
     @app.get("/api/runs/{run_id}/progress")
@@ -621,8 +652,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             source=next((r for r in store.suppliers() if r['id']==supplier_id),None)
             if source and source['code'] in SOURCES:
                 if not raw.get('min_request_interval_seconds'):values['min_request_interval_seconds']=20.0
-                if values['min_request_interval_seconds']<20:raise ValueError('LIVE: текущий безопасный профиль требует интервал не менее20сек.')
-                if values['max_concurrency']!=1:raise ValueError('Текущий manifest runner выполняет запросы последовательно')
+                from .host_fetch import compile_policy
+                from .source_discovery import HOSTS
+                try:compile_policy(source['code'],source.get('base_url') or 'https://'+HOSTS[source['code']],values,approval=(source.get('crawl_settings') or {}).get('host_policy_approval'))
+                except PermissionError as error:raise ValueError('Профиль host не утверждён: '+str(error))
             DomainRatePolicy.from_mapping(values)
         except (TypeError, ValueError) as error:
             suppliers = store.suppliers()

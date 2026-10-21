@@ -1,7 +1,7 @@
 """Code-only checkpoint/resume primitives in the existing evidence tree.
 
-No HTTP, SQL, scheduler or UI action is called. Source collectors still must be
-wired and reviewed individually; a prepared frontier is not verified discovery.
+No HTTP, SQL, scheduler or UI action is called here. The nine wrapper collectors
+use these primitives through source_runtime; offline replay is not live discovery.
 """
 from pathlib import Path
 from datetime import datetime
@@ -134,7 +134,7 @@ class SourceCheckpoint:
                 history=previous['history']
                 if not history or history[-1]!=receipt:history=history+[deepcopy(receipt)]
                 self.state['terminal'][url]={'state':state,'receipt':deepcopy(receipt),'history':history};self.state['inflight'].pop(url,None)
-    def complete_discovery_node(self,url,children,*,evidence_sha256):
+    def complete_discovery_node(self,url,children,*,evidence_sha256,products=()):
         children=list(children)
         if len(evidence_sha256)!=64 or any(c not in '0123456789abcdef' for c in evidence_sha256):raise ValueError('DISCOVERY_EVIDENCE_SHA256')
         with self._change():
@@ -145,7 +145,7 @@ class SourceCheckpoint:
                 self.validator(child)
                 if child not in known:self.state['frontier'].append(child);known.add(child)
             self.state['inflight'].pop(url);self.state['visited'].append(url)
-            self.state['discovery_receipts'][url]={'evidence_sha256':evidence_sha256,'children':list(children)}
+            self.state['discovery_receipts'][url]={'evidence_sha256':evidence_sha256,'children':list(children),'products':deepcopy(list(products))}
     def finish_discovery(self,*,category_failures=()):
         with self._change():
             self.state['discovery_finished']=True;self.state['category_failures']=list(category_failures)

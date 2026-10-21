@@ -1,0 +1,70 @@
+"""Existing narrow PostgreSQL writers plus exact capture/observation readback.
+
+No matching algorithm, ID recipe, reconciliation or schema changes here.
+Construction is deferred until explicit runtime SQL permission passes.
+"""
+from datetime import datetime,timezone
+import time
+
+class SourceBackend:
+    def __init__(self,config,code):
+        from universal_supplier.postgres import PostgresRepository
+        self.repo=PostgresRepository(config);self.config=config;self.code=code;self.run_id=None;self.summary={};self.started=time.monotonic()
+    def start(self,job,mode):
+        self.run_id=self.repo.start_crawl_run(started_at=datetime.now(timezone.utc).isoformat(),baseline_discovered_count=None,
+            supplier_code=self.code,metadata={'job_id':job.id,'source_mode':mode})
+        with self.repo.connection.transaction(),self.repo.connection.cursor() as q:
+            q.execute("UPDATE crawl_jobs SET crawl_run_id=%s WHERE id=%s AND supplier_id=%s AND status='running'",(self.run_id,job.id,job.supplier_id))
+            if q.rowcount!=1:raise RuntimeError('SOURCE_QUEUE_OWNER_LOST')
+        return self.run_id
+    def persist(self,product,capture):
+        if self.code=='kami':return self.repo.persist_kami_observation(product,capture)
+        return self.repo.persist_commercial_observation(product,capture)
+    def probe(self,entry,receipt):
+        if not receipt or not receipt.get('original_capture_metadata'):return 'UNKNOWN'
+        from universal_supplier.commercial_persistence import HttpCapture
+        fields=dict(receipt['original_capture_metadata']);fields['observed_at']=datetime.fromisoformat(fields['observed_at'])
+        capture=HttpCapture(**fields)
+        if capture.fingerprint!=receipt.get('capture_fingerprint') or capture.requested_url!=entry['url']:return 'UNKNOWN'
+        with self.repo.connection.cursor() as q:
+            q.execute('''SELECT c.evidence_sha256,c.observed_at,c.final_url,
+                       EXISTS(SELECT 1 FROM offer_commercial_observations o WHERE o.capture_id=c.id
+                           AND o.source_product_id=c.source_product_id AND o.observed_at=c.observed_at)
+                       FROM supplier_http_captures c JOIN suppliers s ON s.id=c.supplier_id
+                       JOIN source_products sp ON sp.id=c.source_product_id
+                       WHERE s.code=%s AND c.capture_fingerprint=%s AND c.requested_url=%s
+                           AND sp.external_id=%s''',
+                      (self.code,capture.fingerprint,entry['url'],receipt.get('external_id')))
+            rows=q.fetchall()
+        if not rows:return 'NOT_FOUND'
+        if len(rows)!=1:return 'UNKNOWN'
+        sha,at,final,observation=rows[0]
+        return 'COMMITTED' if (sha,at,final,observation)==(capture.evidence_sha256,capture.observed_at,capture.final_url,True) else 'UNKNOWN'
+    def matching(self,external_ids):
+        from universal_supplier.automatic_matching import run_post_ingest
+        return run_post_ingest(self.config,self.code,external_ids)
+    def progress(self,summary):
+        from .adapter_registry import _finish_metadata
+        self.summary.update(summary)
+        total=self.summary.get('found');processed=self.summary.get('processed',0)
+        phase={'PRODUCTS':'FETCHING_PRODUCTS'}.get(self.summary.get('phase'),self.summary.get('phase','QUEUED'))
+        from .progress import PHASE_LABELS_RU
+        speed=self.summary.get('http_cards_per_minute')
+        progress={'phase':phase,'phase_label_ru':PHASE_LABELS_RU.get(phase,phase),'status':self.summary.get('status','running'),
+            'total':total,'processed':processed,'succeeded':self.summary.get('sql_committed',0),'errors':self.summary.get('errors',0),
+            'percent':None if total is None else 100 if total==0 else min(100,100*processed/total),
+            'rate_per_second':None if speed is None else speed/60,'eta_seconds':None,'eta_human_ru':'Время окончания пока неизвестно',
+            'elapsed_seconds':time.monotonic()-self.started,'updated_at':datetime.now(timezone.utc).isoformat()}
+        _finish_metadata(self.repo,self.run_id,{'source_runtime':self.summary,'progress':progress})
+    def finish(self,result):
+        from .adapter_registry import _finish_metadata
+        self.progress({**result,'phase':'FINISHED'})
+        _finish_metadata(self.repo,self.run_id,{'source_runtime':result,'source_mode':result['collection_mode'],
+            'identity_post_processing':result['identity_post_processing'],'termination_reason':result['termination_reason']})
+        with self.repo.connection.transaction(),self.repo.connection.cursor() as q:
+            counts=result['sql_counts']
+            q.execute('''UPDATE crawl_runs SET status=%s,finished_at=now(),discovered_count=%s,
+                      fetched_count=%s,error_count=%s,new_count=coalesce(%s,new_count),changed_count=coalesce(%s,changed_count) WHERE id=%s''',
+                      (result['status'],result['found'],result['sql_committed_this_job'],result['errors'],
+                       None if counts is None else counts['new_products'],None if counts is None else counts['changed_products'],self.run_id))
+    def close(self):self.repo.close()
