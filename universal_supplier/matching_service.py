@@ -92,7 +92,7 @@ def _optimum_title_articles(name: str) -> tuple[str, ...]:
             values.append(normalized)
     return tuple(values)
 
-def load_registry_from_postgres(connection) -> RegistryContext:
+def load_registry_from_postgres(connection, *, catalog_product_id=None) -> RegistryContext:
     products: dict[str, dict] = {}
     identifier_index: dict[tuple[str, str], list[str]] = defaultdict(list)
     by_model: dict[str, list[str]] = defaultdict(list)
@@ -104,7 +104,8 @@ def load_registry_from_postgres(connection) -> RegistryContext:
                       coalesce(model_raw,''), coalesce(article_raw,''),
                       coalesce(category_path,''), properties
                FROM sterbrust_products WHERE active IS DISTINCT FROM false
-               ORDER BY sterbrust_product_id"""
+               AND (%s::bigint IS NULL OR catalog_product_id=%s)
+               ORDER BY sterbrust_product_id""", (catalog_product_id, catalog_product_id)
         )
         for product_id, name, brand, model, article, category, properties in cursor.fetchall():
             key = str(product_id)

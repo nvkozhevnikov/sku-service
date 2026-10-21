@@ -193,22 +193,24 @@ class PostgresRepository:
             raise RuntimeError("passive commercial supplier disappeared during creation")
         return existing[0]
 
-    def persist_commercial_observation(self, product: ReadOnlySupplierProduct, capture: HttpCapture) -> dict[str, Any]:
+    def persist_commercial_observation(self, product: ReadOnlySupplierProduct, capture: HttpCapture, *, source_run_id: int | None = None) -> dict[str, Any]:
         """Persist one captured public-price observation after explicit DB authorisation.
 
         The method is intentionally inert until called by a future, separately
         authorised isolated-DB workflow.  It does not invoke matching,
         reconciliation, offer selection, a scheduler, or any external service.
+        source_run_id opts the collector into the separately checked running-job
+        fact-update contract; legacy passive callers still refuse linked writes.
         """
         card = product_card_from_snapshot(product, capture)
         observation = observation_from_snapshot(product, capture)
-        return self._persist_passive_observation(card, observation, capture)
+        return self._persist_passive_observation(card, observation, capture, source_run_id=source_run_id)
 
-    def persist_kami_observation(self, card: ProductCard, capture: HttpCapture) -> dict[str, Any]:
+    def persist_kami_observation(self, card: ProductCard, capture: HttpCapture, *, source_run_id: int | None = None) -> dict[str, Any]:
         """KAMI-only explicit writer; caller must preflight the new isolated target."""
         from .kami_persistence import prepare_observation
         card, observation = prepare_observation(card, capture)
-        return self._persist_passive_observation(card, observation, capture)
+        return self._persist_passive_observation(card, observation, capture, source_run_id=source_run_id)
 
     def materialize_kami_saved_content(self, card: ProductCard, capture: HttpCapture) -> bool:
         """Explicit offline content re-extraction; does not fabricate a new GET.
@@ -258,7 +260,7 @@ class PostgresRepository:
             self._replace_details(cursor, saved[0], product_id, offer_id, card, capture.observed_at.isoformat())
             return True
 
-    def _persist_passive_observation(self, card, observation, capture) -> dict[str, Any]:
+    def _persist_passive_observation(self, card, observation, capture, *, source_run_id=None) -> dict[str, Any]:
         observed_at = capture.observed_at.isoformat()
         if card.supplier_code not in PASSIVE_COMMERCIAL_SUPPLIERS:
             raise ValueError("commercial persistence is limited to passive suppliers")
@@ -281,6 +283,11 @@ class PostgresRepository:
                 (supplier_id, card.external_id),
             )
             existing = cursor.fetchone()
+            runtime = None
+            if source_run_id is not None:
+                from .source_update import prepare_update
+                runtime = prepare_update(self, cursor, supplier_id, source_run_id, card, observation, capture, existing)
+                card = runtime.card
             kami_content_changed = True
             kami_commercial_changed = True
             if existing:
@@ -295,7 +302,7 @@ class PostgresRepository:
                     return {"ingest_counts": counts, "source_product_id": source_product_id,
                             "capture_id": exact_capture[0], "observation_id": None,
                             "observation_created": False, "projection_updated": False, "exact_noop": True}
-                if catalog_product_id is not None:
+                if catalog_product_id is not None and runtime is None:
                     raise RuntimeError("commercial persistence refuses a catalog-linked source product")
                 projection_region = str((raw_data or {}).get("_commercial_projection_region", ""))
                 projection_updated = projection_region == region and (last_success_at is None or capture.observed_at >= last_success_at)
@@ -313,10 +320,11 @@ class PostgresRepository:
                            last_http_status=%s,updated_at=now() WHERE id=%s""",
                         (card.sku, card.name, card.requested_url, card.canonical_url,
                          json.dumps(next_raw, ensure_ascii=False), observed_at, observed_at,
-                         card.supplier_code != 'kami' or kami_content_changed, observed_at,
+                         runtime.product_changed if runtime else card.supplier_code != 'kami' or kami_content_changed, observed_at,
                          card.http_status, source_product_id),
                     )
-                    counts.changed_products += int(card.supplier_code != 'kami' or kami_content_changed)
+                    counts.changed_products += int(runtime.product_changed if runtime else card.supplier_code != 'kami' or kami_content_changed)
+                    if runtime and not runtime.product_changed:counts.unchanged_products += 1
             else:
                 projection_updated = True
                 next_raw = dict(card.raw_data)
@@ -374,11 +382,14 @@ class PostgresRepository:
                          price_known, card.currency or None,
                          availability_known, card.availability_raw, availability_known, card.availability_normalized,
                          json.dumps(card.raw_data, ensure_ascii=False),
-                         observed_at, observed_at, card.supplier_code != 'kami' or kami_commercial_changed,
+                         observed_at, observed_at, runtime.commercial_changed if runtime else card.supplier_code != 'kami' or kami_commercial_changed,
                          observed_at, offer_id),
                     )
-                    counts.changed_offers += int(card.supplier_code != 'kami' or kami_commercial_changed)
-            if card.supplier_code == "kami" and projection_updated and kami_content_changed:
+                    counts.changed_offers += int(runtime.commercial_changed if runtime else card.supplier_code != 'kami' or kami_commercial_changed)
+                    if runtime and not runtime.commercial_changed:counts.unchanged_offers += 1
+            if runtime and projection_updated:
+                runtime.apply(self, cursor, supplier_id, source_product_id, offer_id, observed_at, counts)
+            if runtime is None and card.supplier_code == "kami" and projection_updated and kami_content_changed:
                 # KAMI content is visible to existing product/panel queries;
                 # other supplier projections and their accepted state are untouched.
                 cursor.execute(

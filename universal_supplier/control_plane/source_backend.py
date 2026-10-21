@@ -27,8 +27,9 @@ class SourceBackend:
         return self.run_id
     def persist(self,product,capture):
         if self.code in ('partner_st','optimum'):return self.persist_native(product,capture)
-        if self.code=='kami':return self.repo.persist_kami_observation(product,capture)
-        return self.repo.persist_commercial_observation(product,capture)
+        if self.run_id is None:raise RuntimeError('SOURCE_RUN_NOT_STARTED')
+        if self.code=='kami':return self.repo.persist_kami_observation(product,capture,source_run_id=self.run_id)
+        return self.repo.persist_commercial_observation(product,capture,source_run_id=self.run_id)
     def persist_native(self,card,capture):
         """Native bounded ingest and receipt ledger commit in ONE transaction.
 

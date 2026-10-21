@@ -235,9 +235,9 @@ def _registry_rows(context: RegistryContext) -> dict[str, dict]:
     return result
 
 
-def _load_cards(connection, supplier_code: str | None, *, external_ids=None) -> tuple[list[ProductCard], dict[tuple[str, str], int]]:
+def _load_cards(connection, supplier_code: str | None, *, external_ids=None, include_inactive=False) -> tuple[list[ProductCard], dict[tuple[str, str], int]]:
     params: tuple[Any, ...] = ()
-    where = "sp.active"
+    where = "true" if include_inactive else "sp.active"
     if supplier_code:
         where += " AND s.code=%s"
         params = (supplier_code,)

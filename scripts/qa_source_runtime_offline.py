@@ -68,6 +68,12 @@ if '--bounded-only' in sys.argv:
 if '--export-only' in sys.argv:
     sys.argv.remove('--export-only')
     SUITE=('export_security_adoption',)
+if '--b0-only' in sys.argv:
+    sys.argv.remove('--b0-only')
+    SUITE=('source_linked_update','source_runtime','source_runtime_controls','source_resume',
+           'source_jobs','commercial_persistence','kami_persistence','service_idempotency',
+           'f01_f03_identity_inputs','automatic_matching','native_checkpoint',
+           'partner_pilot','partner_history_fix','stage6c1_optimum','stage6c1_partner')
 print('Offline evidence:', ARTIFACTS, flush=True)
 raise SystemExit(pytest.main([
     *[f'tests/test_{name}.py' for name in SUITE], '-q', '-p', 'no:cacheprovider',
