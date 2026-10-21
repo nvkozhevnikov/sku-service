@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import urljoin
+from urllib.parse import urljoin,urlsplit
 
 import requests
 
@@ -55,6 +55,10 @@ class HttpTransport:
         abort_requested=None,
     ) -> None:
         self.session = session or requests.Session()
+        if session is None:
+            from .public_connection import public_requests_adapter
+            self.session.mount('http://',public_requests_adapter())
+            self.session.mount('https://',public_requests_adapter())
         self.session.trust_env = False
         self.session.headers.update({"User-Agent": user_agent, "Accept": "text/html,application/xml;q=0.9,*/*;q=0.8"})
         self.retry = retry_policy or RetryPolicy()
@@ -89,24 +93,19 @@ class HttpTransport:
         self.limiter.wait(self.metrics)
 
     def get(self, url: str, *, deadline: float | None = None) -> FetchRecord:
-        started = self.clock.monotonic()
-        effective_deadline = self.deadline if deadline is None else deadline
-        response, attempts = request_with_resilience(
-            lambda: self.session.get(url, timeout=self.timeout, allow_redirects=True, stream=True),
-            self.policy, self.limiter, clock=self.clock, metrics=self.metrics, breaker=self.breaker,
-            deadline=effective_deadline, abort_requested=self.abort_requested,
-        )
-        return FetchRecord(
-            requested_url=url, final_url=response.url, status_code=response.status_code,
-            redirects=tuple(item.url for item in response.history), attempts=attempts,
-            elapsed_ms=round((self.clock.monotonic() - started) * 1000), text=_bounded_text(response),
-        )
+        from .url_safety import host_validator
+        return self.get_validated(url,host_validator((urlsplit(url).hostname,),resolve_dns=False),deadline=deadline)
 
     def get_validated(self, url: str, validator, *, deadline: float | None = None,
                       max_redirects: int = 5) -> FetchRecord:
         """Follow redirects manually so every target is validated before I/O."""
         started = self.clock.monotonic()
         effective_deadline = self.deadline if deadline is None else deadline
+        from .url_safety import validate_public_http_url
+        source_validator=validator
+        def validator(target):
+            validate_public_http_url(target)
+            return source_validator(target)
         current = validator(url)
         redirects: list[str] = []
         total_attempts = 0
@@ -117,7 +116,7 @@ class HttpTransport:
                 breaker=self.breaker, deadline=effective_deadline, abort_requested=self.abort_requested,
             )
             total_attempts += attempts
-            if response.is_redirect or response.is_permanent_redirect:
+            if response.status_code in (301,302,303,307,308):
                 location = response.headers.get("Location")
                 if not location:
                     raise ValueError("Redirect без Location")

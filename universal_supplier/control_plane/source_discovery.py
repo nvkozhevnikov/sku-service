@@ -11,7 +11,8 @@ from universal_supplier.full_supplier_collection import ROOT_SITEMAPS, _safe_sou
 from universal_supplier.ltt_uss_capture import SOURCE_HOSTS, safe_source_url, is_product_candidate
 
 HOSTS={**{k:urlsplit(v).hostname for k,v in ROOT_SITEMAPS.items()},
-       **{k:next(iter(v)) for k,v in SOURCE_HOSTS.items()}, 'kami':'www.stanki.ru'}
+       **{k:next(iter(v)) for k,v in SOURCE_HOSTS.items()}, 'kami':'www.stanki.ru',
+       'partner_st':'partner-st.ru','optimum':'optimum.su'}
 
 def root_urls(code):
     if code=='kami':return ['https://www.stanki.ru/catalog/','https://www.stanki.ru/bu/']
@@ -20,7 +21,11 @@ def root_urls(code):
 def validate_node(code,url):
     p=urlsplit(url)
     if p.port not in (None,443) or p.fragment:raise ValueError('UNSAFE_DISCOVERY_URL')
-    if code=='kami':
+    if code in ('partner_st','optimum'):
+        from universal_supplier.url_safety import validate_public_http_url
+        validate_public_http_url(url,(HOSTS[code],'www.'+HOSTS[code]))
+        if p.scheme!='https' or p.query or not p.path.endswith('.xml'):raise ValueError('UNSAFE_NATIVE_SITEMAP')
+    elif code=='kami':
         from scripts.discover_kami_catalog import traversal_url_is_safe
         if not traversal_url_is_safe(url):raise ValueError('UNSAFE_KAMI_TRAVERSAL')
     elif code in ROOT_SITEMAPS:_safe_source_url(code,url,sitemap=True)
@@ -52,6 +57,7 @@ def decode_node(code,url,body):
         children=[]
         for target in locs:
             if target.endswith('sitemap-files.xml'):continue
+            if code=='partner_st' and not urlsplit(target).path.rsplit('/',1)[-1].lower().startswith('products'):continue
             validate_node(code,target);children.append(target)
         return sorted(set(children)),[]
     if kind!='urlset':raise ValueError('UNEXPECTED_SITEMAP_ROOT')

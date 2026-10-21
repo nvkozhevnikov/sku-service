@@ -380,7 +380,9 @@ def test_partner_request_metrics_cover_status_and_network_error_buckets():
     ], clock=clock, advance_per_call=0.25)
     transport = HttpTransport(session=session, domain_policy=configured, clock=clock)
     for position in range(5):
-        transport.get(f"https://partner-st.ru/product/{position}")
+        if position==1:
+            with pytest.raises(ValueError,match='Location'):transport.get(f"https://partner-st.ru/product/{position}")
+        else:transport.get(f"https://partner-st.ru/product/{position}")
     with pytest.raises(RuntimeError, match="offline"):
         transport.get("https://partner-st.ru/product/network-error")
     metrics = transport.metrics.as_metadata()

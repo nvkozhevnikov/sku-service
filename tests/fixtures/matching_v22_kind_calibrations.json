@@ -3206,7 +3206,7 @@
         }
       },
       "expected_id": "147568",
-      "expected_rule": "V22_EXPLICIT_COMPLETE_MACHINE_HEAD"
+      "expected_rule": "V21_RETAINED"
     },
     {
       "source": {
@@ -3405,7 +3405,7 @@
         }
       },
       "expected_id": "147577",
-      "expected_rule": "V22_EXPLICIT_COMPLETE_MACHINE_HEAD"
+      "expected_rule": "V21_RETAINED"
     },
     {
       "source": {

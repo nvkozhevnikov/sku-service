@@ -19,7 +19,10 @@ def policy_digest(source,host,rate,approval):
     return hashlib.sha256(json.dumps({'source':source,'host':host,'rate':rate.snapshot(),'approval_reference':approval},sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 def compile_policy(source,url,settings=None,*,approval=None,approved_digests=None):
-    values={'max_concurrency':1,'min_request_interval_seconds':20.0,'max_attempts':1,'request_timeout_seconds':20.0,'max_run_duration_seconds':300.0,**(settings or {})}
+    from .rate_control import PARTNER_ST_DEFAULT_RATE_POLICY,OPTIMUM_DEFAULT_RATE_POLICY
+    native={'partner_st':PARTNER_ST_DEFAULT_RATE_POLICY,'optimum':OPTIMUM_DEFAULT_RATE_POLICY}.get(source)
+    defaults=native.snapshot() if native else {'max_concurrency':1,'min_request_interval_seconds':20.0,'max_attempts':1,'request_timeout_seconds':20.0,'max_run_duration_seconds':300.0}
+    values={**defaults,**(settings or {})}
     rate=DomainRatePolicy.from_mapping(values)
     for name,value in rate.snapshot().items():
         if name=='respect_retry_after':continue
@@ -30,7 +33,8 @@ def compile_policy(source,url,settings=None,*,approval=None,approved_digests=Non
         if type(getattr(rate,name)) is not int:raise ValueError('HOST_RATE_INTEGER_REQUIRED')
     host=host_key(url)
     if not host:raise ValueError('HOST_REQUIRED')
-    if rate.max_concurrency>1 or rate.min_request_interval_seconds<20:
+    requires_approval=(rate.max_concurrency>native.max_concurrency or rate.min_request_interval_seconds<native.min_request_interval_seconds) if native else (rate.max_concurrency>1 or rate.min_request_interval_seconds<20)
+    if requires_approval:
         approval=approval or {}
         if approval.get('host')!=host or not approval.get('reference'):raise PermissionError('HOST_PROFILE_NOT_APPROVED')
         approved_digests=approved_digests if approved_digests is not None else json.loads(os.environ.get('STERBRUST_APPROVED_HOST_POLICIES','{}'))

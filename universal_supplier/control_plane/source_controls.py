@@ -1,6 +1,6 @@
 """Freeze supported panel actions into the existing crawl job snapshot."""
 from copy import deepcopy
-from .source_jobs import SOURCES
+from .source_jobs import RUNTIME_SOURCES as SOURCES
 from .source_discovery import root_urls
 from .host_fetch import compile_policy
 from .source_runtime import runtime_enabled,read_input,job_dir,checked_input,evidence_root,engine_fingerprint
@@ -41,6 +41,7 @@ def verify_resume(code,owner,sha,original,config):
     from .source_resume import digest
     checksum=state.pop('checksum')
     if digest(state)!=checksum or state['manifest_sha256']!=sha or state['source']!=code or state['job_id']!=owner:raise ValueError('RESUME_CHECKPOINT_CHANGED')
+    if state['inflight']:raise ValueError('UNCERTAIN_PRODUCT_RECEIPT_REQUIRES_OPERATOR')
     discovery_path=evidence_root()/'discovery'/code/('job-'+str(owner))/'checkpoint.json'
     if original['mode']=='DISCOVERY':
         discovery=json.loads(discovery_path.read_text(encoding='utf-8'));check=discovery.pop('checksum')

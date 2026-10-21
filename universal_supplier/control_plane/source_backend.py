@@ -18,8 +18,47 @@ class SourceBackend:
             if q.rowcount!=1:raise RuntimeError('SOURCE_QUEUE_OWNER_LOST')
         return self.run_id
     def persist(self,product,capture):
+        if self.code in ('partner_st','optimum'):return self.persist_native(product,capture)
         if self.code=='kami':return self.repo.persist_kami_observation(product,capture)
         return self.repo.persist_commercial_observation(product,capture)
+    def persist_native(self,card,capture):
+        """Native bounded ingest and receipt ledger commit in ONE transaction.
+
+        Per-card batches deliberately omit full-catalog quality/missing logic.
+        Existing native full/pilot entry points do not call this method.
+        """
+        from psycopg.types.json import Jsonb
+        import hashlib,json
+        if card.supplier_code!=self.code or card.requested_url!=capture.requested_url:raise ValueError('NATIVE_CAPTURE_IDENTITY')
+        with self.repo.connection.transaction(),self.repo.connection.cursor() as q:
+            q.execute('''SELECT c.id FROM supplier_http_captures c JOIN suppliers s ON s.id=c.supplier_id
+                         WHERE s.code=%s AND c.capture_fingerprint=%s''',(self.code,capture.fingerprint))
+            if q.fetchone():raise RuntimeError('NATIVE_CAPTURE_ALREADY_EXISTS_RECONCILE')
+            counts=self.repo.ingest([card],capture.observed_at.isoformat(),supplier_code=self.code,bounded=True)
+            q.execute('''SELECT sp.id,sp.supplier_id,o.id FROM source_products sp
+                         JOIN suppliers s ON s.id=sp.supplier_id JOIN offers o ON o.source_product_id=sp.id AND o.offer_kind='default'
+                         WHERE s.code=%s AND sp.external_id=%s AND sp.external_id_is_stable''',(self.code,card.external_id))
+            row=q.fetchone()
+            if not row:raise RuntimeError('NATIVE_INGEST_IDENTITY_NOT_FOUND')
+            product_id,supplier_id,offer_id=row
+            q.execute('''INSERT INTO supplier_http_captures(supplier_id,source_product_id,requested_url,final_url,http_status,
+                         content_type,observed_at,capture_fingerprint,response_sha256,evidence_sha256,evidence_ref,redirect_urls,diagnostics)
+                         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id''',
+                      (supplier_id,product_id,capture.requested_url,capture.final_url,capture.http_status,capture.content_type,
+                       capture.observed_at,capture.fingerprint,capture.response_sha256,capture.evidence_sha256,capture.evidence_ref,
+                       Jsonb(list(capture.redirects)),Jsonb({'runtime':'native-checkpoint/v1','codes':capture.diagnostics})))
+            capture_id=q.fetchone()[0]
+            payload=card.as_jsonable();extraction=hashlib.sha256(json.dumps(payload,sort_keys=True,default=str).encode()).hexdigest()
+            currency=card.currency if card.currency and len(card.currency)==3 and card.currency.isascii() and card.currency.isalpha() and card.currency.isupper() else None
+            numeric=card.price is not None and card.price>0 and currency is not None
+            price_state='numeric_public' if numeric else 'zero_invalid' if card.price==0 else 'parse_error' if card.price is not None else 'missing'
+            q.execute('''INSERT INTO offer_commercial_observations(supplier_id,source_product_id,offer_id,capture_id,observed_at,
+                         extraction_fingerprint,price_state,price,old_price,currency,availability_raw,availability_normalized,extraction_evidence)
+                         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                      (supplier_id,product_id,offer_id,capture_id,capture.observed_at,extraction,price_state,card.price if numeric else None,
+                       card.old_price if numeric and card.old_price is not None and card.old_price>0 else None,
+                       currency,card.availability_raw,card.availability_normalized,Jsonb({'parser':self.code,'evidence_sha256':capture.evidence_sha256})))
+        return {'ingest_counts':counts}
     def probe(self,entry,receipt):
         if not receipt or not receipt.get('original_capture_metadata'):return 'UNKNOWN'
         from universal_supplier.commercial_persistence import HttpCapture

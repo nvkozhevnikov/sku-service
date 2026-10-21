@@ -135,6 +135,10 @@ def _schema_signals(cards, errors) -> list[str]:
 
 
 def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
+    if (job.settings_snapshot.get('crawl_settings') or {}).get('collection_mode'):
+        if job.settings_snapshot.get('partner_pilot'):raise ValueError('NATIVE_CHECKPOINT_PILOT_MIXED')
+        from .source_runtime import run_source
+        return run_source(job,config)
     rate = _policy_from_snapshot(
         job.settings_snapshot.get("rate_settings"), PARTNER_ST_DEFAULT_RATE_POLICY,
     )
@@ -264,6 +268,9 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
 
 
 def run_optimum_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
+    if (job.settings_snapshot.get('crawl_settings') or {}).get('collection_mode'):
+        from .source_runtime import run_source
+        return run_source(job,config)
     rate = _policy_from_snapshot(
         job.settings_snapshot.get("rate_settings"), OPTIMUM_DEFAULT_RATE_POLICY,
     )

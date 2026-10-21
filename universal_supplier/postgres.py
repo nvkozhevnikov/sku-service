@@ -523,7 +523,7 @@ class PostgresRepository:
             raise ValueError("cross-supplier card batch is forbidden")
         with self.connection.transaction(), self.connection.cursor() as cursor:
             if bounded:
-                if supplier_code!='partner_st':raise ValueError('BOUNDED_PARTNER_ONLY')
+                if supplier_code not in ('partner_st','optimum'):raise ValueError('BOUNDED_NATIVE_ONLY')
                 cursor.execute("SELECT id FROM suppliers WHERE code=%s",(supplier_code,));supplier_id=cursor.fetchone()[0]
             else:supplier_id = self.ensure_supplier(supplier_code)
             url_to_product: dict[str, int] = {}

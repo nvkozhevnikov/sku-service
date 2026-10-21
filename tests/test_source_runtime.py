@@ -39,10 +39,17 @@ def isolation(monkeypatch,tmp_path):
     monkeypatch.setattr('psycopg.connect',deny)
 
 def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',backend=None):
-    body,url,charset,_=saved_case(code);clock=Clock();calls=[];backend=backend or Backend()
+    if code=='partner_st':
+        from test_partner_pilot import html
+        body,url,charset,_=html(1).encode(),'https://partner-st.ru/item-1/','utf-8',None
+    elif code=='optimum':
+        from test_optimum_source import HTML,URL
+        body,url,charset,_=HTML.encode(),URL,'utf-8',None
+    else:body,url,charset,_=saved_case(code)
+    clock=Clock();calls=[];backend=backend or Backend()
     from universal_supplier.ltt_uss_capture import sanitise_for_charset
     clean=sanitise_for_charset(body,charset)
-    product=parse_existing(code,clean.decode(),url);ext=product.external_id if code=='kami' else product.site_internal_id
+    product=parse_existing(code,clean.decode(),url);ext=product.external_id if code in ('kami','partner_st','optimum') else product.site_internal_id
     rate=compile_policy(code,'https://'+HOSTS[code],{'jitter_max_seconds':0})
     value={'format':'source-runtime-input/v1','supplier_code':code,'mode':mode,
         'entries':[{'url':url,'source_external_id':ext}] if mode=='REFRESH' else [],
@@ -59,7 +66,9 @@ def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',ba
             return HttpResponse(target,status,'text/html; charset='+charset,body,headers={'Retry-After':'120'})
     def run(j=job):
         token=LEASED_HOST.set(j.domain)
-        try:return make_source_runner(code,transport_factory=Client,runtime_backend_factory=lambda cfg,source:backend,runtime_clock=clock)(j,None)
+        try:
+            if code in ('partner_st','optimum'):return run_source(j,None,client_factory=Client,backend_factory=lambda cfg,source:backend,clock=clock)
+            return make_source_runner(code,transport_factory=Client,runtime_backend_factory=lambda cfg,source:backend,runtime_clock=clock)(j,None)
         finally:LEASED_HOST.reset(token)
     return run,job,backend,calls,url
 

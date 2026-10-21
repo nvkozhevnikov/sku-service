@@ -16,6 +16,7 @@ os.chdir(ROOT)
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 os.environ['CONTROL_PLANE_SKIP_DEFAULT_APP'] = 'YES'
 os.environ['CONTROL_PLANE_TEST_SNAPSHOT'] = 'fixture'
+os.environ['CONTROL_PLANE_INSECURE_HTTP'] = 'YES'  # TestClient uses local HTTP.
 
 # Windows sandbox cannot reopen pytest's owner-only temporary directories.
 # Restrict this compatibility adjustment to this run's disposable evidence.
@@ -52,6 +53,9 @@ SUITE = (
     'host_fetch', 'readiness_panel', 'partner_history_fix', 'partner_pilot',
     'partner_stop_diagnostics', 'service_idempotency', 'f01_f03_identity_inputs',
     'automatic_matching', 'stage6c1_control', 'stage6c1_optimum', 'stage6c1_partner',
+    'native_checkpoint', 'runtime_security', 'security_review_group5',
+    'commercial', 'commercial_persistence', 'optimum_source', 'http_capture',
+    'matching_policy_v22',
 )
 print('Offline evidence:', ARTIFACTS, flush=True)
 raise SystemExit(pytest.main([

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import secrets
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 import tempfile
@@ -110,8 +112,23 @@ def safe_next(value: str | None) -> str:
 
 def optional_int(value: str | None, label: str) -> int | None:
     if value in {None, ""}: return None
-    if not str(value).strip().isdigit(): raise HTTPException(400, f"Некорректное значение: {label}")
+    if not is_id(value): raise HTTPException(400, f"Некорректное значение: {label}")
     return int(value)
+
+
+def is_id(value):
+    return bool(re.fullmatch(r'[0-9]{1,18}',str(value).strip()))
+
+
+def safe_http_url(value):
+    from universal_supplier.url_safety import is_http_url
+    return str(value).strip() if is_http_url(value) else ''
+
+
+def public_health(status):
+    states={'ok','demo_snapshot','stale','failing','unavailable','disabled','unknown'}
+    return {key:value if isinstance(value,str) and value in states else 'unknown'
+            for key,value in status.items() if key in ('application','postgresql','worker','scheduler')}
 
 
 def filters_from_request(request: Request, *, forced_decision: str = "") -> ProductFilters:
@@ -162,6 +179,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE / "templates")
     templates.env.filters["ru"] = russian_label
+    templates.env.globals['safe_http_url']=safe_http_url
     templates.env.filters["product_kind_ru"] = product_kind_label
     from .presentation import phase_summary, price_label, duration_label, mark_quality_repeats
     templates.env.globals.update(phase_summary=phase_summary,price_label=price_label,duration_label=duration_label)
@@ -187,7 +205,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     def context(request: Request, **values):
         data = payload(request)
         read_only_source = bool(getattr(type(store), "read_only", False))
-        return {"request": request, "current_user": current_user(request), "csrf_token": data.get("csrf", "") if data else "",
+        return {"request": request, "csp_nonce":getattr(request.state,'csp_nonce',''), "current_user": current_user(request), "csrf_token": data.get("csrf", "") if data else "",
             "safety_banner": "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
             "commercial_qa_available": bool(getattr(commercial_qa_service, "enabled", False)),
             "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
@@ -195,7 +213,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             "release_replay_available": release_dispatch is not None,
             "control_plane_read_only": read_only_source,
             "partner_pilot_enabled":__import__('universal_supplier.partner_pilot',fromlist=['enabled']).enabled(),
-            "manifest_sources":__import__('universal_supplier.control_plane.source_jobs',fromlist=['SOURCES']).SOURCES,
+            "manifest_sources":__import__('universal_supplier.control_plane.source_jobs',fromlist=['RUNTIME_SOURCES']).RUNTIME_SOURCES,
             "source_runtime_enabled":__import__('universal_supplier.control_plane.source_runtime',fromlist=['runtime_enabled']).runtime_enabled(), **values}
 
     @app.get('/automatic-matching', response_class=HTMLResponse)
@@ -260,6 +278,16 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                     '<p><a href="/commercial-qa">Открыть ручной сбор</a></p>', status_code=403)
             return PlainTextResponse("Источник доступен только для чтения; обычные изменения заблокированы.", status_code=403)
         return await call_next(request)
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        request.state.csp_nonce=secrets.token_urlsafe(24)
+        response=await call_next(request)
+        response.headers.update({
+            'X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff',
+            'Referrer-Policy':'no-referrer','Cache-Control':'no-store',
+            'Content-Security-Policy':"default-src 'self'; script-src 'self' 'nonce-"+request.state.csp_nonce+"'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
+        return response
+
     def page_error(request: Request, message: str, status_code=400, details=""):
         user = current_user(request)
         return templates.TemplateResponse(request, "error.html", context(request, message=message,
@@ -293,12 +321,12 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         login_throttle.reset(throttle_key)
         user, _ = found; admin_store.touch_login(user.id); token, _ = signer.issue(user)
         response = RedirectResponse(safe_next(values.get("next")), 303)
-        response.set_cookie(signer.cookie_name, token, httponly=True, samesite="lax", secure=os.environ.get("HTTPS_ENABLED") == "YES", max_age=signer.ttl_seconds, path="/")
+        response.set_cookie(signer.cookie_name, token, httponly=True, samesite="lax", secure=os.environ.get('CONTROL_PLANE_INSECURE_HTTP')!='YES', max_age=signer.ttl_seconds, path="/")
         return response
 
     @app.post("/logout")
     async def logout(request: Request):
-        user = guard(request); values = await form_values(request); check_csrf(request, values)
+        user = guard(request); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
         if auth_required: admin_store.revoke_sessions(user.id, user.id, "logout")
         response = RedirectResponse("/login", 303); response.delete_cookie(signer.cookie_name, path="/"); return response
 
@@ -337,7 +365,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             details={kind:store.iter_export_detail(filters,kind) for kind in ("properties","images","documents","relations","matches","decisions")}
         else:
             materialized=list(rows); rows=materialized
-            details=store.export_details([int(row["source_product_id"]) for row in materialized if str(row.get("source_product_id","")).isdigit()])
+            details=store.export_details([int(row["source_product_id"]) for row in materialized if is_id(row.get("source_product_id",""))])
         admin_store.audit(user.id or None,"EXPORT_CREATED","products","xlsx",None,{"rows":total,"filters":dict(request.query_params),"write_only":True,"chunk_size":500})
         return Response(product_workbook(rows,details),media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":f'attachment; filename="{safe_export_filename("products","xlsx",filters.supplier)}"'})
 
@@ -384,14 +412,14 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.post("/review/bulk/assign")
     async def bulk_assign(request: Request):
         user = guard(request, MUTATING_ROLES); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
-        case_ids = [int(x) for x in values.get("case_ids", "").split(",") if x.strip().isdigit()]
+        case_ids = [int(x) for x in values.get("case_ids", "").split(",") if is_id(x)]
         admin_store.assign(case_ids, optional_int(values.get("assigned_to_user_id"), "исполнитель"), user.id)
         return RedirectResponse("/review?bulk_saved=1", 303)
 
     @app.post("/review/bulk")
     async def safe_bulk(request: Request):
         user = guard(request, MUTATING_ROLES); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
-        case_ids = [int(value) for key, value in values.items() if key.startswith("case_") and value.isdigit()]
+        case_ids = [int(value) for key, value in values.items() if key.startswith("case_") and is_id(value)]
         if not case_ids: return page_error(request, "Выберите хотя бы одну карточку")
         action = values.get("bulk_action", "")
         try:
@@ -685,7 +713,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         rule_type=values.get("rule_type","FORCE_REVIEW"); config_value=values.get("config_value","").strip(); config={}
         if rule_type in {"BRAND_OVERRIDE","CATEGORY_OVERRIDE"}: config={"value":config_value}
         elif rule_type=="DO_NOT_USE_SUPPLIER_FIELD": config={"field":config_value}
-        elif rule_type=="PROPERTY_MAPPING_OVERRIDE" and config_value.isdigit(): config={"canonical_property_id":int(config_value)}
+        elif rule_type=="PROPERTY_MAPPING_OVERRIDE" and is_id(config_value): config={"canonical_property_id":int(config_value)}
         before=None; created=stage6e_service.add_rule({"supplier_id":values.get("supplier_id"),"scope":values.get("scope","product"),"entity_key":values.get("entity_key",""),"rule_type":rule_type,"config":config,"reason":values["reason"].strip()},user.id)
         admin_store.audit(user.id,"BUSINESS_RULE_CREATED","business_rule",created["id"],before,dict(created))
         return RedirectResponse("/rules?saved=1",303)
@@ -868,9 +896,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.get("/changes/export.{extension}")
     def changes_export(request:Request,extension:str):
         user=guard(request); period=request.query_params.get("period","7d")
-        if period not in {"last_run","24h","7d","between"} or (period=="between" and not (request.query_params.get("run_a","").isdigit() and request.query_params.get("run_b","").isdigit())):
+        if period not in {"last_run","24h","7d","between"} or (period=="between" and not (is_id(request.query_params.get("run_a","")) and is_id(request.query_params.get("run_b","")))):
             raise HTTPException(400,"Для диапазона нужны корректные Run A и Run B")
-        try: rows=store.change_rows(period=period,run_a=int(request.query_params["run_a"]) if request.query_params.get("run_a","").isdigit() else None,run_b=int(request.query_params["run_b"]) if request.query_params.get("run_b","").isdigit() else None)
+        try: rows=store.change_rows(period=period,run_a=int(request.query_params["run_a"]) if is_id(request.query_params.get("run_a","")) else None,run_b=int(request.query_params["run_b"]) if is_id(request.query_params.get("run_b","")) else None)
         except ValueError as error: raise HTTPException(400,str(error))
         columns=(("supplier_name","Поставщик"),("external_id","External ID"),("article","Артикул"),("field","Поле"),("old_value","Было"),("new_value","Стало"),("changed_at","Время"),("run_id","Run ID"))
         admin_store.audit(user.id or None,"EXPORT_CREATED","changes",extension,None,{"rows":len(rows),"period":period})
@@ -1009,7 +1037,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/health")
     def health():
-        status = store.health(); return JSONResponse(status, status_code=200 if status.get("postgresql") in {"ok", "demo_snapshot"} else 503)
+        status = store.health(); return JSONResponse(public_health(status), status_code=200 if status.get("postgresql") in {"ok", "demo_snapshot"} else 503)
     @app.get("/ready")
     def ready():
         status = store.health(); ok = status.get("postgresql") in {"ok", "demo_snapshot"}; return JSONResponse({"ready":ok}, status_code=200 if ok else 503)
@@ -1023,7 +1051,7 @@ def create_unavailable_app(message: str) -> FastAPI:
     app.state.store = store; app.state.auth_required = True
 
     @app.get("/health")
-    def health(): return JSONResponse(store.health(), status_code=503)
+    def health(): return JSONResponse(public_health(store.health()), status_code=503)
     @app.get("/ready")
     def ready(): return JSONResponse({"ready": False}, status_code=503)
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])

@@ -5,7 +5,7 @@ RESUME reconciles original captures against SQL before any further product GET.
 This module never reconciles missing products or changes canonical identities.
 """
 from contextvars import ContextVar
-from dataclasses import asdict
+from dataclasses import asdict,replace
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib, json, math, os, time
@@ -15,7 +15,7 @@ from urllib.robotparser import RobotFileParser
 from .host_fetch import BoundedHostFetcher, compile_policy, host_key
 from .source_resume import SourceCheckpoint, classify, pending_manifest, digest
 from .source_discovery import HOSTS, root_urls, validate_node, decode_node
-from .source_jobs import SOURCES, validate_url, parse_existing
+from .source_jobs import RUNTIME_SOURCES, NATIVE_SOURCES, validate_url, parse_existing
 from .rate_control import SystemClock
 from universal_supplier.commercial_persistence import HttpCapture, product_card_from_snapshot
 from universal_supplier.http_capture import UrllibPublicHttpClient, MAX_RESPONSE_BYTES, sanitise_html
@@ -76,7 +76,7 @@ def runtime_enabled():return os.environ.get('STERBRUST_SOURCE_RUNTIME_ENABLED')=
 
 def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None):
     code=job.supplier_code
-    if code not in SOURCES or job.adapter_name!=code:raise ValueError('SOURCE_JOB_NAMESPACE')
+    if code not in RUNTIME_SOURCES or job.adapter_name!=code:raise ValueError('SOURCE_JOB_NAMESPACE')
     if os.environ.get('STERBRUST_ALLOW_SUPPLIER_HTTP')!='YES':raise PermissionError('LIVE_SUPPLIER_HTTP_NOT_AUTHORIZED')
     if not runtime_enabled():raise PermissionError('SOURCE_RUNTIME_NOT_ENABLED')
     if LEASED_HOST.get()!=job.domain or job.domain!=host_key('https://'+HOSTS[code]):raise PermissionError('CURRENT_HOST_LEASE_REQUIRED')
@@ -131,6 +131,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     http_started=clock.monotonic();http_seconds=0.;sql_seconds=0.;parse_seconds=0.;matching_seconds=None
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     try:
+        if mode=='RESUME' and cp.state['inflight']:raise ValueError('UNCERTAIN_PRODUCT_RECEIPT_REQUIRES_OPERATOR')
         if persist:
             if backend_factory is None:
                 from .source_backend import SourceBackend
@@ -253,13 +254,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 body=Path(cap.evidence_ref).read_bytes()
                 if hashlib.sha256(body).hexdigest()!=cap.evidence_sha256:raise ValueError('ARCHIVE_HASH_CHANGED')
                 product=parse_existing(code,body.decode('utf-8'),cap.final_url)
-                external=product.external_id if code=='kami' else product.site_internal_id
+                if code in NATIVE_SOURCES:product=replace(product,requested_url=cap.requested_url,final_url=cap.final_url,redirect_urls=cap.redirects)
+                external=product.external_id if code in ('kami',*NATIVE_SOURCES) else product.site_internal_id
                 if not external or not product.name:raise ValueError('SOURCE_IDENTITY_UNRESOLVED')
                 if entry.get('source_external_id') and external!=entry['source_external_id']:raise ValueError('SOURCE_EXTERNAL_ID_CHANGED')
                 if receipt and receipt.get('external_id') and receipt['external_id']!=external:raise ValueError('RESUME_PARSER_ID_CHANGED')
                 if external in seen and seen[external]!=url:raise ValueError('SOURCE_ID_REUSED_BY_ANOTHER_URL')
                 seen[external]=url
-                card=product if code=='kami' else product_card_from_snapshot(product,cap)
+                card=product if code in ('kami',*NATIVE_SOURCES) else product_card_from_snapshot(product,cap)
                 validate_url(code,card.canonical_url)
                 if card.supplier_code!=code:raise ValueError('SOURCE_NAMESPACE_CHANGED')
                 parse_seconds+=time.perf_counter()-began

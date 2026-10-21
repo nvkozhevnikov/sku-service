@@ -14,6 +14,7 @@ from .heartbeat import read_components
 from .scheduler import next_occurrences
 
 
+MAX_PAGE = 100_000
 DECISIONS = (
     "EXACT_EXISTING", "HIGH_CONFIDENCE_EXISTING", "REVIEW_EXISTING", "CONFLICT",
     "SAFE_NEW_PRODUCT_CANDIDATE", "ACCESSORY_OR_COMPATIBILITY_ITEM", "INSUFFICIENT_IDENTITY",
@@ -59,7 +60,7 @@ class ProductFilters:
     page_size: int = 50
 
     def __post_init__(self) -> None:
-        if self.page < 1 or self.page_size not in {25, 50, 100}:
+        if type(self.page) is not int or self.page < 1 or self.page > MAX_PAGE or self.page_size not in {25, 50, 100}:
             raise ValueError("invalid pagination")
         if self.decision and self.decision not in DECISIONS:
             raise ValueError("invalid decision")

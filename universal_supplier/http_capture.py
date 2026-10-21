@@ -183,11 +183,17 @@ class UrllibPublicHttpClient:
         self.before_request = before_request
 
     def _get(self, url: str, *, timeout_seconds: float, validator: Callable[[str], None]) -> HttpResponse:
+        from .url_safety import validate_public_http_url
+        from .public_connection import PublicHTTPHandler,PublicHTTPSHandler
+        source_validator=validator
+        def validator(target):
+            validate_public_http_url(target)
+            source_validator(target)
         validator(url)
         wire_url = public_transport_url(url)
         validator(wire_url)
         redirects = _BoundedRedirectHandler(validator, self.before_request)
-        opener = build_opener(ProxyHandler({}), redirects, HTTPHandler(), HTTPSHandler())
+        opener = build_opener(ProxyHandler({}), redirects, PublicHTTPHandler(), PublicHTTPSHandler())
         request = Request(wire_url, headers={
             "Accept": "text/html,application/xhtml+xml",
             "User-Agent": "UniversalSupplierReadOnly/1.0 (+https://sterbrust.com)",

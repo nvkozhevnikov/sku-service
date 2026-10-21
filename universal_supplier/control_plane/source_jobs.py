@@ -18,9 +18,19 @@ from universal_supplier.ltt_uss_capture import safe_source_url,_card_gate,saniti
 from universal_supplier.http_capture import CaptureStatus
 
 SOURCES=('beka_mak','beka_mak_tr','intervesp','vekprom','kami','ltt_msk','ltt_sib','ltt_yug','uss_stanko')
+NATIVE_SOURCES=('partner_st','optimum')
+RUNTIME_SOURCES=SOURCES+NATIVE_SOURCES
 
 def validate_url(code,url):
     parsed=urlsplit(url)
+    if code in NATIVE_SOURCES:
+        from universal_supplier.url_safety import validate_public_http_url
+        host={'partner_st':'partner-st.ru','optimum':'optimum.su'}[code]
+        validate_public_http_url(url,(host,'www.'+host))
+        if parsed.scheme!='https' or parsed.query or parsed.fragment:raise ValueError('UNSAFE_NATIVE_DETAIL')
+        if code=='optimum' and not parsed.path.startswith('/catalog/'):raise ValueError('UNSAFE_OPTIMUM_DETAIL')
+        if parsed.path=='/' or parsed.path.endswith('.xml'):raise ValueError('NOT_NATIVE_DETAIL')
+        return url
     if parsed.port not in (None,443):raise ValueError('SOURCE_URL_NONSTANDARD_PORT')
     if code=='intervesp':
         # Source-wide candidate traversal; identity still comes from the own
@@ -35,6 +45,15 @@ def validate_url(code,url):
     return url
 
 def parse_existing(code,text,url,status=200):
+    if code=='partner_st':
+        from universal_supplier.adapters.partner_st import PartnerStAdapter
+        return PartnerStAdapter().parse_product(FetchRecord(url,url,status,(),1,0,text))
+    if code=='optimum':
+        from universal_supplier.adapters.optimum_source.parser import OptimumProductParser
+        from universal_supplier.adapters.optimum import to_product_card
+        parser=OptimumProductParser()
+        if not parser.is_product(text):raise ValueError('OPTIMUM_NOT_PRODUCT')
+        return to_product_card(parser.parse_product(text,url,url),final_url=url)
     if code=='kami':
         from universal_supplier.adapters.kami import KamiAdapter
         return KamiAdapter().parse_product(FetchRecord(url,url,status,(),1,0,text))

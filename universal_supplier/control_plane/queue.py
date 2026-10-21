@@ -77,7 +77,7 @@ class PostgresJobQueue:
 
     def stop_source(self,supplier_id,job_id):
         from .source_runtime import runtime_enabled,job_dir
-        from .source_jobs import SOURCES
+        from .source_jobs import RUNTIME_SOURCES as SOURCES
         if not runtime_enabled():raise PermissionError('SOURCE_RUNTIME_NOT_ENABLED')
         with self._connect() as connection,connection.cursor() as cursor:
             cursor.execute('''SELECT s.code,j.status,j.settings_snapshot FROM crawl_jobs j

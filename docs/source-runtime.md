@@ -1,10 +1,17 @@
-# Девять wrapper collectors: runtime и безопасное продолжение
+# Одиннадцать collectors: runtime и безопасное продолжение
 
 REPOSITORY-VERIFIED / APPLIED: beka_mak, beka_mak_tr, intervesp, vekprom,
 kami, ltt_msk, ltt_sib, ltt_yug, uss_stanko проходят через существующие
 registry, панель, crawl_jobs, PostgreSQL host lease и узкие writers.
-Нативные Partner-ST / Optimum сохранены. Новый SourceCheckpoint RESUME
-для этих двух нативных путей пока не подключён.
+Partner-ST / Optimum также поддерживают явные REFRESH/DISCOVERY/RESUME через
+тот же runtime и SourceCheckpoint. Используются прежние native parsers и
+ProductCard, прежний ingest в bounded transaction без full-catalog quality/
+missing reconciliation. Capture и commercial observation сохраняются в той
+же транзакции. Обычные native full runners и Partner-ST pilot не заменены;
+они выбираются, когда collection_mode отсутствует. Pilot и checkpoint mode
+не смешиваются. Native defaults сохранены: Partner-ST4/0.20s/timeout40s,
+Optimum3/0.15s/timeout35s; новый HTTP budget по умолчанию300s ограничивает
+вызов, не меняя исходный policy snapshot. Новые host policies не активированы.
 
 ## Режимы
 
@@ -27,7 +34,7 @@ UNCERTAIN, потерянная discovery receipt, сбой checksum/namespace, 
 
 ## Политика host
 
-Без отдельного утверждения: один поток, минимум 20 секунд между стартами,
+Для девяти wrappers без отдельного утверждения: один поток, минимум 20 секунд между стартами,
 jitter 0..0.1 секунды, timeout 20 секунд, одна попытка, HTTP budget 300 секунд.
 Первый запрос новой host lease также ждёт интервал, чтобы не сблизиться
 с последним запросом предыдущего задания. Robots, discovery, детали,
@@ -49,7 +56,7 @@ FIRST_STOP сохраняет первую причину; STOP, deadline и л�
 
 ## Операторская панель и разрешения
 
-Это дополнение существующей панели. Девять действий появляются только при
+Это дополнение существующей панели. Новые действия всех11 появляются только при
 STERBRUST_SOURCE_RUNTIME_ENABLED=YES. Реальный worker дополнительно требует
 STERBRUST_ALLOW_SUPPLIER_HTTP=YES и, для persistence,
 STERBRUST_ALLOW_SOURCE_WRITES=YES. Эти flags не означают разрешение оператора.

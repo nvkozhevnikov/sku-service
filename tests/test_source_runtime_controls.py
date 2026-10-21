@@ -72,7 +72,7 @@ def test_panel_resume_rejects_foreign_discovery_checkpoint(field,value):
     with pytest.raises(ValueError,match='UNCERTAIN_DISCOVERY'):
         verify_resume('vekprom',1,result['input_sha256'],original,None)
 
-@pytest.mark.parametrize('code',list(HOSTS))
+@pytest.mark.parametrize('code',[code for code in HOSTS if code not in ('partner_st','optimum')])
 def test_host_bound_approval_accepts_exact_policy_only(monkeypatch,code):
     host=HOSTS[code].removeprefix('www.');rate=DomainRatePolicy(max_concurrency=2,min_request_interval_seconds=1,max_attempts=1,request_timeout_seconds=20,max_run_duration_seconds=300)
     approval={'host':host,'reference':'OFFLINE_SYNTHETIC_APPROVAL'}
