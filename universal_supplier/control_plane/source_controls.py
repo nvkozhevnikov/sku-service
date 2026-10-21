@@ -23,7 +23,10 @@ def prepare_snapshot(snapshot,mode,*,known_rows=(),resume=None,config=None):
         compile_policy(code,'https://'+out['domain'],out['rate_settings'],approval=settings.get('host_policy_approval'))
         verify_resume(code,owner,sha,original,config)
         if original.get('canary'):
-            settings.update(source_canary=True,max_products=original['canary']['max_products'],max_run_duration_seconds=300)
+            scope=original['canary']
+            settings.update(source_canary=True,max_products=scope['max_products'],max_run_duration_seconds=scope.get('max_run_duration_seconds',300))
+            for key in ('safety_gate_size','max_discovery_pages','host_policy_approval'):
+                if key in scope:settings[key]=scope[key]
         settings.update(resume_owner_job_id=owner,resume_input_sha256=sha,persist_source_data=True)
     else:
         policy=compile_policy(code,'https://'+out['domain'],out['rate_settings'],approval=settings.get('host_policy_approval'))

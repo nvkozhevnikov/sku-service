@@ -90,11 +90,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     if type(persist) is not bool:raise ValueError('PERSIST_SOURCE_DATA_MUST_BE_BOOLEAN')
     if persist and os.environ.get('STERBRUST_ALLOW_SOURCE_WRITES')!='YES':raise PermissionError('SOURCE_WRITES_NOT_AUTHORIZED')
     if mode=='RESUME' and not persist:raise PermissionError('RESUME_REQUIRES_SQL_READBACK')
-    limit=settings.get('max_products',100);pages=settings.get('max_discovery_pages',100);seconds=settings.get('max_run_duration_seconds',300)
-    if type(limit) is not int or not 1<=limit<=1000 or type(pages) is not int or not 1<=pages<=1000:raise ValueError('SOURCE_URL_BUDGET')
-    if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<seconds<=3600:raise ValueError('SOURCE_TIME_BUDGET')
+    limit=settings.get('max_products');pages=settings.get('max_discovery_pages',100);seconds=settings.get('max_run_duration_seconds',300)
+    if type(limit) is not int or not 1<=limit<=100000 or type(pages) is not int or not 1<=pages<=100000:raise ValueError('SOURCE_URL_BUDGET')
+    if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<seconds<=86400:raise ValueError('SOURCE_TIME_BUDGET')
     clock=clock or SystemClock();start=clock.monotonic();deadline=start+seconds
     rate=compile_policy(code,'https://'+HOSTS[code],job.settings_snapshot.get('rate_settings'),approval=settings.get('host_policy_approval'))
+    if seconds>rate.max_run_duration_seconds:raise ValueError('TIME_BUDGET_EXCEEDS_HOST_PROFILE')
     # A resume must use the original input AND original policy; no hidden speedup.
     owner=settings.get('resume_owner_job_id',job.id) if mode=='RESUME' else job.id
     if type(owner) is not int or owner<1:raise ValueError('RESUME_OWNER')
@@ -114,6 +115,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         original=checked_input(original,code)
         if original['rate_policy']!=rate.snapshot():raise ValueError('SOURCE_POLICY_SNAPSHOT_CHANGED')
     canary=original.get('canary')
+    if original['mode']=='REFRESH' and len(original['entries'])>limit:raise ValueError('SNAPSHOT_EXCEEDS_APPROVED_TOTAL_CAP')
+    gate_size=(canary or {}).get('safety_gate_size',settings.get('safety_gate_size',5))
+    if type(gate_size) is not int or not 1<=gate_size<=20:raise ValueError('SAFETY_GATE_SIZE')
+    gate_passed=False
     if settings.get('source_canary') or canary:
         if not canary:raise ValueError('CANARY_SNAPSHOT_MISSING')
         if job.trigger_type!='manual' or job.crawl_type!='full':raise ValueError('CANARY_MANUAL_JOB_REQUIRED')
@@ -135,6 +140,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         if lease_alive is not None and not lease_alive():return 'HOST_LEASE_LOST'
         try:return stop_file.read_text(encoding='utf-8').strip()[:1000] or 'OPERATOR_STOP'
         except FileNotFoundError:return False
+    entries=list(original['entries'])
     backend=None;run_id=None;fetcher=None;dispatch_budget=None;rows=[];committed=[];matching_pending=[];errors=[];termination=None
     count_names=('new_products','changed_products','unchanged_products','new_offers','changed_offers','unchanged_offers')
     sql_counts={k:0 for k in count_names};counts_known=True
@@ -153,11 +159,11 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             return robot is not None and robot.can_fetch(AGENT,url)
         robots_url='https://'+HOSTS[code]+'/robots.txt'
         dispatch_budget=None
-        if canary:
+        if canary and original['mode']=='REFRESH':
             from .source_canary import DispatchBudget
             dispatch_budget=DispatchBudget(original,robots_url)
         def request_url(url):
-            if canary and url!=robots_url and url not in {e['url'] for e in original['entries']}:
+            if canary and original['mode']=='REFRESH' and url!=robots_url and url not in {e['url'] for e in original['entries']}:
                 if fetcher is not None:fetcher.stop('CANARY_URL_OUTSIDE_FROZEN_BATCH')
                 raise ValueError('CANARY_URL_OUTSIDE_FROZEN_BATCH')
             p=urlsplit(url)
@@ -219,9 +225,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         if original['mode']=='DISCOVERY':
             if mode!='RESUME':discovery.add_urls(original['seeds'])
             if discovery.state['inflight']:raise ValueError('UNCERTAIN_DISCOVERY_REQUIRES_RECONCILIATION')
-            if discovery.state['frontier']:
+            discovered=lambda:{p['url']:p for r in discovery.state['discovery_receipts'].values() for p in r.get('products',[])}
+            if discovery.state['frontier'] and len(discovered())<limit:
                 robots();nodes=0
-                while discovery.state['frontier'] and nodes<pages and not fetcher.aborted():
+                while discovery.state['frontier'] and nodes<pages and len(discovered())<limit and not fetcher.aborted():
                     if clock.monotonic()>=deadline:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');break
                     node=discovery.claim_batch(1)[0];outcomes=fetch([node]);nodes+=1
                     if not outcomes or outcomes[0].error or outcomes[0].response.status_code!=200:raise ValueError(fetcher.stop_reason or 'DISCOVERY_HTTP_FAILED')
@@ -231,13 +238,13 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     discovery.complete_discovery_node(node,children,evidence_sha256=rec['evidence_sha256'],products=products)
                     found=len({p['url'] for r in discovery.state['discovery_receipts'].values() for p in r.get('products',[])})
                     if backend:backend.progress({'collection_mode':mode,'phase':'DISCOVERY','found':found,'processed':0,'remaining':found,'discovery_visited':len(discovery.state['visited']),'discovery_remaining':len(discovery.state['frontier']),'request_metrics':fetcher.metrics.as_metadata()})
-            if discovery.state['frontier']:
+            if discovery.state['frontier'] and len(discovered())<limit:
                 termination=fetcher.stop_reason or 'DISCOVERY_PAGE_BUDGET'
             else:
-                discovery.finish_discovery()
+                if not discovery.state['frontier']:discovery.finish_discovery()
                 candidates={p['url']:p for r in discovery.state['discovery_receipts'].values() for p in r.get('products',[])}
-                entries=[candidates[u] for u in sorted(candidates)]
-                frozen_json(folder/'manifest.json',{'format':'source-discovered-manifest/v1','supplier_code':code,'input_sha256':sha,'entries':entries,'traversal_finished':True,'external_catalog_completeness':'NOT_PROVEN'})
+                entries=[candidates[u] for u in sorted(candidates)[:limit]]
+                frozen_json(folder/'manifest.json',{'format':'source-discovered-manifest/v1','supplier_code':code,'input_sha256':sha,'entries':entries,'traversal_finished':not bool(discovery.state['frontier']),'external_catalog_completeness':'NOT_PROVEN'})
         elif mode!='RESUME':
             frozen_json(folder/'manifest.json',{'format':'source-refresh-manifest/v1','supplier_code':code,'input_sha256':sha,'entries':entries})
         # Persist the entire frontier once. Large manifests are consumed in
@@ -309,18 +316,31 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 fetched_count=0
                 while cp.state['frontier'] and fetched_count<limit and not fetcher.aborted():
                     if clock.monotonic()>=deadline:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');break
-                    urls=cp.claim_batch(min(rate.max_concurrency,limit-fetched_count));outcomes=fetch(urls);fetched_count+=len(urls)
+                    # Do not schedule card N+1 until the first N exact SQL
+                    # receipts have passed. The SAME immutable job then continues.
+                    gate_target=min(gate_size,len(entries))
+                    verified=sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values())
+                    gate_passed=verified>=gate_target
+                    if not gate_passed and fetched_count>=gate_target:
+                        fetcher.stop('SAFETY_GATE_SQL_NOT_PROVEN');break
+                    batch=min(rate.max_concurrency,limit-fetched_count,1000)
+                    if not gate_passed:batch=min(batch,max(1,gate_target-verified))
+                    urls=cp.claim_batch(batch);outcomes=fetch(urls);fetched_count+=len(urls)
                     for outcome in outcomes:
                         if outcome.error or outcome.response is None or outcome.response.status_code!=200:
+                            if outcome.response is None and outcome.transport_started is False:
+                                cp.return_not_requested({'url':outcome.url,'state':'NOT_REQUESTED','transport_started':False,'origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcome.error})
+                                fetcher.stop(fetcher.stop_reason or 'SOURCE_REQUEST_NOT_DISPATCHED');continue
                             receipt={'url':outcome.url,'state':'FAILED' if outcome.response else 'UNCERTAIN','origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcome.error or 'HTTP_'+str(outcome.response.status_code)}
-                            cp.record_terminal([receipt]);errors.append(receipt);continue
+                            cp.record_terminal([receipt]);errors.append(receipt);fetcher.stop('SOURCE_CARD_HTTP_FAILED');continue
                         # All successful responses are already durably captured.
                         if fetcher.stop_reason:continue
                         try:process(byurl[outcome.url],records[outcome.url])
                         except ValueError as e:
                             if str(e)=='SQL_COMMIT_NOT_PROVEN':raise
-                            cp.record_terminal([{'url':outcome.url,'state':'FAILED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':str(e)}]);errors.append({'url':outcome.url,'error':str(e)})
-                    if backend:backend.progress({'collection_mode':mode,'phase':'PRODUCTS','found':len(entries),'processed':len(cp.state['terminal']),'parsed_this_job':len(rows),'remaining':len(cp.state['frontier']),'sql_committed_this_job':len(committed),'sql_committed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values()),'request_metrics':fetcher.metrics.as_metadata(),'http_seconds':http_seconds,'http_cards_per_minute':None if http_seconds<=0 else 60*sum(u in byurl for u in records)/http_seconds})
+                            cp.record_terminal([{'url':outcome.url,'state':'FAILED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':str(e)}]);errors.append({'url':outcome.url,'error':str(e)});fetcher.stop('SOURCE_CARD_PARSE_FAILED')
+                    gate_passed=sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values())>=gate_target
+                    if backend:backend.progress({'collection_mode':mode,'phase':'PRODUCTS','safety_gate_passed':gate_passed,'approved_total_cap':limit,'found':len(entries),'processed':sum(x['state']!='NOT_REQUESTED' for x in cp.state['terminal'].values()),'parsed_this_job':len(rows),'remaining':len(cp.state['frontier']),'sql_committed_this_job':len(committed),'sql_committed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values()),'request_metrics':fetcher.metrics.as_metadata(),'http_seconds':http_seconds,'http_cards_per_minute':None if http_seconds<=0 else 60*sum(u in byurl for u in records)/http_seconds})
                 termination=termination or fetcher.stop_reason or ('PRODUCT_BATCH_BUDGET' if cp.state['frontier'] else None)
             classified,plan=reconcile()
             resume_safe=plan['automatic_resume_allowed'] and bool(cp.state['frontier'] or plan['offline_pending'])
@@ -333,10 +353,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             backend.progress({'phase':'MATCHING','sql_committed_this_job':len(committed)})
             began=time.perf_counter();identity=backend.matching(list(dict.fromkeys(matching_pending)));matching_seconds=time.perf_counter()-began
             if identity.get('status')!='succeeded':raise ValueError('MATCHING_NOT_SUCCEEDED')
+            matching_receipts=[]
             for url,row in list(cp.state['terminal'].items()):
                 r=row['receipt']
                 if row['state']=='COMMITTED' and r.get('external_id') in matching_pending:
-                    cp.record_terminal([{**r,'matching_receipt':{'job_id':job.id,'run_id':run_id,'status':'succeeded','external_id':r['external_id'],'policy_version':identity.get('policy_version')}}])
+                    matching_receipts.append({**r,'matching_receipt':{'job_id':job.id,'run_id':run_id,'status':'succeeded','external_id':r['external_id'],'policy_version':identity.get('policy_version')}})
+            # One atomic receipt batch for one successful scoped matching run.
+            # Avoid N full checkpoint rewrites for a large catalogue.
+            if matching_receipts:cp.record_terminal(matching_receipts)
     except Exception as e:
         termination=(fetcher.stop_reason if fetcher else None) or str(e) or type(e).__name__
         errors.append({'type':type(e).__name__,'reason':str(e)})
@@ -347,10 +371,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         metrics=fetcher.metrics.as_metadata() if fetcher else {}
         if original['mode']=='DISCOVERY':
             candidates={p['url']:p for r in discovery.state['discovery_receipts'].values() for p in r.get('products',[])}
-            entries=[candidates[u] for u in sorted(candidates)]
+            entries=[candidates[u] for u in sorted(candidates)[:limit]]
         product_urls={e['url'] for e in locals().get('entries',[])}
         remaining=len(cp.state['frontier'])+len(cp.state['inflight'])
-        if original['mode']=='DISCOVERY' and not discovery.state['discovery_finished']:remaining=len(entries)
+        if original['mode']=='DISCOVERY' and not discovery.state['discovery_finished'] and termination:remaining=len(entries)
         manifest_path=folder/'manifest.json'
         if not manifest_path.is_file():
             manifest_path=folder/('manifest-partial-r'+str(discovery.state['revision'])+'.json')
@@ -358,8 +382,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         result={'status':'partial' if termination or errors or remaining else 'succeeded','supplier_code':code,'collection_mode':mode,
             'crawl_run_id':run_id,'owner_job_id':owner,'input_sha256':sha,'checkpoint':str(cp.path),
             'manifest':str(manifest_path),'manifest_sha256':hashlib.sha256(manifest_path.read_bytes()).hexdigest(),'found':len(locals().get('entries',[])),
-            'processed':len(cp.state['terminal']),'remaining':remaining,'discovery_visited':len(discovery.state['visited']),
+            'processed':sum(x['state']!='NOT_REQUESTED' for x in cp.state['terminal'].values()),'remaining':remaining,'discovery_visited':len(discovery.state['visited']),
             'discovery_remaining':len(discovery.state['frontier'])+len(discovery.state['inflight']),
+            'discovered_urls_total':len(candidates) if original['mode']=='DISCOVERY' else len(entries),'selected_urls':len(entries),
             'discovery_complete':bool(original['mode']=='DISCOVERY' and discovery.state['discovery_finished']),
             'external_catalog_completeness':'NOT_PROVEN','deactivation_allowed':False,
             'sql_committed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values()),
@@ -368,7 +393,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             'parsed_this_job':len(rows),
             'request_metrics':metrics,'http_seconds':http_seconds,'http_cards_per_minute':None if http_seconds<=0 else 60*len(set(records)&product_urls)/http_seconds,
             'stage_timings':{'parsing_seconds_sum':parse_seconds,'sql_seconds':sql_seconds,'matching_seconds':matching_seconds},
-            'effective_rate_policy':rate.snapshot(),'termination_reason':termination,'resume_available':locals().get('resume_safe',False),
+            'effective_rate_policy':rate.snapshot(),'approved_total_cap':limit,'safety_gate_size':gate_size,'safety_gate_passed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values())>=min(gate_size,len(entries)) if entries else False,'termination_reason':termination,'resume_available':locals().get('resume_safe',False),
             'resume_uncertain':locals().get('plan',{}).get('uncertain',[]),'matching_applied':identity.get('matching_applied',False),
             'identity_post_processing':identity}
         if canary:result['canary']={**canary,'product_requests':list(dispatch_budget.products) if dispatch_budget else [],'robots_requests':dispatch_budget.robots if dispatch_budget else 0}

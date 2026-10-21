@@ -1,16 +1,16 @@
 {% extends 'base.html' %}{% block content %}
 {% set snap=preview.snapshot %}{% set data=snap.source_input %}{% set c=data.canary %}{% set p=snap.rate_settings %}
-<a href="/suppliers/{{supplier_id}}">← Поставщик</a><h2>Ограниченный тестовый запуск {{snap.supplier_code}}</h2>
-<dl><dt>Режим</dt><dd>REFRESH — только известные URL</dd>
+<a href="/suppliers/{{supplier_id}}">← Поставщик</a><h2>Подготовка согласованного сбора {{snap.supplier_code}}</h2>
+<dl><dt>Режим</dt><dd>{{data.mode}}</dd>
 <dt>Всего известных URL</dt><dd>{{c.total_known}}</dd><dt>Выбрано для запуска</dt><dd>{{c.selected}}</dd>
-<dt>max_products</dt><dd>{{c.max_products}}</dd><dt>Host policy</dt><dd>{{snap.domain}}: {{p.max_concurrency}} поток, минимум {{p.min_request_interval_seconds}} сек. + jitter {{p.jitter_min_seconds}}–{{p.jitter_max_seconds}} сек.; timeout {{p.request_timeout_seconds}} сек.; attempts {{p.max_attempts}}; задание до 300 сек.</dd>
+<dt>Safety gate / discovery pages / time</dt><dd>{{c.safety_gate_size}} / {{c.max_discovery_pages}} / {{c.max_run_duration_seconds}} сек.</dd><dt>max_products</dt><dd>{{c.max_products}}</dd><dt>Host policy</dt><dd>{{snap.domain}}: {{p.max_concurrency}} поток, минимум {{p.min_request_interval_seconds}} сек. + jitter {{p.jitter_min_seconds}}–{{p.jitter_max_seconds}} сек.; timeout {{p.request_timeout_seconds}} сек.; attempts {{p.max_attempts}}; задание до {{c.max_run_duration_seconds}} сек.</dd>
 <dt>Целевая PostgreSQL</dt><dd>{{c.database.host}}:{{c.database.port}}/{{c.database.dbname}}</dd></dl>
-<p>Discovery отключён. До {{c.max_products}} товарных GET, отдельно один robots.txt через тот же limiter. Автоматического повтора и resume нет. HTTP/SQL требуют отдельного разрешения.</p>
-<table><thead><tr><th>Порядок</th><th>Source Product ID</th><th>external_id</th><th>URL</th></tr></thead><tbody>
+<p>Общий cap: {{c.max_products}} карточек. Внутренняя проверка первых {{c.safety_gate_size}} карточек: HTTP, точные SQL receipts и host protections. После PASS тот же job продолжает snapshot без дополнительных запусков по пять. При ошибке или временном бюджете — STOP и checkpoint. RESUME требует SQL-сверки. Robots/Crawl-delay/Retry-After обязательны. HTTP/SQL требуют отдельного разрешения.</p>
+{% if data.mode=='DISCOVERY' %}<p>Discovery seeds фиксируются до enqueue; найденный manifest ограничен общим cap:</p><ul>{% for seed in data.seeds %}<li>{{seed}}</li>{% endfor %}</ul>{% endif %}<table><thead><tr><th>Порядок</th><th>Source Product ID</th><th>external_id</th><th>URL</th></tr></thead><tbody>
 {% for entry in data.entries %}<tr><td>{{loop.index}}</td><td>{{entry.source_product_id}}</td><td>{{entry.source_external_id}}</td><td>{{entry.url}}</td></tr>{% endfor %}</tbody></table>
 {% if not c.supplier_enabled %}<p role="alert">Поставщик выключен (disabled). Canary заблокирован. Временное включение требует отдельного подтверждения; preview ничего не включает.</p>{% endif %}
 <form method="post" action="/suppliers/{{supplier_id}}/start"><input type="hidden" name="csrf_token" value="{{csrf_token}}">
-<input type="hidden" name="launch_mode" value="source_canary"><input type="hidden" name="collection_mode" value="REFRESH">
+<input type="hidden" name="launch_mode" value="source_canary"><input type="hidden" name="collection_mode" value="{{data.mode}}">
 <input type="hidden" name="max_products" value="{{c.max_products}}"><input type="hidden" name="source_preview_sha256" value="{{preview.confirmation_sha256}}">
 <button {% if not c.supplier_enabled %}disabled{% endif %}>Подтвердить выбранную партию и поставить одно задание</button></form>
 {% endblock %}

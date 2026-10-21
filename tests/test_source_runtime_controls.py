@@ -1,4 +1,5 @@
 from copy import deepcopy
+from offline_host_profiles import approved_policy,approval_for
 from datetime import datetime,timezone
 from dataclasses import replace
 from contextlib import contextmanager
@@ -38,13 +39,13 @@ def test_panel_route_passes_only_explicit_modes_to_same_queue():
     class Queue:
         def enqueue(self,*args,**kw):self.kw=kw;return SimpleNamespace(job_id=9,status='queued',deduplicated_job_id=None)
     queue=Queue();client=TestClient(create_app(store=PanelStore('kami'),queue=queue,auth_required=False))
-    response=client.post('/suppliers/1/start',data={'launch_mode':'source','collection_mode':'REFRESH'},headers={'origin':'http://testserver'},follow_redirects=False)
-    assert response.status_code==303 and queue.kw['source_mode']=='REFRESH' and queue.kw['trigger_type']=='manual'
+    response=client.post('/suppliers/1/start',data={'launch_mode':'source','collection_mode':'RESUME','resume_job_id':'1'},headers={'origin':'http://testserver'},follow_redirects=False)
+    assert response.status_code==303 and queue.kw['source_mode']=='RESUME' and queue.kw['trigger_type']=='manual'
     response=client.post('/suppliers/1/start',data={'launch_mode':'source','collection_mode':'invented'},headers={'origin':'http://testserver'})
     assert response.status_code==400
 
 def test_queue_freezes_source_wide_refresh_and_separate_discovery():
-    snap={'supplier_code':'intervesp','adapter_name':'intervesp','domain':'intervesp.ru','crawl_settings':{},'rate_settings':{}}
+    snap={'supplier_code':'intervesp','adapter_name':'intervesp','domain':'intervesp.ru','crawl_settings':{'host_policy_approval':approval_for('https://intervesp.ru')},'rate_settings':approved_policy('intervesp','https://intervesp.ru').snapshot()}
     old=deepcopy(snap)
     refresh=prepare_snapshot(snap,'REFRESH',known_rows=[('123','https://intervesp.ru/catalog/lathe/model/')])
     discovery=prepare_snapshot(snap,'DISCOVERY')
@@ -53,7 +54,7 @@ def test_queue_freezes_source_wide_refresh_and_separate_discovery():
     assert discovery['rate_settings']['min_request_interval_seconds']==20
 
 def test_unapproved_speed_change_cannot_enter_queue(monkeypatch):
-    snap={'supplier_code':'vekprom','adapter_name':'vekprom','domain':'vekprom.ru','crawl_settings':{},'rate_settings':{'min_request_interval_seconds':1,'max_concurrency':2}}
+    snap={'supplier_code':'vekprom','adapter_name':'vekprom','domain':'vekprom.ru','crawl_settings':{},'rate_settings':{'min_request_interval_seconds':1,'max_concurrency':2,'request_timeout_seconds':20,'jitter_min_seconds':0,'jitter_max_seconds':0.1,'max_attempts':1,'max_run_duration_seconds':300}}
     with pytest.raises(PermissionError,match='APPROVED'):prepare_snapshot(snap,'DISCOVERY')
 
 @pytest.mark.parametrize('field,value',[('source','kami'),('job_id',999),('manifest_sha256','a'*64)])
@@ -81,17 +82,14 @@ def test_host_bound_approval_accepts_exact_policy_only(monkeypatch,code):
     with pytest.raises(PermissionError):compile_policy(code,'https://'+HOSTS[code],{**rate.snapshot(),'max_concurrency':3},approval=approval)
 
 @pytest.mark.parametrize('code',['kami','vekprom'])
-def test_large_frontier_preserves_every_unrequested_url(tmp_path,code):
+def test_large_frontier_cannot_exceed_explicit_total_scope(tmp_path,code):
     run,job,backend,calls,url=setup(code)
     entries=[deepcopy(job.settings_snapshot['source_input']['entries'][0])]
     for i in range(1500):entries.append({'url':url.rstrip('/')+'-'+str(i)+'/'})
     job.settings_snapshot['source_input']['entries']=entries
     job.settings_snapshot['crawl_settings']['max_products']=1
-    result=run();assert result['termination_reason']=='PRODUCT_BATCH_BUDGET',result
-    assert result['found']==1501 and result['remaining']==1500 and result['sql_committed']==1 and result['resume_available']
-    state=json.loads(Path(result['checkpoint']).read_text(encoding='utf-8'))
-    assert set(state['frontier'])=={e['url'] for e in entries[1:]}
-    assert len(calls)==2 and not result['deactivation_allowed']
+    with pytest.raises(ValueError,match='SNAPSHOT_EXCEEDS_APPROVED_TOTAL_CAP'):run()
+    assert not calls and not backend.writes
 
 def test_resume_uncertain_inflight_is_never_refetched():
     run,job,backend,calls,url=setup('kami');first=run()
@@ -156,8 +154,8 @@ def test_shared_gate_survives_multiple_batches_and_redirect_pacing():
                 self.before_request('https://vekprom.ru/redirect');calls.append(('redirect',clock.monotonic()))
                 return HttpResponse('https://vekprom.ru/redirect',200,'text/html',b'<h1>ok</h1>',redirects=('https://vekprom.ru/redirect',))
             return HttpResponse(url,200,'text/html',b'<h1>ok</h1>')
-    rate=compile_policy('vekprom','https://vekprom.ru',{'jitter_max_seconds':0})
-    f=BoundedHostFetcher('vekprom.ru',rate,Client,validator=lambda u:None,robots_allowed=lambda u:True,robots_delay_seconds=0,lease_acquired=True,source='vekprom',clock=clock)
+    rate=approved_policy('vekprom','https://vekprom.ru',{'jitter_max_seconds':0})
+    f=BoundedHostFetcher('vekprom.ru',rate,Client,validator=lambda u:None,robots_allowed=lambda u:True,robots_delay_seconds=0,lease_acquired=True,source='vekprom',approval=approval_for('https://vekprom.ru'),clock=clock)
     list(f.fetch(['https://vekprom.ru/one'],limit=10,seconds=300));list(f.fetch(['https://vekprom.ru/two'],limit=10,seconds=300))
     assert len(calls)==3 and all(b[1]-a[1]>=20 for a,b in zip(calls,calls[1:]))
 

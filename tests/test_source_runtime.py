@@ -10,7 +10,7 @@ from test_host_fetch import Clock
 from universal_supplier.control_plane.source_jobs import SOURCES,make_source_runner,parse_existing
 from universal_supplier.control_plane.source_runtime import LEASED_HOST,run_source,job_dir,engine_fingerprint
 from universal_supplier.control_plane.source_discovery import HOSTS,root_urls
-from universal_supplier.control_plane.host_fetch import compile_policy
+from offline_host_profiles import approved_policy as compile_policy,approval_for
 from universal_supplier.control_plane.queue import CrawlJob
 from universal_supplier.http_capture import HttpResponse
 
@@ -55,7 +55,7 @@ def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',ba
         'entries':[{'url':url,'source_external_id':ext}] if mode=='REFRESH' else [],
         'seeds':root_urls(code) if mode=='DISCOVERY' else [],'rate_policy':rate.snapshot(),'engine_sha256':engine_fingerprint()}
     job=CrawlJob(1,1,code,code,'https://'+HOSTS[code]+'/','manual','full','running',datetime.now(timezone.utc),
-        {'source_input':value,'rate_settings':rate.snapshot(),'crawl_settings':{'collection_mode':mode,'persist_source_data':True,'max_products':5,'max_discovery_pages':5}})
+        {'source_input':value,'rate_settings':rate.snapshot(),'crawl_settings':{'collection_mode':mode,'persist_source_data':True,'max_products':5,'max_discovery_pages':5,'host_policy_approval':approval_for('https://'+HOSTS[code])}})
     class Client:
         def get_validated(self,target,*,validator,timeout_seconds):
             validator(target);self.before_request(target);calls.append((target,clock.monotonic(),timeout_seconds))

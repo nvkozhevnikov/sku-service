@@ -21,7 +21,9 @@ def policy_digest(source,host,rate,approval):
 def compile_policy(source,url,settings=None,*,approval=None,approved_digests=None):
     from .rate_control import PARTNER_ST_DEFAULT_RATE_POLICY,OPTIMUM_DEFAULT_RATE_POLICY
     native={'partner_st':PARTNER_ST_DEFAULT_RATE_POLICY,'optimum':OPTIMUM_DEFAULT_RATE_POLICY}.get(source)
-    defaults=native.snapshot() if native else {'max_concurrency':1,'min_request_interval_seconds':20.0,'max_attempts':1,'request_timeout_seconds':20.0,'max_run_duration_seconds':300.0}
+    required={'max_concurrency','min_request_interval_seconds','request_timeout_seconds','jitter_min_seconds','jitter_max_seconds','max_attempts','max_run_duration_seconds'}
+    if native is None and not required.issubset(settings or {}):raise PermissionError('EXPLICIT_HOST_PROFILE_REQUIRED')
+    defaults=native.snapshot() if native else {}
     values={**defaults,**(settings or {})}
     rate=DomainRatePolicy.from_mapping(values)
     for name,value in rate.snapshot().items():
@@ -33,7 +35,7 @@ def compile_policy(source,url,settings=None,*,approval=None,approved_digests=Non
         if type(getattr(rate,name)) is not int:raise ValueError('HOST_RATE_INTEGER_REQUIRED')
     host=host_key(url)
     if not host:raise ValueError('HOST_REQUIRED')
-    requires_approval=(rate.max_concurrency>native.max_concurrency or rate.min_request_interval_seconds<native.min_request_interval_seconds) if native else (rate.max_concurrency>1 or rate.min_request_interval_seconds<20)
+    requires_approval=(rate.max_concurrency>native.max_concurrency or rate.min_request_interval_seconds<native.min_request_interval_seconds) if native else True
     if requires_approval:
         approval=approval or {}
         if approval.get('host')!=host or not approval.get('reference'):raise PermissionError('HOST_PROFILE_NOT_APPROVED')
@@ -50,6 +52,7 @@ class FetchOutcome:
     seconds:float=0.0
     error:str|None=None
     retry_after_seconds:float|None=None
+    transport_started:bool|None=None
 
 class BoundedHostFetcher:
     def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
@@ -88,7 +91,7 @@ class BoundedHostFetcher:
         if host_key(url)!=self.host:raise ValueError('CROSS_HOST_REDIRECT_FORBIDDEN')
         if not self.robots_allowed(url):raise PermissionError('ROBOTS_DISALLOW')
     def _fetch(self,url,deadline):
-        started=self.clock.monotonic();client=None;response=None;attempts=0;observed=None
+        started=self.clock.monotonic();client=None;response=None;attempts=0;observed=None;transport_started=False
         stop_statuses={403,429}
         try:
             self._validate(url);client=self.client_factory();callback=getattr(client,'before_request',None)
@@ -112,7 +115,11 @@ class BoundedHostFetcher:
             # The existing public client calls this for each redirect too.
             client.before_request=before_request
             def send():
+                nonlocal transport_started
                 initial[0]=True
+                # Once the transport is entered, absence of a response is
+                # uncertain. A limiter deadline BEFORE send proves no GET.
+                transport_started=True
                 response=client.get_validated(url,validator=self._validate,timeout_seconds=min(self.rate.request_timeout_seconds,max(.001,deadline-self.clock.monotonic())))
                 self._validate(response.final_url)
                 for target in response.redirects:self._validate(target)
@@ -127,19 +134,19 @@ class BoundedHostFetcher:
             observed=datetime.now(timezone.utc)
             outcome=FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,
                 self.stop_reason if response.status_code in stop_statuses or has_blocking_interstitial(response.body) else None,
-                retry_after_seconds(response.headers) if getattr(response,'headers',None) else None)
+                retry_after_seconds(response.headers) if getattr(response,'headers',None) else None,transport_started)
             if self.receipt_sink:
                 try:self.receipt_sink(outcome)
                 except Exception:
                     self.stop('CAPTURE_ARCHIVE_FAILED');raise
             return outcome
         except Exception as e:
-            return FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}')
+            return FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}',transport_started=transport_started)
         finally:
             if client and getattr(client,'session',None):client.session.close()
     def fetch(self,urls,*,limit,seconds):
         urls=list(urls)
-        if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=4096 or len(urls)>limit:raise ValueError('HARD_URL_BUDGET')
+        if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=200004 or len(urls)>limit:raise ValueError('HARD_URL_BUDGET')
         if len(urls)!=len(set(urls)):raise ValueError('DUPLICATE_URL')
         if isinstance(seconds,bool) or not isinstance(seconds,(int,float)) or not math.isfinite(seconds) or not 0<seconds<=3600:raise ValueError('TIME_BUDGET')
         for url in urls:self._validate(url)
@@ -157,6 +164,8 @@ class BoundedHostFetcher:
                         for future in done:
                             pending.pop(future);outcome=future.result();self.outcomes.append(outcome);yield outcome
                         if self.clock.monotonic()>=deadline:self.stop('MAX_RUN_DURATION_EXCEEDED')
+                    for url in urls[cursor:]:
+                        yield FetchOutcome(url,error='NOT_DISPATCHED',transport_started=False)
                 except BaseException:
                     self.stop('CONSUMER_STOP');raise
         finally:

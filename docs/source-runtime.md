@@ -8,10 +8,10 @@ Partner-ST / Optimum также поддерживают явные REFRESH/DISC
 ProductCard, прежний ingest в bounded transaction без full-catalog quality/
 missing reconciliation. Capture и commercial observation сохраняются в той
 же транзакции. Обычные native full runners и Partner-ST pilot не заменены;
-они выбираются, когда collection_mode отсутствует. Pilot и checkpoint mode
+они сохранены в registry для совместимости. Новый enqueue full без явного scope
+блокируется для всех11; панель направляет в единый preview. Pilot и checkpoint mode
 не смешиваются. Native defaults сохранены: Partner-ST4/0.20s/timeout40s,
-Optimum3/0.15s/timeout35s; новый HTTP budget по умолчанию300s ограничивает
-вызов, не меняя исходный policy snapshot. Новые host policies не активированы.
+Optimum3/0.15s/timeout35s. Новые wrapper host policies не активированы.
 
 ## Режимы
 
@@ -29,24 +29,60 @@ UNCERTAIN, потерянная discovery receipt, сбой checksum/namespace, 
 Потерянный writer lock не удаляется автоматически. Нужна адресная сверка
 владельца/host lease и исходных receipts. Завершённые страницы discovery
 не запрашиваются снова. Frontier больших каталогов сохраняется полностью;
-один product batch ограничен 1000, discovery batch — 1000 узлами.
+общий cap задаётся явно (1..100000), без default100. Внутренняя product
+партия ограничена concurrency (≤8) и техническим batch budget1000;
+discovery pages1..100000 и time≤86400s задаются в frozen scope. Время
+не может превышать max_run_duration_seconds утверждённого профиля.
 Ни один режим не деактивирует отсутствующие товары.
 
 ## Политика host
 
-Для девяти wrappers без отдельного утверждения: один поток, минимум 20 секунд между стартами,
-jitter 0..0.1 секунды, timeout 20 секунд, одна попытка, HTTP budget 300 секунд.
-Первый запрос новой host lease также ждёт интервал, чтобы не сблизиться
-с последним запросом предыдущего задания. Robots, discovery, детали,
-redirects и retries проходят через один DomainRateLimiter.
+У девяти wrappers НЕТ default скорости или универсального floor20. До нового
+запуска обязателен полный явный профиль: max_concurrency (1..8), положительный
+min_request_interval_seconds, jitter_min/max_seconds, request_timeout_seconds,
+max_attempts (1..3), max_run_duration_seconds. Retry-After обязателен.
+Все числовые значения конечны, interval>0; более строгий robots Crawl-delay/
+Request-rate вызывает STOP до утверждения подходящего профиля. Отсутствие
+Crawl-delay само по себе не утверждает скорость.
 
-Настройки индивидуальны в rate_settings каждого поставщика. Для concurrency
-выше 1 либо интервала ниже 20 секунд нужны host_policy_approval с host/reference
-и соответствующий digest в STERBRUST_APPROVED_HOST_POLICIES. Digest привязан
-к source, host, полному policy snapshot и reference. Изменение параметров
-аннулирует approval. Автоматического ускорения нет. 20 секунд — временная
-защита, а не доказанный обязательный лимит сайтов. Более строгий robots
-останавливает запуск до согласования политики.
+Индивидуальный профиль хранится в supplier.rate_settings; crawl_settings содержит
+host_policy_approval={host,reference}. В окружении worker/panel требуется точный
+STERBRUST_APPROVED_HOST_POLICIES[host]=policy_digest(source,host,policy,reference).
+Digest учитывает полный snapshot; любое изменение concurrency/interval/jitter/
+timeout/retries/time budget требует нового утверждения. Никакой из девяти
+профилей этой разработкой не выбран, не записан в БД и не активирован.
+Native defaults не копируются wrappers. Первый запрос новой lease ждёт свой
+утверждённый интервал. Robots, discovery, карточки, redirects/retries используют
+один DomainRateLimiter и общий лимит конкурентности в существующей host lease.
+
+## Один согласованный bounded job
+
+В той же панели — «Один согласованный сбор», явный общий cap без default.
+Можно указать50/100/500 или количество всего подтверждённого manifest.
+Preview показывает known/selected, REFRESH либо DISCOVERY, policy, safety gate,
+page/time budgets и test PostgreSQL. Scope фиксируется до enqueue и подтверждается
+SHA256. Queue пересоздаёт preview, проверяет digest; generic full/source без cap
+и preview заблокирован, RESUME — только исходного terminal job.
+
+REFRESH выбирает LIMIT N до freeze, PK/external_id/URL и порядок immutable.
+DISCOVERY фиксирует seeds и общий cap/page/time, затем сохраняет найденный
+manifest (≤cap) и граф. Достижение cap не означает полноту внешнего каталога.
+Весь найденный сверх cap provenance сохраняется в discovery receipts, но detail
+HTTP и SQL за пределами cap не выполняются. Непройденный граф не деактивирует товары.
+
+Первые min(safety_gate_size,selected) карточек (по умолчанию5, настраивается1..20)
+проверяются в том же job. Карточка6 не планируется до точного SQL COMMITTED для
+первых5. После PASS цикл продолжает оставшийся immutable snapshot автоматически.
+Ошибка HTTP/парсинга/SQL останавливает продолжение; captures/terminal receipts
+сохраняются. Matching по всем committed IDs использует прежний engine; receipt
+одного успешного matching сохраняется одной атомарной checkpoint записью.
+
+Deadline/STOP до входа в transport допускает NOT_REQUESTED только с явным
+transport_started=false receipt. Потерянный ответ после входа остаётся UNCERTAIN
+даже при attempts=0. RESUME сверяет exact SQL, пропускает COMMITTED, обрабатывает
+сохранённые captures offline, продолжает оставшийся scope без расширения cap.
+При смене engine fingerprint старый snapshot требует адресного review; ни один
+старый пятиэлементный snapshot не расширяется и не переписывается.
 
 403/429/anti-bot и 503 с положительным Retry-After останавливают host.
 FIRST_STOP сохраняет первую причину; STOP, deadline и локальная отмена
@@ -80,7 +116,7 @@ connect; loopback разрешён только для локальных тес
 Покрыты реальные девять парсеров, manifest, общий pacing/redirects, два
 параллельных fake worker, approval digest, STOP/robots/Retry-After/403/429,
 прерывание до/после SQL commit, точный SQL readback, missing matching receipt,
-frontier 1501 URL для KAMI/Vekprom, панель и регрессии F01/F03/Partner/Optimum.
+отклонение manifest1501 при неразрешённом cap1 для KAMI/Vekprom, панель и регрессии F01/F03/Partner/Optimum.
 SQL backend проверяется fake cursor, реальные записи не выполняются.
 Это не подтверждает LIVE скорость, полноту сайтов или SQL end-to-end.
 

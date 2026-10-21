@@ -481,7 +481,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             from .source_canary import limit_value
             limit_value(limit)
             if not hasattr(queue,'preview_source_canary'):raise ValueError('Очередь не поддерживает безопасный preview canary')
-            preview=queue.preview_source_canary(supplier_id,limit)
+            preview=queue.preview_source_canary(supplier_id,limit,request.query_params.get('collection_mode','REFRESH'))
         except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
         return templates.TemplateResponse(request,'source_canary.html',context(request,preview=preview,supplier_id=supplier_id,active='suppliers'))
 
@@ -500,10 +500,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             if not runtime_enabled():raise HTTPException(403,'Режим collectors не включён')
             try:
                 limit=limit_value(optional_int(values.get('max_products'),'количество карточек'))
-                if values.get('collection_mode')!='REFRESH' or values.get('resume_job_id'):raise ValueError('Canary поддерживает только REFRESH известных URL, без discovery/resume')
+                if values.get('collection_mode') not in ('REFRESH','DISCOVERY') or values.get('resume_job_id'):raise ValueError('Нужен REFRESH или DISCOVERY; RESUME запускается из checkpoint')
                 source=next((s for s in store.suppliers() if s['id']==supplier_id),None)
                 if not source or not source.get('enabled'):raise ValueError('Поставщик выключен; запуск canary заблокирован. Нужно отдельное подтверждение временного включения.')
-                kwargs.update(source_mode='REFRESH',source_limit=limit,source_preview_sha256=values.get('source_preview_sha256',''))
+                kwargs.update(source_mode=values['collection_mode'],source_limit=limit,source_preview_sha256=values.get('source_preview_sha256',''))
             except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
         if mode=='source':
             from .source_runtime import runtime_enabled
@@ -514,6 +514,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 raw=values.get('resume_job_id','')
                 if not raw.isascii() or not raw.isdecimal() or int(raw)<1:raise HTTPException(400,'Нужен исходный job')
                 kwargs['resume_job_id']=int(raw)
+            else:raise HTTPException(400,'Сначала подтвердите общий лимит и snapshot на странице подготовки сбора')
         if mode=='test':
             try:
                 raw=values.get('max_products','')
@@ -706,7 +707,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             from .source_jobs import SOURCES
             source=next((r for r in store.suppliers() if r['id']==supplier_id),None)
             if source and source['code'] in SOURCES:
-                if not raw.get('min_request_interval_seconds'):values['min_request_interval_seconds']=20.0
+                if not raw.get('min_request_interval_seconds'):raise HTTPException(400,'Укажите интервал утверждённой host policy')
                 from .host_fetch import compile_policy
                 from .source_discovery import HOSTS
                 try:compile_policy(source['code'],source.get('base_url') or 'https://'+HOSTS[source['code']],values,approval=(source.get('crawl_settings') or {}).get('host_policy_approval'))

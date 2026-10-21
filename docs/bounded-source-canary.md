@@ -1,42 +1,35 @@
-# Bounded source canary для девяти wrappers
+# Один согласованный сбор всех11 и необязательный canary
 
-REPOSITORY-VERIFIED / offline: beka_mak, beka_mak_tr, intervesp, vekprom,
-kami, ltt_msk, ltt_sib, ltt_yug, uss_stanko. Нативные Partner-ST pilot и
-Optimum не заменены. Этот документ сам по себе не разрешает LIVE/SQL writes.
+OPERATOR-CONFIRMED 2026-10-21: универсальный floor20/default20 и обязательные
+отдельные партии по5 — NOT_ACCEPTED. Текущий контракт: [source-runtime.md](source-runtime.md).
+Этот документ не разрешает HTTP, SQL writes, включение supplier или host policy.
 
-В существующей карточке поставщика: «Ограниченный тестовый запуск», количество
-1..50 (default5), затем GET preview. До enqueue видны total known unique URLs,
-selected count, REFRESH, max_products, точные PK/external_id/URL/порядок,
-host policy и target PostgreSQL. Preview не включает disabled supplier.
+Одна форма существующей панели → preview → SHA256 → одно manual задание.
+Явный общий cap1..100000, без default100; REFRESH всех выбранных известных URL
+либо DISCOVERY с frozen seeds/cap/page/time. Малый cap остаётся optional canary.
+Для всех11 backend перед writes проверяет точную testDB/physical identity и
+текущий enabled. REFRESH также проверяет PK/external_id/URL выбранной партии.
 
-Queue выбирает первые N unique active/stable известных URL по source PK:
-SQL DISTINCT ON(URL), затем ORDER BY id LIMIT N. Count over window сообщает
-полное количество, но в Python и immutable input передаётся только партия.
-Подтверждение содержит digest полного snapshot. Queue под блокировкой supplier
-повторяет отбор и отклоняет изменение preview, лимита, enabled, policy/engine
-или target. При выборе5 из109 entries≤5, crawl_settings.max_products=5,
-mode=REFRESH, seeds=[], persist_source_data=true, source_canary=true.
+В snapshot source-bounded-job/v2 сохраняются исходный общий cap, policy,
+host-bound approval, gate1..20 (default5), time/page budgets и target.
+После HTTP+SQL PASS первых карточек тот же job продолжает весь snapshot.
+SQL ошибка, 403/429/CAPTCHA, robots или lease failure — STOP с FIRST_STOP и
+checkpoint. COMMITTED не скачивается снова; UNCERTAIN требует решения по evidence.
+Старые source-canary/v1 сохраняют свой cap≤50; новый больший scope создаётся
+только новым подтверждённым snapshot. Код/engine changes не обходят resume review.
 
-Worker повторяет структурную проверку до backend/HTTP; default100 не используется
-как fallback для canary. До crawl_run/SQL writer проверяются target config,
-physical cluster identity и текущие enabled/PK/external_id/URL выбранных строк.
-Snapshot disabled=false никогда не обходится override. Ручной RESUME сохраняет
-исходные input/limit/target/policy и сверяет SQL receipts; автоматического resume нет.
-Для RESUME точные зарегистрированные ID/URL допускаются и после перехода
-в inactive штатным passive ingest; это не активация товара. Свежий canary
-по-прежнему требует active. COMMITTED остаётся защищён точным SQL readback.
+Queue выбирает до N unique active/stable URLs в SQL ДО freeze (ORDER BY source PK,
+LIMIT N); total известного manifest отображается отдельно. Generic full/source
+без cap/preview не ставится в очередь. RESUME сохраняет исходный общий лимит.
+При attempts1 и N5 runtime не отправляет шестой product GET; утверждённый attempts>1
+может повторить тот же URL в пределах policy, но не добавить шестую identity.
 
-У transport — независимый dispatch guard: ≤N товарных GET, без повторного URL,
-без redirects вне партии и без discovery. Robots имеет отдельный бюджет одного
-GET и тот же host limiter: итого при5 карточках до6 отправок, из них товарных≤5.
-Профиль:1поток, минимум20s+jitter0..0.1, timeout20s, attempts1, budget300s.
-Более медленный сохранённый min interval не уменьшается. Source policies в БД
-не изменяются; более быстрые профили не активируются.
-
-Canary target жёстко ограничен127.0.0.1:55461/rc_verify_vi_20261019,
-PostgreSQL17.11/system7698346631476390904 и PGDATA из partner_pilot.PGDATA.
-Новая таблица/миграция/SQL CHECK не требуются. Обычные full jobs и native
-rate policies сохраняют прежние контракты; они не считаются bounded canary.
+У wrappers нет скрытой скорости. Полный rate_settings и host_policy_approval
+с точным digest должны быть отдельно утверждены и установлены перед LIVE.
+Robots/Retry-After, общий limiter/concurrency/jitter/timeout и safe STOP обязательны.
+Target пока только127.0.0.1:55461/rc_verify_vi_20261019, PG17.11,
+system7698346631476390904, PGDATA из partner_pilot.PGDATA. Другой target — отдельная
+проверенная адаптация, не переменная для обхода identity guard.
 
 ## Beka Mak: evidence и причина disabled
 
@@ -55,7 +48,7 @@ ensure_supplier/_ensure_passive_commercial_supplier создают такие na
 
 ## Процедура временного включения — НЕ ВЫПОЛНЕНА
 
-1. Получить отдельное подтверждение именно beka_mak, REFRESH≤5 и временного
+1. Получить отдельное подтверждение именно beka_mak, режим и общий cap N, host profile/page/time/gate и временного
    enabled false→true→false, HTTP и SQL только в названной testDB. Проверить
    HEAD, identity/PGDATA, UTC postLIVE50 baseline,1282links, чужие клиенты,
    jobs/lease/schedules; scheduler остаётся выключенным. Создать новый backup,
@@ -63,15 +56,19 @@ ensure_supplier/_ensure_passive_commercial_supplier создают такие na
    review connection вместо явно привязанной testDB конфигурации панели/worker.
 2. До включения сохранить полный supplier11 row, enabled=false, timestamp,
    schedule state и fingerprint остальных suppliers в отдельные evidence.
-   Проверить preview5: PK/external_id/URL/order совпадают с fixture/evidence.
+   Для cap5 проверить точные fixture PK/external_id/URL/order. Для большего cap
+   требуется отдельное разрешение на весь новый snapshot; старые5 не расширять.
 3. Только после разрешения: под identity guard и блокировкой supplier выполнить
    compare-and-set enabled=false→true для id11/code=beka_mak, записать audit.
-   Не менять rate/crawl settings, active offers, matching, schedules или другие
+   Установка нового профиля rate/crawl требует отдельного разрешения с точным
+   allowlist полей и digest; код сейчас её не выполняет. Не менять active offers,
+   matching, schedules или другие
    supplier rows. Использовать writable подключения только этого test target,
    после identity guard; read-only default кластера не менять глобально.
 4. Пересоздать preview после включения (digest меняется), подтвердить одно
-   source_canary задание. Проверить immutable5 перед штатным worker с одной
-   итерацией; без scheduler, автоповтора, DISCOVERY и автоматического RESUME.
+   bounded задание. Проверить immutable scope N перед штатным worker. Первые
+   карточки — внутренний gate, после PASS job продолжает согласованную партию.
+   Без scheduler и автоповтора; DISCOVERY/RESUME допустимы только в утверждённом scope.
 5. В finally после terminal receipt и освобождения lease: под тем же guard
    проверить отсутствие других jobs, compare-and-set true→исходное false,
    проверить enabled=false readback. Сохранить audit и отдельный cleanup receipt.

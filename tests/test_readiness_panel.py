@@ -84,7 +84,7 @@ def test_pilot_buttons_and_full_action_match_backend_mode(monkeypatch):
     monkeypatch.setenv('STERBRUST_PARTNER_PILOT','YES')
     r=c.get('/suppliers/1');assert r.status_code==200 and 'name="launch_mode" value="test"' in r.text and 'id="supplier-start"' not in r.text
     monkeypatch.delenv('STERBRUST_PARTNER_PILOT')
-    r=c.get('/suppliers/1');assert r.status_code==200 and 'name="launch_mode" value="test"' not in r.text and 'id="supplier-start"' in r.text
+    r=c.get('/suppliers/1');assert r.status_code==200 and 'name="launch_mode" value="test"' not in r.text and 'id="supplier-start"' not in r.text
 
 
 def test_manifest_copy_and_conservative_scheduler_fail_closed(monkeypatch):

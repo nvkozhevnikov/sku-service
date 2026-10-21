@@ -134,6 +134,21 @@ class SourceCheckpoint:
                 history=previous['history']
                 if not history or history[-1]!=receipt:history=history+[deepcopy(receipt)]
                 self.state['terminal'][url]={'state':state,'receipt':deepcopy(receipt),'history':history};self.state['inflight'].pop(url,None)
+    def return_not_requested(self,receipt):
+        """Only an explicit pre-transport receipt may return a claim to frontier.
+
+        A crash or a lost transport response remains UNCERTAIN. Never infer
+        NOT_REQUESTED from attempts=0, process absence, or a missing capture.
+        """
+        with self._change():
+            url=receipt['url'];self.validator(url)
+            if (url not in self.state['inflight'] or url in self.state['terminal'] and self.state['terminal'][url]['state']!='NOT_REQUESTED'
+                    or receipt.get('state')!='NOT_REQUESTED' or receipt.get('transport_started') is not False):
+                raise ValueError('NOT_REQUESTED_PROOF_REQUIRED')
+            history=self.state['terminal'].get(url,{}).get('history',[])+[deepcopy(receipt)]
+            self.state['terminal'][url]={'state':'NOT_REQUESTED','receipt':deepcopy(receipt),'history':history}
+            self.state['inflight'].pop(url)
+            if url not in self.state['frontier']:self.state['frontier'].insert(0,url)
     def complete_discovery_node(self,url,children,*,evidence_sha256,products=()):
         children=list(children)
         if len(evidence_sha256)!=64 or any(c not in '0123456789abcdef' for c in evidence_sha256):raise ValueError('DISCOVERY_EVIDENCE_SHA256')

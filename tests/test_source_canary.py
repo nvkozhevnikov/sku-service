@@ -1,5 +1,6 @@
 """UI→queue→snapshot→runtime, fake SQL/HTTP only, nine wrappers."""
 from contextlib import nullcontext
+from offline_host_profiles import approved_policy,approval_for
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -57,7 +58,7 @@ class FakeDB:
         self.code=code;self.enabled=enabled;self.rows=known_rows(code);self.sql=[];self.snapshots=[]
         self.supplier_id=11 if code=='beka_mak' else 1
     @property
-    def supplier(self):return (self.code,self.code,'https://'+HOSTS[self.code]+'/',self.enabled,{}, {})
+    def supplier(self):return (self.code,self.code,'https://'+HOSTS[self.code]+'/',self.enabled,{'host_policy_approval':approval_for('https://'+HOSTS[self.code])}, approved_policy(self.code,'https://'+HOSTS[self.code]).snapshot())
     def connect(self):
         db=self
         class Connection:
@@ -144,7 +145,7 @@ def test_all_nine_ui_queue_snapshot_runtime_five_from_109(monkeypatch,code):
     finally:LEASED_HOST.reset(token)
     assert after['status']=='succeeded' and calls==original_calls and len(backend.writes)==5 and len(backend.matches)==1
 
-@pytest.mark.parametrize('value',[None,True,False,0,-1,51,5.0,'5'])
+@pytest.mark.parametrize('value',[None,True,False,0,-1,100001,5.0,'5'])
 def test_invalid_limits_fail_closed(value):
     with pytest.raises(ValueError):limit_value(value)
 
@@ -208,7 +209,7 @@ def test_cluster_guard_refuses_wrong_system_before_start_or_write():
     with pytest.raises(PermissionError):validate_connection(C())
 
 def test_slower_stored_host_interval_is_not_automatically_reduced():
-    db=FakeDB();supplier=(*db.supplier[:5],{'min_request_interval_seconds':40})
+    db=FakeDB();supplier=(*db.supplier[:5],approved_policy('beka_mak',db.supplier[2],{'min_request_interval_seconds':40}).snapshot())
     preview=build_preview(11,supplier,db.rows[:5],CFG,5)
     assert preview['snapshot']['rate_settings']['min_request_interval_seconds']==40
 
@@ -250,9 +251,9 @@ def test_sixth_product_is_blocked_at_real_fetcher_callback_not_after_response():
         def get_validated(self,url,*,validator,timeout_seconds):
             self.before_request(url);calls.append(url)
             return HttpResponse(url,200,'text/html',b'<h1>fake</h1>')
-    fetch=BoundedHostFetcher('beka-mak.su',compile_policy('beka_mak','https://beka-mak.su'),Client,
+    fetch=BoundedHostFetcher('beka-mak.su',approved_policy('beka_mak','https://beka-mak.su'),Client,
         validator=lambda u:None,robots_allowed=lambda u:True,robots_delay_seconds=0,
-        lease_acquired=True,source='beka_mak',clock=Clock())
+        lease_acquired=True,source='beka_mak',approval=approval_for('https://beka-mak.su'),clock=Clock())
     fetch.request_start_guard=budget
     outcomes=list(fetch.fetch([r[2] for r in db.rows[:6]],limit=6,seconds=300))
     assert calls==[r[2] for r in db.rows[:5]] and len([r for r in outcomes if r.response])==5
