@@ -52,6 +52,7 @@ class HttpTransport:
         clock=None,
         random_uniform=None,
         deadline: float | None = None,
+        abort_requested=None,
     ) -> None:
         self.session = session or requests.Session()
         self.session.trust_env = False
@@ -77,6 +78,7 @@ class HttpTransport:
         self.min_interval = self.policy.min_request_interval_seconds
         self.clock = clock or SystemClock()
         self.deadline = deadline
+        self.abort_requested = abort_requested
         self.metrics = RequestMetrics()
         self.limiter = DomainRateLimiter(
             self.policy, clock=self.clock, random_uniform=random_uniform,
@@ -92,7 +94,7 @@ class HttpTransport:
         response, attempts = request_with_resilience(
             lambda: self.session.get(url, timeout=self.timeout, allow_redirects=True, stream=True),
             self.policy, self.limiter, clock=self.clock, metrics=self.metrics, breaker=self.breaker,
-            deadline=effective_deadline,
+            deadline=effective_deadline, abort_requested=self.abort_requested,
         )
         return FetchRecord(
             requested_url=url, final_url=response.url, status_code=response.status_code,
@@ -112,7 +114,7 @@ class HttpTransport:
             response, attempts = request_with_resilience(
                 lambda: self.session.get(current, timeout=self.timeout, allow_redirects=False, stream=True),
                 self.policy, self.limiter, clock=self.clock, metrics=self.metrics,
-                breaker=self.breaker, deadline=effective_deadline,
+                breaker=self.breaker, deadline=effective_deadline, abort_requested=self.abort_requested,
             )
             total_attempts += attempts
             if response.is_redirect or response.is_permanent_redirect:

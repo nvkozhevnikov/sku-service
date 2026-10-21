@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from .adapters.partner_st import PartnerStAdapter
 from .control_plane.rate_control import (
-    Clock, DomainRatePolicy, MaxRunDurationExceeded,
+    Clock, DomainRatePolicy, MaxRunDurationExceeded, RequestAborted,
     PARTNER_ST_DEFAULT_RATE_POLICY, SystemClock,
 )
 from .http import HttpTransport
@@ -64,6 +64,38 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
         min_request_interval_seconds=interval,
     )
     runtime_clock = clock or SystemClock()
+    import threading
+    pilot_stop = threading.Event()
+    stop_lock = threading.Lock()
+    first_stop_reason = None
+
+    def record_stop(reason):
+        nonlocal first_stop_reason
+        with stop_lock:
+            if first_stop_reason is None:
+                first_stop_reason = reason
+                pilot_stop.set()
+                # Fresh per-job evidence directory: preserve the first cause,
+                # even if another worker or the operator changes the stop file.
+                if batch is not None:
+                    from pathlib import Path
+                    import json
+                    receipt = Path(evidence_root) / 'FIRST_STOP.json'
+                    receipt.parent.mkdir(parents=True, exist_ok=True)
+                    with receipt.open('x', encoding='utf-8') as stream:
+                        json.dump({'reason': reason,
+                                   'observed_at': datetime.now(timezone.utc).isoformat()}, stream)
+            pilot_stop.set()
+
+    def stopped():
+        if batch is None:
+            return False
+        if not pilot_stop.is_set() and stop_requested:
+            reason = stop_requested()
+            if reason:
+                record_stop(reason if isinstance(reason, str) else 'STOP_REQUESTED')
+        return pilot_stop.is_set()
+
     create_transport = transport_factory or HttpTransport
     adapter = adapter or PartnerStAdapter()
     started = datetime.now(timezone.utc).isoformat()
@@ -77,6 +109,7 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
         clock=runtime_clock,
         random_uniform=random_uniform,
         deadline=deadline,
+        **({"abort_requested": stopped} if batch is not None else {}),
     )
     if progress_callback:
         progress_callback("DISCOVERY")
@@ -88,14 +121,13 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
         progress_callback("FETCHING_PRODUCTS", total=len(discovery.product_urls))
     health = discovery_health(len(discovery.product_urls), baseline)
     if batch is not None:health=replace(health,deactivation_allowed=False)
-    import threading
-    pilot_stop=threading.Event();captures=[];safety_errors=[]
+    captures=[]
     allowed={r['url']:r['external_id'] for r in batch} if batch else {}
     def validate_target(url):
         safe_url(url)
         if url not in allowed:raise ValueError('PILOT_REDIRECT_OUTSIDE_BATCH')
         return url
-    if batch is not None and not (stop_requested and stop_requested()):
+    if batch is not None and not stopped():
         from urllib.robotparser import RobotFileParser
         from pathlib import Path
         import json
@@ -117,7 +149,7 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
     failures: list[CrawlFailure] = []
 
     def deadline_expired() -> bool:
-        return runtime_clock.monotonic() >= deadline or (batch is not None and (pilot_stop.is_set() or bool(stop_requested and stop_requested())))
+        return runtime_clock.monotonic() >= deadline or stopped()
 
     stage_times = {}
     def process(item: tuple[int, str]):
@@ -139,7 +171,7 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
                 from pathlib import Path
                 import hashlib
                 if fetched.status_code in (403,429) or has_blocking_interstitial(fetched.text.encode('utf-8')):
-                    safety_errors.append('PILOT_SITE_BLOCKED');pilot_stop.set()
+                    record_stop('PILOT_SITE_BLOCKED')
                 evidence=sanitise_html(fetched.text.encode('utf-8'),'text/html; charset=utf-8')
                 h=hashlib.sha256(evidence).hexdigest();dest=Path(evidence_root)/(h+'.html');dest.parent.mkdir(parents=True,exist_ok=True)
                 if not dest.exists():dest.write_bytes(evidence)
@@ -153,15 +185,19 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
             finally:timings['parsing_seconds']=time.perf_counter()-began
             if batch is not None:
                 if card.external_id!=allowed[url] or card.supplier_code!='partner_st':
-                    safety_errors.append('PILOT_SOURCE_ID_CHANGED');pilot_stop.set();raise ValueError('PILOT_SOURCE_ID_CHANGED')
+                    record_stop('PILOT_SOURCE_ID_CHANGED');raise ValueError('PILOT_SOURCE_ID_CHANGED')
                 safe_url(card.canonical_url)
                 if card.price is None or card.price<=0:raise ValueError('PILOT_PRICE_UNPROVEN_NO_OVERWRITE')
             return position, card, None, fetched, False
+        except RequestAborted:
+            if not stopped():
+                record_stop('STOP_REQUESTED')
+            return position, None, None, None, True
         except MaxRunDurationExceeded:
             return position, None, None, None, True
         except Exception as error:
             if batch is not None and str(error).startswith(('PILOT_REDIRECT','PILOT_UNSAFE')):
-                safety_errors.append(str(error));pilot_stop.set()
+                record_stop(str(error))
             failure = CrawlFailure(url, type(error).__name__, str(error)[:1000], None)
             return position, None, failure, None, False
 
@@ -223,14 +259,14 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
                 submit_available()
 
     unscheduled = len(items) - cursor
-    termination_reason = (safety_errors[0] if safety_errors else 'STOP_REQUESTED' if batch is not None and stop_requested and stop_requested() else 'MAX_RUN_DURATION_EXCEEDED') if deadline_seen else None
+    actual_deadline_exceeded = runtime_clock.monotonic() >= deadline
+    termination_reason = first_stop_reason or ('MAX_RUN_DURATION_EXCEEDED' if actual_deadline_exceeded else None)
     if termination_reason:
         failures.append(CrawlFailure(
             getattr(adapter, "base_url", "https://partner-st.ru/"),
             termination_reason,
             (
-                f"monotonic crawl deadline of {effective_policy.max_run_duration_seconds:g}s "
-                f"was exceeded; unscheduled={unscheduled}, "
+                f"{termination_reason}; unscheduled={unscheduled}, "
                 f"cancelled={cancelled_after_deadline}, skipped={skipped_after_deadline}"
             ),
             None,
@@ -256,7 +292,8 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
             "sitemap_index": discovery.sitemap_index_url,
             "sitemaps": list(discovery.sitemap_urls),
             "product_sitemaps": list(discovery.product_sitemap_urls),
-            "max_run_duration_exceeded": deadline_seen,
+            "max_run_duration_exceeded": actual_deadline_exceeded,
+            "stop_requested": first_stop_reason is not None,
             "unscheduled_product_count": unscheduled,
             "cancelled_product_count": cancelled_after_deadline,
             "skipped_product_count": skipped_after_deadline,

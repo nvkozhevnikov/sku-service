@@ -61,3 +61,11 @@ def validate_snapshot(p):
         safe_url(r['url'])
         if not isinstance(r['external_id'],str) or not r['external_id'] or type(r['source_product_id']) is not int or r['source_product_id']<1:raise ValueError('PILOT_SOURCE_ID_REQUIRED')
     return batch
+
+
+def read_stop_reason(path):
+    """Return the operator's reason; an empty stop file still means STOP."""
+    try:
+        return Path(path).read_text(encoding='utf-8').strip()[:1000] or 'STOP_REQUESTED'
+    except FileNotFoundError:
+        return None

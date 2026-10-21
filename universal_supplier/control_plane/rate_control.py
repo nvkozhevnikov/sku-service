@@ -103,6 +103,7 @@ class RequestMetrics:
     http_5xx: int = 0
     http_429: int = 0
     network_errors: int = 0
+    requests_aborted: int = 0
     retry_count: int = 0
     response_time_total_seconds: float = 0.0
     rate_limit_waits: int = 0
@@ -295,7 +296,9 @@ def request_with_resilience(
     breaker = breaker or CircuitBreaker(policy, clock=clock, metrics=metrics)
     last_error: Exception | None = None
     for attempt in range(1, policy.max_attempts + 1):
-        if abort_requested and abort_requested():raise RequestAborted('HOST_STOPPED')
+        if abort_requested and abort_requested():
+            metrics.requests_aborted += 1
+            raise RequestAborted('HOST_STOPPED')
         if deadline is not None and clock.monotonic() >= deadline:
             metrics.max_run_duration_exceeded = True
             metrics.requests_skipped_deadline += 1
@@ -308,7 +311,9 @@ def request_with_resilience(
             metrics.requests_skipped_deadline += 1
             metrics.last_failure_reason = "MAX_RUN_DURATION_EXCEEDED"
             raise MaxRunDurationExceeded()
-        if abort_requested and abort_requested():raise RequestAborted('HOST_STOPPED')
+        if abort_requested and abort_requested():
+            metrics.requests_aborted += 1
+            raise RequestAborted('HOST_STOPPED')
         # Another worker can open the shared circuit while this request waits
         # at the domain pacing gate.
         breaker.before_request()
@@ -329,6 +334,9 @@ def request_with_resilience(
                 return response, attempt
             retry_after = retry_after_seconds(getattr(response, "headers", {})) if status == 429 and policy.respect_retry_after else None
             delay = retry_after if retry_after is not None else backoff_seconds(policy, attempt)
+        except RequestAborted:
+            metrics.requests_aborted += 1
+            raise
         except Exception as error:
             last_error = error
             metrics.record_network_error(clock.monotonic() - started, type(error).__name__)

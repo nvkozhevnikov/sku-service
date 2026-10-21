@@ -167,7 +167,8 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         if pilot:
             from pathlib import Path
             import os
-            kwargs={'pilot':pilot,'evidence_root':Path(os.environ['PARTNER_PILOT_EVIDENCE_ROOT'])/str(job.id),'stop_requested':lambda:Path(os.environ['PARTNER_PILOT_STOP_FILE']).exists()}
+            from universal_supplier.partner_pilot import read_stop_reason
+            kwargs={'pilot':pilot,'evidence_root':Path(os.environ['PARTNER_PILOT_EVIDENCE_ROOT'])/str(job.id),'stop_requested':lambda:read_stop_reason(os.environ['PARTNER_PILOT_STOP_FILE'])}
         result = _run_with_progress(run_partner_st_live, progress.callback, baseline=baseline, rate_policy=rate,**kwargs)
         from datetime import datetime
         import json
@@ -188,7 +189,7 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
                 with receipt.open('x',encoding='utf-8') as f:f.write(payload)
         _finish_metadata(repository,run_id,{'http_phase':http_phase,'request_metrics':result.request_metrics,
                           'pilot_http_rows':list(result.rows) if pilot else [],'pilot_captures':list(result.captures) if pilot else []})
-        if pilot and result.termination_reason and result.termination_reason.startswith('PILOT_'):
+        if pilot and result.termination_reason:
             _finish_metadata(repository,run_id,{'pilot_http_rows':list(result.rows),'pilot_captures':list(result.captures),'request_metrics':result.request_metrics,'termination_reason':result.termination_reason})
             raise RuntimeError(result.termination_reason)
         for error in result.errors:
