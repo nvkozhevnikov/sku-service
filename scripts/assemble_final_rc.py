@@ -10,6 +10,11 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from universal_supplier.release_export import CONTRACT, summarize, tables, validate, xml_bytes
+from universal_supplier.stage6e import spreadsheet_safe_text, strip_xml_illegal
+
+def csv_row(row):
+    return {key:(spreadsheet_safe_text(strip_xml_illegal(value)) if isinstance(value,str) else value)
+            for key,value in row.items()}
 
 def digest(path):
     with path.open("rb") as f:
@@ -48,10 +53,10 @@ def assemble(source, output):
     for name,items in data.items():
         headers=list(items[0]) if items else []
         filename=name.upper().replace(" ","_")+".csv"
-        # Machine CSV is literal UTF-8, not Excel formula-executing import.
+        # Served via /rc-final/files/: neutralise formula prefixes for spreadsheet apps.
         with (output/filename).open("w",encoding="utf-8",newline="") as f:
             writer=csv.DictWriter(f,fieldnames=headers)
-            writer.writeheader();writer.writerows(items)
+            writer.writeheader();writer.writerows(csv_row(item) for item in items)
         workbook.append({"name":name,"headers":headers,"rows":[[r.get(k) for k in headers] for r in items]})
     save(output/"WORKBOOK_TABLES.json",workbook)
     save(output/"PRODUCT_CARD_PAYLOADS.json",payloads)

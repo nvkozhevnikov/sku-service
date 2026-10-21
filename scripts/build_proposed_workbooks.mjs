@@ -4,6 +4,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
+import { spreadsheetSafeValue } from './spreadsheet_safe_text.mjs';
 
 const [inputPath, outputDir] = process.argv.slice(2);
 if (!inputPath || !outputDir) throw new Error("usage: build_proposed_workbooks.mjs PROPOSAL_TABLES.json OUT_DIR");
@@ -106,7 +107,7 @@ for (const spec of config) {
     if (value == null) return "";
     if (typeof value === "string" && /^[=+@-]/.test(value)) return "'" + value;
     return String(value);
-  }));
+  })).map(row => row.map(spreadsheetSafeValue));
   if (matrix.length) {
     sheet.getRangeByIndexes(5, 0, matrix.length, width).values = matrix;
     sheet.getRange(`A6:${lastCol}${5 + matrix.length}`).format.font = {name: "Arial", size: 10, color: "#17212B"};

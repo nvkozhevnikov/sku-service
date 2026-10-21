@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 from universal_supplier.matching_service import load_registry_from_csv
 from universal_supplier.proposal_export import build_proposal_tables, capture_review_rows
 from universal_supplier.full_supplier_collection import FullManifest
+from universal_supplier.stage6e import spreadsheet_safe_text, strip_xml_illegal
 from sterbrust_matching.normalization import model_tokens, normalize_model
 
 EXPECTED_REGISTRY_SHA256 = "aac0d70fea301468972bb652af7d264c690f25e2d5d0b72862925d19ae1402d0"
@@ -28,6 +29,14 @@ MATCHING_COLUMNS = ("source", "external_id", "model", "execution", "model_key", 
                     "sterbrust_product_id", "proposed_sterbrust_id", "match_status", "match_method",
                     "price_state", "price", "currency", "availability", "observed_at", "source_url",
                     "source_category", "match_conflicts", "match_warnings")
+
+
+def _csv_cell(value):
+    if isinstance(value, (dict, list)):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if isinstance(value, str):
+        return spreadsheet_safe_text(strip_xml_illegal(value))
+    return value
 
 
 def _sha(path: Path) -> str:
@@ -122,9 +131,7 @@ def generate(*, matching_path: Path, registry_path: Path, sections_path: Path,
         writer = csv.DictWriter(handle, fieldnames=MATCHING_COLUMNS)
         writer.writeheader()
         for row in sorted(matching["rows"], key=lambda item: (item["source"], item["external_id"])):
-            writer.writerow({key: (json.dumps(row.get(key), ensure_ascii=False, sort_keys=True)
-                                   if isinstance(row.get(key), (dict, list)) else row.get(key))
-                             for key in MATCHING_COLUMNS})
+            writer.writerow({key: _csv_cell(row.get(key)) for key in MATCHING_COLUMNS})
     json_path.write_text(json.dumps({"diagnostic_only": True, "esol_payload": False,
                                      "manifest_sha256": matching["manifest_sha256"],
                                      "registry_sha256": EXPECTED_REGISTRY_SHA256,

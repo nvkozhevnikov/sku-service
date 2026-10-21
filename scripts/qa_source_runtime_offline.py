@@ -2,6 +2,7 @@
 
 Run with the project's Python environment. Optional pytest arguments are
 appended to the fixed suite; artifacts remain in reports/q<timestamp>/.
+Use --export-only for the independent export security regression.
 """
 from pathlib import Path
 from datetime import datetime
@@ -56,7 +57,11 @@ SUITE = (
     'native_checkpoint', 'runtime_security', 'security_review_group5',
     'commercial', 'commercial_persistence', 'optimum_source', 'http_capture',
     'matching_policy_v22',
+    'export_security_adoption',
 )
+if '--export-only' in sys.argv:
+    sys.argv.remove('--export-only')
+    SUITE=('export_security_adoption',)
 print('Offline evidence:', ARTIFACTS, flush=True)
 raise SystemExit(pytest.main([
     *[f'tests/test_{name}.py' for name in SUITE], '-q', '-p', 'no:cacheprovider',

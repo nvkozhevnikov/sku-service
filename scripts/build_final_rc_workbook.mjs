@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Workbook, SpreadsheetFile } from '@oai/artifact-tool';
+import { spreadsheetSafeValue } from './spreadsheet_safe_text.mjs';
 const output=path.resolve(process.argv[2]);
 const data=JSON.parse(await fs.readFile(path.join(output,'WORKBOOK_TABLES.json'),'utf8'));
 const freeze=JSON.parse(await fs.readFile(path.join(output,'FREEZE_MANIFEST.json'),'utf8'));
@@ -36,8 +37,7 @@ summary.getRange('A12:A14').format.font={...font,italic:true};
 summary.tabColor='#243954';
 const previews=[];
 function literal(v) {
-  if(typeof v==='string' && /^[=+@-]/.test(v)) return "'"+v;
-  return v;
+  return spreadsheetSafeValue(v);
 }
 for (const t of data) {
   if(t.name==='NEW full cards') {
