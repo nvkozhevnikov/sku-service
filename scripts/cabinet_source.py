@@ -13,6 +13,15 @@ FLAGS = ('STERBRUST_SOURCE_RUNTIME_ENABLED', 'STERBRUST_ALLOW_SUPPLIER_HTTP',
 TERMINAL = {'partial', 'failed', 'cancelled', 'stale_failed'}
 
 
+def qa_marker(value):
+    if isinstance(value, dict):
+        return any((key in {'synthetic', 'is_synthetic'} and item is True) or qa_marker(item)
+                   for key, item in value.items())
+    if isinstance(value, list):
+        return any(qa_marker(item) for item in value)
+    return isinstance(value, str) and ('SYNTHETIC' in value.upper() or 'NOT_HTTP' in value.upper())
+
+
 def matrix_source(code):
     rows = {row['SOURCE']: row for row in source_batch.matrix_rows()}
     if code not in rows:
@@ -58,7 +67,9 @@ def project_job(row):
     jid, state, snapshot, error, run_id, created, started, finished, metadata = row
     snapshot, metadata = snapshot or {}, metadata or {}
     runtime = metadata.get('source_runtime') or {}
+    provenance = 'SYNTHETIC_NOT_LIVE' if qa_marker([snapshot, metadata]) else 'SAVED_METADATA_REQUIRES_EVIDENCE'
     return {'id': jid, 'status': state, 'state': source_batch.STATES_RU.get(state, state), 'run_id': run_id, 'created_at': created,
+            'provenance': provenance,
             'started_at': started, 'finished_at': finished,
             'mode': (snapshot.get('crawl_settings') or {}).get('collection_mode'),
             'batch_id': (snapshot.get('source_batch') or {}).get('id'),

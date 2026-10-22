@@ -135,11 +135,12 @@ def test_disabled_host_policy_and_budget_fail_closed(backend,monkeypatch):
 
 def test_projection_preserves_zero_unknown_and_blocks_uncertain():
     row=(31,'failed',{'crawl_settings':{'collection_mode':'REFRESH'}},None,17,None,None,None,
-         {'source_runtime':{'processed':0,'sql_committed':0,'remaining':None,
+         {'qa_tag':'B0_SQL_QA_SYNTHETIC_NOT_HTTP','source_runtime':{'processed':0,'sql_committed':0,'remaining':None,
                             'resume_available':True,'resume_uncertain':True},'progress':{'http_attempts':3}})
     job=bridge.project_job(row)
     assert job['processed']==0 and job['sql_receipts']==0 and job['remaining'] is None
     assert job['http_progress']=={'http_attempts':3} and not job['resume_available']
+    assert job['provenance']=='SYNTHETIC_NOT_LIVE'
 
 
 def test_job_monitor_is_read_only_even_after_runtime_admission_is_removed(backend,monkeypatch):
