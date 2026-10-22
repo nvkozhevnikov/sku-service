@@ -94,3 +94,39 @@ Unknown остаётся null. Cumulative receipt totals RESUME не сумми�
 Дорожная карта: единый пакет → отдельно разрешённый fresh11 → receipts/coverage →
 адресный checkpoint RESUME/решения REVIEW/CONFLICT → проверка качества → handoff
 разработчику. Stage6 import contract BLOCKED; Stage7/ESOL/production не открываются.
+
+
+## Runtime-role authorization applied — 2026-10-22 (supersedes historical role blocker)
+
+OPERATOR-CONFIRMED separate rc_runtime + necessary ACL/test runtime settings on
+127.0.0.1:55461 / rc_verify_vi_20261019 only. LIVE-VERIFIED(local test SQL):
+existing PGDATA/system7698346631476390904/17.11 preserved; rc_owner OID10 unchanged.
+rc_runtime LOGIN/NOSUPERUSER/NOCREATEDB/NOCREATEROLE/NOREPLICATION/NOBYPASSRLS;
+CONNECT target, public USAGE, reviewed per-table operations, only required sequence
+USAGE. pg_read_all_settings is required by exact data_directory identity guard;
+pg_control_system() EXECUTE was already available, no redundant function grant.
+Capture/observation/audit UPDATE/DELETE and registry-import/admin table writes
+remain denied. No schema CREATE, ownership, default ACL or other database grants.
+Existing PUBLIC CONNECT is unchanged; target-cluster HBA rules specifically admit
+rc_runtime only to targetDB from127.0.0.1 and reject its other database logins.
+Previous HBA rules remain byte-identical below this role-specific prefix.
+
+Cabinet adapters use fixed target + rc_runtime SCRAM credential from ignored
+reports/integration/private-live11-runtime.json. They never inherit legacy DB_*
+settings. Never print or commit that credential. Backend batch guards accept only
+rc_runtime/non-superuser and retain exact PGDATA/system/version/host/DB guards.
+Unknown roles, bootstrap rc_owner and superusers remain rejected. Existing serving
+panel58097 delegates to these adapters; commercial-qa55449 stays separate.
+
+Fresh pre-DDL backup full decode PASS; 1282 mappings/Product IDs unchanged.
+Existing Orchestrator constructor + queue +11 registered collectors PASS;
+no tick/claim/recover/heartbeat/daemon started. This is readiness preflight, not
+worker liveness or LIVE proof. No HTTP, enqueue, business DML or policy activation.
+Focused regression and exact-head approval matrix are recorded in workspace
+reports/RC_RUNTIME_ROLE_20261022/REPORT.md and LIVE11_APPROVAL_MATRIX.csv.
+
+LIVE remains BLOCKED pending one explicit execution/setup authorization:
+9 disabled namespaces + exact11 matrix policies/digests/budgets with backup/restore;
+existing runtime HTTP/SQL/session admission; fresh frozen preview/digest/current
+HEAD/T0 approval; existing worker max2 different hosts; Beka isolation gate.
+No old checkpoint migration to changed HEAD; UNCERTAIN requires operator decision.

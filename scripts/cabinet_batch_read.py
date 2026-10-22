@@ -13,8 +13,20 @@ from universal_supplier.control_plane.queue import PostgresJobQueue
 from universal_supplier.postgres import PostgresConfig
 
 
+CREDENTIAL_FILE = Path(__file__).resolve().parents[1] / 'reports/integration/private-live11-runtime.json'
+
+
 def target_config():
-    return PostgresConfig('127.0.0.1', 55461, 'rc_verify_vi_20261019', 'rc_owner', None, 'disable')
+    # Separate SCRAM credential; never inherit the serving legacy DB_* settings.
+    path = CREDENTIAL_FILE
+    password = None
+    if path.exists():
+        value = json.loads(path.read_text(encoding='utf-8'))
+        if (value.get('host'), value.get('port'), value.get('database'), value.get('role')) != (
+                '127.0.0.1', 55461, 'rc_verify_vi_20261019', 'rc_runtime'):
+            raise PermissionError('LIVE11_RUNTIME_CREDENTIAL_TARGET_MISMATCH')
+        password = value['password']
+    return PostgresConfig('127.0.0.1', 55461, 'rc_verify_vi_20261019', 'rc_runtime', password, 'disable')
 
 
 def require_write_session():
@@ -30,6 +42,46 @@ def checked_role(queue):
         with connection.cursor() as cursor:
             cursor.execute('SELECT current_user,rolsuper FROM pg_roles WHERE rolname=current_user')
             return cursor.fetchone()
+
+
+def source_readiness(queue):
+    """SELECT-only setup facts, never substitutes for frozen backend preview."""
+    rows = source_batch.matrix_rows()
+    with queue._connect() as connection:
+        connection.read_only = True
+        source_canary.validate_connection(connection)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT code,adapter_name,base_url,enabled,crawl_settings,rate_settings FROM suppliers")
+            saved = {r[0]: r for r in cursor.fetchall()}
+    from universal_supplier.control_plane.queue import normalized_domain
+    approved = json.loads(os.environ.get('STERBRUST_APPROVED_HOST_POLICIES', '{}'))
+    result = []
+    for row in rows:
+        code = row['SOURCE']
+        source = saved.get(code)
+        blockers = []
+        if source is None:
+            blockers.append('SOURCE_NOT_PRESENT_IN_TARGET')
+        else:
+            _, adapter, base, enabled, crawl, rate = source
+            if adapter != code or normalized_domain(base) != row['APPROVAL_HOST']:
+                blockers.append('BATCH_SOURCE_HOST_CHANGED')
+            if not enabled:
+                blockers.append('BATCH_DISABLED_REQUIRES_EXPLICIT_ENABLE_RESTORE')
+            if rate != json.loads(row['RATE_POLICY_JSON']) or (crawl or {}).get('host_policy_approval') != {
+                    'host': row['APPROVAL_HOST'], 'reference': row['APPROVAL_REFERENCE']}:
+                blockers.append('BATCH_HOST_POLICY_REQUIRES_EXPLICIT_ACTIVATION')
+        if approved.get(row['APPROVAL_HOST']) != row['APPROVAL_DIGEST_SHA256']:
+            blockers.append('HOST_PROFILE_DIGEST_NOT_APPROVED')
+        for flag in ('STERBRUST_SOURCE_RUNTIME_ENABLED', 'STERBRUST_ALLOW_SUPPLIER_HTTP', 'STERBRUST_ALLOW_SOURCE_WRITES'):
+            if os.environ.get(flag) != 'YES':
+                blockers.append(flag + '_NOT_ENABLED')
+        if os.environ.get('STERBRUST_CABINET_LIVE11_WRITE_CONFIRM') != 'rc_verify_vi_20261019':
+            blockers.append('LIVE11_WRITE_SESSION_NOT_APPROVED')
+        result.append({'code': code, 'enabled': source[3] if source else None,
+                       'blockers': blockers, 'setup_ready': not blockers,
+                       'launch_allowed': False})  # Exact preview/digest still required.
+    return result
 
 
 def read(action, batch_id=None):
@@ -55,6 +107,9 @@ def read(action, batch_id=None):
                 cursor.execute('SELECT current_user,rolsuper FROM pg_roles WHERE rolname=current_user')
                 role, superuser = cursor.fetchone()
         result.update(connected=True, role=role, superuser=superuser)
+        if (role, superuser) != ('rc_runtime', False):
+            raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
+        result['sources'] = source_readiness(queue)
         if action == 'status':
             result['payload'] = queue.source_batch_status(batch_id)
         else:
@@ -76,7 +131,7 @@ def command(action, values):
     os.environ['PGCONNECT_TIMEOUT'] = '2'
     queue = PostgresJobQueue(config)
     # Validate the exact cluster/role even for STOP/RESUME; never inherit RC55449.
-    if checked_role(queue) != ('rc_owner', False):
+    if checked_role(queue) != ('rc_runtime', False):
         raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
     if action == 'enqueue':
         # Existing backend repeats preview under locks, checks exact digest/head,

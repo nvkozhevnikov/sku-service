@@ -96,7 +96,7 @@ def prepare(queue, connection, cursor):
     validate_config(queue.config)
     validate_connection(connection)
     cursor.execute('SELECT current_user,rolsuper FROM pg_roles WHERE rolname=current_user')
-    if cursor.fetchone() != ('rc_owner', False):
+    if cursor.fetchone() != ('rc_runtime', False):
         raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
     rows = matrix_rows()
     cursor.execute('''SELECT id,code,adapter_name,base_url,enabled,crawl_settings,rate_settings
@@ -333,7 +333,7 @@ def confirm_beka_gate(queue, batch_id, receipt_path, receipt_sha256):
     with queue._connect() as connection, connection.transaction(), connection.cursor() as cursor:
         validate_config(queue.config); validate_connection(connection)
         cursor.execute('SELECT current_user,rolsuper FROM pg_roles WHERE rolname=current_user')
-        if cursor.fetchone() != ('rc_owner', False):
+        if cursor.fetchone() != ('rc_runtime', False):
             raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
         cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
         cursor.execute("""SELECT id,status,settings_snapshot FROM crawl_jobs

@@ -130,7 +130,7 @@ def inspect_source(code, mode='REFRESH', limit=None, job_id=None):
                 raise ValueError('SOURCE_JOB_NOT_FOUND')
             result['reason'] = 'SOURCE_JOB_STATUS'
             return result
-        if (role, superuser) != ('rc_owner', False):
+        if (role, superuser) != ('rc_runtime', False):
             raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
         source_guard(source, matrix)
         if not runtime_enabled():
@@ -167,7 +167,7 @@ def source_command(action, values):
     matrix = validate_request(code, mode, limit, job_id)
     os.environ['PGCONNECT_TIMEOUT'] = '2'
     queue = PostgresJobQueue(target_config())
-    if checked_role(queue) != ('rc_owner', False):
+    if checked_role(queue) != ('rc_runtime', False):
         raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
     source, jobs = load_source(queue, code, job_id)
     if action == 'source-stop':

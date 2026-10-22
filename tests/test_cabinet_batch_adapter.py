@@ -40,11 +40,12 @@ def test_reader_never_uses_serving_db_or_mutates(monkeypatch):
         adapter.read('status', '../bad')
 
 
-def test_superuser_still_blocks_all_ui_commands(monkeypatch):
+@pytest.mark.parametrize('role', [('rc_owner', True), ('rc_owner', False), ('unknown', False), ('rc_runtime', True)])
+def test_superuser_still_blocks_all_ui_commands(monkeypatch, role):
     from contextlib import nullcontext
     from types import SimpleNamespace
     monkeypatch.setenv('STERBRUST_CABINET_LIVE11_WRITE_CONFIRM', 'rc_verify_vi_20261019')
-    cursor = SimpleNamespace(execute=lambda *args: None, fetchone=lambda: ('rc_owner', True))
+    cursor = SimpleNamespace(execute=lambda *args: None, fetchone=lambda: role)
     connection = SimpleNamespace(cursor=lambda: nullcontext(cursor))
     monkeypatch.setattr(adapter.PostgresJobQueue, '_connect', lambda self: nullcontext(connection))
     monkeypatch.setattr(adapter.source_canary, 'validate_connection', lambda conn: None)
@@ -53,3 +54,48 @@ def test_superuser_still_blocks_all_ui_commands(monkeypatch):
     for action in ('enqueue', 'stop', 'resume', 'confirm-beka'):
         with pytest.raises(PermissionError, match='ROLE_PREREQUISITE_UNRESOLVED'):
             adapter.command(action, {})
+
+
+def test_runtime_credentials_are_exact_and_separate_from_legacy(monkeypatch, tmp_path):
+    import json
+    path = tmp_path / 'credential.json'
+    monkeypatch.setattr(adapter, 'CREDENTIAL_FILE', path)
+    monkeypatch.setenv('DB_USER', 'rc_owner')
+    monkeypatch.setenv('DB_PORT', '55449')
+    monkeypatch.setenv('DB_PASSWORD', 'must-not-inherit')
+    config = adapter.target_config()
+    assert (config.user, config.port, config.password) == ('rc_runtime', 55461, None)
+    value = dict(host='127.0.0.1', port=55461, database='rc_verify_vi_20261019', role='rc_runtime', password='offline')
+    path.write_text(json.dumps(value), encoding='utf-8')
+    assert adapter.target_config().password == 'offline'
+    for key, wrong in [('host','other'),('port',55449),('database','other'),('role','rc_owner')]:
+        path.write_text(json.dumps({**value,key:wrong}), encoding='utf-8')
+        with pytest.raises(PermissionError, match='CREDENTIAL_TARGET_MISMATCH'):
+            adapter.target_config()
+
+
+def test_readiness_reports_every_source_without_activation(monkeypatch):
+    import json
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    matrix = adapter.source_batch.matrix_rows()
+    rows = [(r['SOURCE'], r['SOURCE'], 'https://' + r['APPROVAL_HOST'], True,
+             {'host_policy_approval': {'host': r['APPROVAL_HOST'], 'reference': r['APPROVAL_REFERENCE']}},
+             json.loads(r['RATE_POLICY_JSON'])) for r in matrix]
+    cursor = SimpleNamespace(execute=lambda *args: None, fetchall=lambda: rows)
+    connection = SimpleNamespace(cursor=lambda: nullcontext(cursor))
+    queue = SimpleNamespace(_connect=lambda: nullcontext(connection))
+    monkeypatch.setattr(adapter.source_canary, 'validate_connection', lambda c: None)
+    for flag in ('STERBRUST_SOURCE_RUNTIME_ENABLED','STERBRUST_ALLOW_SUPPLIER_HTTP','STERBRUST_ALLOW_SOURCE_WRITES'):
+        monkeypatch.setenv(flag, 'YES')
+    monkeypatch.setenv('STERBRUST_APPROVED_HOST_POLICIES', json.dumps({r['APPROVAL_HOST']:r['APPROVAL_DIGEST_SHA256'] for r in matrix}))
+    monkeypatch.setenv('STERBRUST_CABINET_LIVE11_WRITE_CONFIRM','rc_verify_vi_20261019')
+    result = adapter.source_readiness(queue)
+    assert len(result) == 11 and all(r['setup_ready'] for r in result)
+    assert not any(r['launch_allowed'] for r in result)  # Frozen digest still required.
+    rows[0] = (*rows[0][:3], False, {}, {})
+    monkeypatch.delenv('STERBRUST_ALLOW_SUPPLIER_HTTP')
+    result = adapter.source_readiness(queue)
+    assert 'BATCH_DISABLED_REQUIRES_EXPLICIT_ENABLE_RESTORE' in result[0]['blockers']
+    assert 'BATCH_HOST_POLICY_REQUIRES_EXPLICIT_ACTIVATION' in result[0]['blockers']
+    assert all('STERBRUST_ALLOW_SUPPLIER_HTTP_NOT_ENABLED' in r['blockers'] for r in result)

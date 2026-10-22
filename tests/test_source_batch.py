@@ -47,7 +47,7 @@ class Database:
     """Only known SQL forms accepted; transactional rollback and serialized claims."""
     def __init__(self, monkeypatch, counts=7):
         self.jobs = []; self.suppliers = {}; self.known = {}; self.sql = []
-        self.lock = threading.RLock(); self.fail_insert = None; self.role=('rc_owner',False); self.gates=set()
+        self.lock = threading.RLock(); self.fail_insert = None; self.role=('rc_runtime',False); self.gates=set()
         policies = {}
         for i, row in enumerate(batch.matrix_rows(), 1):
             code = row['SOURCE']; host = row['APPROVAL_HOST']
@@ -360,8 +360,9 @@ def test_same_host_alias_keeps_second_slot_for_other_host(monkeypatch):
     assert first.domain!=second.domain
 
 
-def test_role_prerequisite_blocks_preview_and_enqueue_without_mutation(monkeypatch):
-    db=Database(monkeypatch); db.role=('rc_owner',True)
+@pytest.mark.parametrize('role', [('rc_owner',True), ('rc_owner',False), ('unknown',False), ('rc_runtime',True)])
+def test_role_prerequisite_blocks_preview_and_enqueue_without_mutation(monkeypatch, role):
+    db=Database(monkeypatch); db.role=role
     with pytest.raises(PermissionError,match='ROLE_PREREQUISITE'):
         db.queue.preview_source_batch()
     assert not db.jobs

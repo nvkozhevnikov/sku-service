@@ -22,7 +22,7 @@ def backend(monkeypatch):
             rate=json.loads(row['RATE_POLICY_JSON']))
     parent = dict(id=31,status='failed',resume_available=True,uncertain=False)
     monkeypatch.setattr(bridge, 'load_source', lambda q,c,j=None: (source(c), [parent]))
-    monkeypatch.setattr(bridge, 'checked_role', lambda queue: ('rc_owner', False))
+    monkeypatch.setattr(bridge, 'checked_role', lambda queue: ('rc_runtime', False))
     monkeypatch.setenv('STERBRUST_CABINET_LIVE11_WRITE_CONFIRM', 'rc_verify_vi_20261019')
     monkeypatch.setenv('STERBRUST_SOURCE_RUNTIME_ENABLED', 'YES')
     monkeypatch.setenv('PGOPTIONS', '')
