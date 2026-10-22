@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STERBRUST — макет кабинета</title>
+<style>
+  :root {
+    --paper: #f4f1ea;
+    --ink: #1c1915;
+    --muted: #5c564c;
+    --line: #d5cfc3;
+    --navy: #1e2a33;
+    --panel: #fffdf8;
+    --ok: #1f6b45;
+    --ok-bg: #e5f2ea;
+    --warn: #8a5a12;
+    --warn-bg: #f8efd8;
+    --stop: #8d2b2b;
+    --stop-bg: #f8e4e2;
+    --unknown: #5c564c;
+    --unknown-bg: #ece8e0;
+    --manual: #234e70;
+    --manual-bg: #e4eef5;
+    --supplier: #1e2a33;
+    --competitor: #3d4a34;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 14px/1.4 "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-end;
+    padding: 12px 16px 8px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .eyebrow { font-size: 11px; letter-spacing: .08em; color: var(--muted); }
+  h1 { margin: 0; font-size: 18px; font-weight: 650; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  nav button, .svc {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ink);
+    padding: 6px 8px;
+    font: inherit;
+    cursor: pointer;
+  }
+  nav button.active { border-color: var(--line); background: var(--paper); font-weight: 650; }
+  .banner {
+    background: var(--navy);
+    color: #f4f1ea;
+    padding: 6px 16px;
+    font-size: 12px;
+    letter-spacing: .04em;
+  }
+  .proto {
+    background: #fff6d8;
+    border-bottom: 1px solid #e2d3a2;
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+  main { max-width: 1680px; margin: 0 auto; padding: 12px 16px 32px; }
+  .flags { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; font-size: 12px; color: var(--muted); }
+  .counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+  .counts a, .counts span {
+    display: flex; gap: 8px; align-items: baseline;
+    border: 1px solid var(--line); background: var(--panel);
+    padding: 4px 8px; color: inherit; text-decoration: none; font-size: 13px;
+  }
+  .counts strong { font-variant-numeric: tabular-nums; }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 12px; align-items: start; }
+  .rail {
+    position: sticky; top: 12px;
+    border: 1px solid var(--line); background: var(--panel); padding: 10px 12px;
+  }
+  .rail h3, section h2, section h3 { margin: 0 0 8px; font-size: 15px; }
+  .contour { display: inline-block; font-size: 11px; letter-spacing: .06em; color: #fff; padding: 2px 6px; margin-bottom: 6px; }
+  .contour-supplier { background: var(--supplier); }
+  .contour-competitor { background: var(--competitor); }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 8px; height: 32px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; white-space: nowrap; }
+  th { font-weight: 650; background: #f7f4ee; color: var(--muted); font-size: 12px; }
+  .status { display: inline-block; padding: 1px 6px; border-radius: 2px; font-size: 12px; }
+  .status-ok { background: var(--ok-bg); color: var(--ok); }
+  .status-warn { background: var(--warn-bg); color: var(--warn); }
+  .status-stop { background: var(--stop-bg); color: var(--stop); }
+  .status-unknown { background: var(--unknown-bg); color: var(--unknown); }
+  .status-manual { background: var(--manual-bg); color: var(--manual); }
+  .count-unknown { color: var(--muted); }
+  .col-http, .col-sql { font-variant-numeric: tabular-nums; }
+  .digest { font-family: Consolas, monospace; font-size: 12px; word-break: break-all; }
+  .screen { display: none; }
+  .screen.active { display: block; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .panel { border: 1px solid var(--line); background: var(--panel); padding: 10px 12px; margin-bottom: 12px; }
+  label { display: block; margin: 8px 0; }
+  input, select, button.act, textarea {
+    font: inherit; color: inherit; background: #fff; border: 1px solid #b7b0a4; padding: 4px 8px;
+  }
+  button.act { background: var(--navy); color: #f4f1ea; cursor: pointer; }
+  button.act.secondary, button.act:disabled { background: #fff; color: var(--muted); cursor: not-allowed; }
+  .phase-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; padding: 0; list-style: none; }
+  .phase-list li { border: 1px solid var(--line); padding: 2px 6px; font-size: 12px; background: var(--panel); }
+  .phase-list .current { border-color: var(--navy); font-weight: 650; }
+  progress { width: 220px; height: 10px; }
+  dialog { border: 1px solid var(--line); background: var(--panel); max-width: 32rem; }
+  dl { display: grid; grid-template-columns: 11rem 1fr; gap: 4px 8px; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; }
+  .note { color: var(--muted); font-size: 12px; }
+  footer { padding: 12px 16px 24px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 1366px) {
+    .split, .grid2 { grid-template-columns: 1fr; }
+    .rail { position: static; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="eyebrow">ВНУТРЕННЯЯ ПАНЕЛЬ</div>
+    <h1>Кабинет оператора</h1>
+  </div>
+  <nav id="nav"></nav>
+</header>
+<div class="banner">ИМПОРТ В STERBRUST ОТКЛЮЧЁН · ЗАПИСЬ И ИМПОРТ В STERBRUST ОТКЛЮЧЕНЫ</div>
+<div class="proto">Макет вёрстки по спецификации кабинета. Строки ниже — пример раскладки, не снимок PostgreSQL. Число строк на рабочем экране равно ответу запроса, не константе.</div>
+<main id="app"></main>
+<footer>Внутренняя операторская панель · Запись и импорт в Sterbrust отключены</footer>
+<script>
+const screens = [
+  ["overview", "Обзор"],
+  ["suppliers", "Поставщики"],
+  ["launch", "Запуск сбора"],
+  ["jobs", "Задания"],
+  ["product", "Товар"],
+  ["match", "Сопоставление"],
+  ["rivals", "Конкуренты"],
+  ["report", "Итоговый отчёт"]
+];
+
+const nav = document.getElementById("nav");
+nav.innerHTML = screens.map(([id, label]) => `<button data-id="${id}">${label}</button>`).join("") + `<span class="svc">Сервис ▾</span>`;
+
+function chip(kind, text) { return `<span class="status status-${kind}">${text}</span>`; }
+
+function shell(flags, body) {
+  return `<div class="flags">${flags}</div>${body}`;
+}
+
+const pages = {
+  overview: shell(
+    `runtime: кнопка недоступна, сбор не LIVE · HTTP worker: не YES · SQL worker: не YES · read-only: нет · роль ADMIN`,
+    `<div class="counts">
+      <a href="#match"><strong>4</strong> кейсы не в RESOLVED</a>
+      <a href="#match"><strong>1</strong> CONFLICT в открытых</a>
+      <a href="#match"><strong>2</strong> SAFE_NEW в открытых</a>
+      <span><strong>3</strong> crawl_errors за 30 дней</span>
+      <a href="#jobs"><strong>1</strong> поставщики queued</a>
+      <a href="#jobs"><strong>1</strong> поставщики running</a>
+    </div>
+    <div class="split">
+      <div>
+        <span class="contour contour-supplier">КОНТУР Поставщики</span>
+        <div class="tablewrap"><table class="cabinet-table">
+          <thead><tr><th>имя</th><th>код</th><th>включён</th><th>активные source_products</th><th>job</th><th>статус</th><th>последний сбор</th><th>найдено</th><th>ошибок</th><th>следующий</th></tr></thead>
+          <tbody>
+            <tr><td>Partner-ST</td><td>partner_st</td><td>${chip("ok","Включён")}</td><td>1225</td><td>job 41</td><td>${chip("warn","Частично")}</td><td>21.10.2026 14:02</td><td>50</td><td>1</td><td>Только вручную</td></tr>
+            <tr><td>Beka-Mak</td><td>beka_mak</td><td>${chip("unknown","Отключён")}</td><td>109</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td>Только вручную</td></tr>
+            <tr><td>KAMI</td><td>kami</td><td>${chip("ok","Включён")}</td><td class="count-unknown">нет данных</td><td>job 18</td><td>${chip("ok","В очереди")}</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td>Только вручную</td></tr>
+          </tbody>
+        </table></div>
+        <h2 style="margin-top:16px"><span class="contour contour-competitor">КОНТУР Конкуренты</span></h2>
+        <p class="note">Строки появятся из MonitoringService.view. Пока сервис не вызван, фиктивные коды не рисуются.</p>
+        <div class="tablewrap"><table>
+          <thead><tr><th>имя</th><th>код</th><th>режим</th><th>статус</th><th>последнее наблюдение</th><th>страницы</th><th>товары если baseline</th></tr></thead>
+          <tbody><tr><td colspan="7" class="count-unknown">Мониторинг не подключён к этому макету. На рабочем обзоре здесь ответ запроса, не 12 пустых строк.</td></tr></tbody>
+        </table></div>
+      </div>
+      <aside class="rail">
+        <span class="contour contour-supplier">Поставщики</span>
+        <h3>Beka-Mak</h3>
+        <p>beka_mak · Отключён</p>
+        <p>Поставщик выключен: запуск заблокирован. Preview ничего не включает.</p>
+        <p><a href="#launch">Открыть поставщика</a></p>
+      </aside>
+    </div>`
+  ),
+  suppliers: shell(
+    `роль ADMIN · экспорт существующий`,
+    `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Поставщики</h2><div><button class="act secondary" disabled>Excel</button> <button class="act secondary" disabled>CSV</button></div></div>
+    <p class="note">Кнопки ведут на уже существующие /exports/suppliers.xlsx и .csv. В макете они не скачивают файл.</p>
+    <div class="split">
+      <div class="tablewrap"><table>
+        <thead><tr><th>имя</th><th>код</th><th>base_url</th><th>включён</th><th>товары</th><th>последний успех</th><th>job</th><th>статус</th><th>найдено</th><th>ошибок</th><th>очередь</th><th>следующий</th></tr></thead>
+        <tbody>
+          <tr><td><a href="#launch">Partner-ST</a></td><td>partner_st</td><td>partner-st.ru</td><td>${chip("ok","Включён")}</td><td>1225</td><td>21.10.2026</td><td>41</td><td>${chip("warn","Частично")}</td><td>50</td><td>1</td><td>Свободна</td><td>Только вручную</td></tr>
+          <tr><td><a href="#launch">Optimum</a></td><td>optimum</td><td>optimum-rus.ru</td><td>${chip("ok","Включён")}</td><td>1353</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td class="count-unknown">нет данных</td><td>Свободна</td><td>Только вручную</td></tr>
+        </tbody>
+      </table></div>
+      <aside class="rail">
+        <h3>Политика на списке не редактируется</h3>
+        <p>Деталь открывается ссылкой /suppliers/{id}.</p>
+        <p>ADMIN: Отключить сбор / Включить сбор — тот же POST enabled. Макет кнопку не отправляет.</p>
+      </aside>
+    </div>`
+  ),
+  launch: shell(
+    `runtime выключен: кнопка недоступна, сбор не LIVE`,
+    `<p><a href="#suppliers">← Поставщики</a></p>
+    <h2>Beka-Mak <span class="note">beka_mak</span> ${chip("unknown","Отключён")}</h2>
+    <span class="contour contour-supplier">КОНТУР Поставщики</span>
+    <div class="grid2">
+      <section class="panel"><h3>Состояние</h3><dl><dt>товары</dt><dd>109</dd><dt>job</dt><dd class="count-unknown">нет данных</dd><dt>последний статус</dt><dd class="count-unknown">нет данных</dd></dl></section>
+      <section class="panel"><h3>Сохранённая политика</h3>
+        <dl><dt>интервал</dt><dd class="count-unknown">поля профиля нет</dd><dt>потоки</dt><dd>—</dd><dt>jitter</dt><dd>—</dd><dt>timeout</dt><dd>—</dd><dt>attempts</dt><dd>—</dd></dl>
+        <p>${chip("unknown","поля профиля нет")}</p>
+        <p>Кнопка недоступна, сбор не LIVE. Ползунка скорости нет.</p>
+      </section>
+    </div>
+    <section class="panel">
+      <h3>Один согласованный сбор</h3>
+      <p class="note">Один снимок — одно существующее задание. Отдельного пакетного enqueue на HEAD нет.</p>
+      <label>Режим сбора<select><option>REFRESH — известные URL</option><option>DISCOVERY — новые URL и карточки</option></select></label>
+      <label>Общий разрешённый лимит карточек<input placeholder="пусто, 1..100000" inputmode="numeric"></label>
+      <p><button class="act" disabled>Проверить и подтвердить snapshot</button></p>
+      <p role="alert">Поставщик выключен: запуск заблокирован. Preview ничего не включает.</p>
+    </section>
+    <section class="panel">
+      <h3>Подготовка согласованного сбора · пример включённого источника</h3>
+      <dl>
+        <dt>режим</dt><dd>REFRESH</dd><dt>всего известных URL</dt><dd>1225</dd><dt>выбрано</dt><dd>50</dd>
+        <dt>safety gate</dt><dd>5</dd><dt>pages</dt><dd>—</dd><dt>time</dt><dd>из профиля</dd><dt>max_products</dt><dd>50</dd>
+        <dt>host policy</dt><dd>1 поток / интервал из rate_settings</dd>
+        <dt>целевая PostgreSQL</dt><dd>127.0.0.1:55461/rc_verify_vi_20261019</dd>
+        <dt>digest</dt><dd class="digest">sha256:пример-не-снимок</dd>
+      </dl>
+      <div class="tablewrap" style="margin-top:8px"><table>
+        <thead><tr><th>порядок</th><th>source_product_id</th><th>external_id</th><th>URL</th></tr></thead>
+        <tbody><tr><td>1</td><td>5352</td><td>19240</td><td>https://example.invalid/product/1</td></tr></tbody>
+      </table></div>
+      <p><button class="act" id="open-dialog">Подтвердить выбранную партию и поставить одно задание</button></p>
+      <p class="note">Поле execution_mode не показывается. Пилот Partner-ST на этой форме не стоит.</p>
+    </section>
+    <section class="panel">
+      <h3>Пилот Partner-ST. Не REFRESH / DISCOVERY / RESUME</h3>
+      <p>тест, не LIVE collectors</p>
+      <label>Количество карточек (1–50)<input value="50"></label>
+      <p><button class="act secondary" disabled>Тестовый запуск</button> <button class="act secondary" disabled>Остановить тест</button></p>
+    </section>
+    <dialog id="confirm">
+      <form method="dialog">
+        <h3>Поставить одно задание</h3>
+        <p>REFRESH · cap 50</p>
+        <p class="digest">sha256:пример-не-снимок</p>
+        <p>домен источника · 127.0.0.1:55461/rc_verify_vi_20261019</p>
+        <p><button class="act" value="ok">Поставить задание</button> <button class="act secondary" value="cancel">Отмена</button></p>
+        <p class="note">Макет не отправляет POST.</p>
+      </form>
+    </dialog>`
+  ),
+  jobs: shell(
+    `HTTP-прогресс не подтверждает SQL. Job и run — разные id.`,
+    `<h2>Запуски и задания очереди</h2>
+    <p><button class="act secondary">В очереди</button> <button class="act secondary">Выполняются</button> <button class="act secondary">Последние</button></p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>запись</th><th>поставщик</th><th>статус</th><th>время</th><th class="col-http">HTTP</th><th class="col-sql">SQL</th></tr></thead>
+      <tbody>
+        <tr><td>job 41 · run не создан</td><td>KAMI</td><td>${chip("ok","В очереди")}</td><td>22.10.2026 09:10</td><td class="col-http count-unknown">нет данных</td><td class="col-sql count-unknown">нет данных</td></tr>
+        <tr><td><a href="#report">run 90</a></td><td>Partner-ST</td><td>${chip("warn","Частично")}</td><td>21.10.2026 14:02</td><td class="col-http">12 карточек/мин</td><td class="col-sql">COMMITTED в этом задании: 0</td></tr>
+      </tbody>
+    </table></div>
+    <div class="split" style="margin-top:12px">
+      <section class="panel">
+        <h3>run 90 · фазы</h3>
+        <ol class="phase-list">
+          <li>В очереди</li><li>Поиск товаров</li><li class="current">Загрузка товаров</li><li>Сохранение данных</li><li>Сопоставление</li><li>Синхронизация проверки</li><li>Завершено</li>
+        </ol>
+        <p>Текущая подпись: Загрузка товаров. Фаза не DISCOVERY, processed и total есть, поэтому бар показан.</p>
+        <p><progress value="24" max="50"></progress> 24 / 50</p>
+        <p>Скорость HTTP: 12 карточек/мин. ETA: осталось примерно 2 мин.</p>
+        <p class="note">В фазе DISCOVERY бар без value, даже если percent число. poll.succeeded в SQL не пишется.</p>
+      </section>
+      <aside class="rail">
+        <h3>SQL, снимок страницы, не poll</h3>
+        <dl>
+          <dt>режим</dt><dd>REFRESH</dd>
+          <dt>found</dt><dd>50</dd><dt>processed</dt><dd>24</dd><dt>remaining</dt><dd>26</dd>
+          <dt>sql_committed_this_job</dt><dd>0</dd><dt>sql_committed</dt><dd>0</dd>
+          <dt>safety gate</dt><dd>не подтверждён</dd>
+          <dt>остановка</dt><dd>нет</dd>
+          <dt>checkpoint</dt><dd>есть</dd>
+        </dl>
+        <p><a href="#report">Проверить checkpoint и SQL перед продолжением</a></p>
+        <p class="note">Кнопка RESUME скрыта, пока нет ?check_source_resume=1 и resume_available.</p>
+      </aside>
+    </div>`
+  ),
+  product: shell(
+    `КОНТУР Поставщики`,
+    `<p><a href="#suppliers">← Товары</a></p>
+    <h2>Partner-ST · 1655</h2>
+    <p>Ленточнопильный станок LX20 Pro</p>
+    <p class="note">бренд · категория · решение REVIEW</p>
+    <div class="split">
+      <div class="grid2">
+        <section class="panel"><h3>Идентификация</h3><dl>
+          <dt>own_model</dt><dd>LX20 Pro</dd><dt>reference_model</dt><dd class="count-unknown">нет данных</dd>
+          <dt>product_kind</dt><dd>станок</dd><dt>Sterbrust ID</dt><dd>нет подтверждённого ID</dd>
+        </dl></section>
+        <section class="panel"><h3>Одна текущая проекция</h3><dl>
+          <dt>цена</dt><dd>По запросу</dd><dt>наличие</dt><dd>в наличии</dd>
+          <dt>остаток</dt><dd class="count-unknown">нет данных</dd><dt>наблюдение</dt><dd>21.10.2026 14:02</dd>
+        </dl><p class="note">price_on_request не показан как 0. Полный список offers этот экран не обещает.</p></section>
+      </div>
+      <aside class="rail">
+        <h3>Решение</h3>
+        <p>REVIEW · причина: суффикс исполнения не совпал с LX20 NEW.</p>
+        <p><a href="#match">Очередь проверки поставщика</a></p>
+        <p class="note">Прямой ссылки на case_id с товара нет. Параметр external_id не добавляется.</p>
+      </aside>
+    </div>
+    <section class="panel"><h3>Свойства</h3><div class="tablewrap"><table>
+      <thead><tr><th>raw_name</th><th>raw_value</th><th>raw_unit</th></tr></thead>
+      <tbody><tr><td>Зона реза</td><td>200</td><td>мм</td></tr></tbody>
+    </table></div></section>
+    <section class="panel"><h3>История</h3><div class="tablewrap"><table>
+      <thead><tr><th>changed_at</th><th>observed_at</th><th>поле</th><th>было</th><th>стало</th><th>run/capture</th><th>источник</th></tr></thead>
+      <tbody><tr><td>21.10.2026 14:02</td><td>21.10.2026 14:01</td><td>цена</td><td>По запросу</td><td>По запросу</td><td>run 90</td><td>partner_st</td></tr></tbody>
+    </table></div></section>`
+  ),
+  match: shell(
+    `сопоставление с каталогом sterbrust.com · запись в сайт выключена`,
+    `<h2>Очередь проверки</h2>
+    <p class="note">AUTO: ссылки на /products?decision=EXACT_EXISTING и HIGH_CONFIDENCE_EXISTING. Это не кнопка подтверждения.</p>
+    <p class="note">Фильтры: статус, поставщик, причина, бренд, категория, исполнитель, даты.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th></th><th>приоритет</th><th>поставщик / external_id</th><th>товар</th><th>automatic_decision</th><th>причина</th><th>состояние</th><th>назначено</th></tr></thead>
+      <tbody>
+        <tr><td><input type="checkbox" disabled></td><td>1</td><td>partner_st / 1655</td><td>LX20 Pro</td><td>${chip("stop","CONFLICT")}</td><td>исполнение</td><td>открыт</td><td>—</td></tr>
+        <tr><td><input type="checkbox" disabled></td><td>2</td><td>optimum / 561</td><td>губки HCV125</td><td>${chip("warn","REVIEW")}</td><td>оснастка, не тиски</td><td>открыт</td><td>—</td></tr>
+      </tbody>
+    </table></div>
+    <p><button class="act secondary" disabled>Отложить</button> <button class="act secondary" disabled>Просмотрено</button> <button class="act secondary" disabled>Назначить</button></p>
+    <p class="note">Кнопки массового подтверждения остаются disabled.</p>
+    <div class="grid2">
+      <section class="panel"><h3>Товар поставщика</h3><p>LX20 Pro · partner_st 1655</p><p>Признаки: модель совпадает частично, исполнение — конфликт.</p></section>
+      <section class="panel"><h3>Предложенный Sterbrust ID</h3><p>61421 · LX20 NEW</p><p>${chip("stop","Конфликт")}</p><p>Кнопки «Подтвердить» нет.</p></section>
+    </div>
+    <section class="panel"><h3>Памятка ложных пар</h3>
+      <p>LX20 Pro ≠ LX20 NEW. PP-13D NEW ≠ база. ETM-16U контроллер и рукоятка ≠ станок. Губки HCV125 ≠ тиски. TU2304V ≠ TU2304. EXISTING_CONFIRMED этих пар — жёсткий провал. REVIEW сам по себе провалом не является.</p>
+      <p class="note">Остальные формы кейса: кандидат неверный, поиск, новый товар, аксессуар, отложить. Макет их не отправляет.</p>
+    </section>`
+  ),
+  rivals: shell(
+    `КОНТУР Конкуренты · не очередь поставщиков · планировщик не подключён`,
+    `<h2>Мониторинг конкурентов</h2>
+    <p class="note">Вкладки: Обзор, Изменения, Цены, Акции, Новости, Ассортимент, Источники. Сбор — отдельный POST /competitor-monitoring/runs.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>имя</th><th>код</th><th>режим</th><th>статус</th><th>последнее наблюдение</th><th>изменение цены</th></tr></thead>
+      <tbody>
+        <tr><td>Кувалда / Нижний Новгород</td><td>kuvalda_nnov</td><td>AUTO</td><td>${chip("ok","WORKING")}</td><td>20.10.2026 11:00</td><td class="count-unknown">—</td></tr>
+        <tr><td>Youmet</td><td>youmet</td><td>MANUAL</td><td>${chip("manual","Ручной мониторинг")}</td><td class="count-unknown">Не предоставлен</td><td class="count-unknown">—</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">При baseline_only снижения, новые товары и акции остаются «—», не нулём. Две строки макета не означают, что в базе две записи.</p>
+    <section class="panel">
+      <h3>Ручной мониторинг · youmet</h3>
+      <p>Автоматический доступ: HTTP 403 · Anti-bot</p>
+      <p>Метод: Operator HTML Capture</p>
+      <p>Автоматический сбор: недоступен</p>
+      <p><button class="act" disabled>Импортировать HTML</button></p>
+    </section>
+    <section class="panel">
+      <h3>Сбор, только ADMIN</h3>
+      <label>Источник<select><option>Все включённые источники</option><option>kuvalda_nnov</option></select></label>
+      <p class="note">В селекте нет youmet. Пустой источник запускает selected_sources конфига. youmet остаётся MANUAL_PENDING и не получает кнопку автосбора.</p>
+      <label>max_pages<input placeholder="пусто"></label>
+      <p><button class="act secondary" disabled>Запустить сбор конкурентов</button></p>
+      <p>${chip("unknown","Планировщик не подключён")}</p>
+    </section>`
+  ),
+  report: shell(
+    `отчёт этого run · не отчёт конкурентов`,
+    `<h2>Итоговый отчёт · run 90</h2>
+    <p>Partner-ST · REFRESH · ${chip("warn","Частично")}</p>
+    <div class="split">
+      <div>
+        <section class="panel"><h3>Счётчики ingest</h3>
+          <dl><dt>discovered_count</dt><dd>50</dd><dt>new_count</dt><dd class="count-unknown">нет данных</dd><dt>changed_count</dt><dd>3</dd><dt>error_count</dt><dd>1</dd></dl>
+        </section>
+        <section class="panel"><h3>Изменения этого запуска</h3>
+          <div class="tablewrap"><table>
+            <thead><tr><th>field_group</th><th>count</th></tr></thead>
+            <tbody><tr><td>price</td><td>2</td></tr><tr><td>stock</td><td>1</td></tr></tbody>
+          </table></div>
+          <p class="note">Пустой список был бы фразой «События истории этого запуска не записаны», не «0 изменений».</p>
+        </section>
+        <section class="panel"><h3>Строки entity_change_history</h3>
+          <div class="tablewrap"><table>
+            <thead><tr><th>supplier_name</th><th>external_id</th><th>article</th><th>field</th><th>old_value</th><th>new_value</th><th>changed_at</th><th>run_id</th></tr></thead>
+            <tbody><tr><td>Partner-ST</td><td>1655</td><td>LX20 Pro</td><td>наличие</td><td>под заказ</td><td>в наличии</td><td>21.10.2026 14:02</td><td>90</td></tr></tbody>
+          </table></div>
+          <p class="note">Если change_rows у store нет, остаётся ссылка на существующий экспорт. Деактивации и импорта на странице нет.</p>
+        </section>
+      </div>
+      <aside class="rail">
+        <h3>Остановка и продолжение</h3>
+        <p>Причина: HTTP 429. FIRST_STOP сохранён. Это не SQL-ошибка и не локальная отмена.</p>
+        <p>Проверка checkpoint: SQL и checkpoint сверены; повторная сверка перед enqueue.</p>
+        <p><button class="act">RESUME — продолжить проверенный checkpoint</button></p>
+        <p class="note">На рабочем экране кнопка есть только после ?check_source_resume=1 и resume_available. Поля cap на форме нет. Макет кнопку не отправляет.</p>
+      </aside>
+    </div>`
+  )
+};
+
+const app = document.getElementById("app");
+function show(id) {
+  document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("active", b.dataset.id === id));
+  app.innerHTML = `<section class="screen active">${pages[id]}</section>`;
+  const open = document.getElementById("open-dialog");
+  const dialog = document.getElementById("confirm");
+  if (open && dialog) open.addEventListener("click", () => dialog.showModal());
+  location.hash = id;
+}
+nav.addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (button) show(button.dataset.id);
+});
+show((location.hash || "#overview").slice(1) in pages ? (location.hash || "#overview").slice(1) : "overview");
+</script>
+</body>
+</html>
