@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import asdict,replace
 from datetime import datetime, timezone
 from pathlib import Path
-import hashlib, json, math, os, time
+import hashlib, json, math, os, time, threading
 from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -78,6 +78,9 @@ def read_input(code,owner,sha):
 def runtime_enabled():return os.environ.get('STERBRUST_SOURCE_RUNTIME_ENABLED')=='YES'
 
 def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None):
+    if job.settings_snapshot.get('source_batch'):
+        from .source_batch import validate_snapshot
+        validate_snapshot(job.settings_snapshot)
     code=job.supplier_code
     if code not in RUNTIME_SOURCES or job.adapter_name!=code:raise ValueError('SOURCE_JOB_NAMESPACE')
     if os.environ.get('STERBRUST_ALLOW_SUPPLIER_HTTP')!='YES':raise PermissionError('LIVE_SUPPLIER_HTTP_NOT_AUTHORIZED')
@@ -137,6 +140,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     stop_file=run_folder/'STOP_REQUESTED'
     lease_alive=LEASE_ALIVE.get()
     def stopped():
+        envelope = job.settings_snapshot.get('source_batch')
+        if envelope and datetime.now(timezone.utc) >= datetime.fromisoformat(envelope['deadline']):
+            return 'BATCH_WINDOW_EXPIRED'
         if lease_alive is not None and not lease_alive():return 'HOST_LEASE_LOST'
         try:return stop_file.read_text(encoding='utf-8').strip()[:1000] or 'OPERATOR_STOP'
         except FileNotFoundError:return False
@@ -175,6 +181,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             lease_acquired=True,clock=clock,stop_requested=stopped,source=code,approval=settings.get('host_policy_approval'),defer_first_start=True)
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
         if dispatch_budget:fetcher.request_start_guard=dispatch_budget
+        capture_archive_lock = threading.Lock()
         def archive(outcome):
             if outcome.response is None:return
             response=outcome.response
@@ -184,10 +191,13 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             xml='xml' in (response.content_type or '').lower()
             body=raw if xml else sanitise_for_charset(raw,charset) if code.startswith('ltt_') or code=='uss_stanko' else sanitise_html(raw,response.content_type)
             h=hashlib.sha256(body).hexdigest();dest=folder/'captures'/(h+('.xml' if xml else '.html'));dest.parent.mkdir(parents=True,exist_ok=True)
-            try:
-                with dest.open('xb') as stream:stream.write(body);stream.flush();os.fsync(stream.fileno())
-            except FileExistsError:
-                if hashlib.sha256(dest.read_bytes()).hexdigest()!=h:raise ValueError('CAPTURE_FILE_CHANGED')
+            # Identical concurrent bodies share one immutable hash path. Readers
+            # must not mistake the first writer's unfinished file for corruption.
+            with capture_archive_lock:
+                try:
+                    with dest.open('xb') as stream:stream.write(body);stream.flush();os.fsync(stream.fileno())
+                except FileExistsError:
+                    if hashlib.sha256(dest.read_bytes()).hexdigest()!=h:raise ValueError('CAPTURE_FILE_CHANGED')
             record={'url':outcome.url,'final_url':response.final_url,'http_status':response.status_code,
                 'content_type':response.content_type,'observed_at':outcome.observed_at.isoformat(),
                 'response_sha256':hashlib.sha256(raw).hexdigest(),'evidence_sha256':h,'file':str(dest),'redirects':response.redirects,

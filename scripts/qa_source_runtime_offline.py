@@ -74,6 +74,11 @@ if '--b0-only' in sys.argv:
            'source_jobs','commercial_persistence','kami_persistence','service_idempotency',
            'f01_f03_identity_inputs','automatic_matching','native_checkpoint',
            'partner_pilot','partner_history_fix','stage6c1_optimum','stage6c1_partner')
+if '--batch-only' in sys.argv:
+    sys.argv.remove('--batch-only')
+    SUITE=('source_batch','authorized_collection','source_canary','source_runtime_controls',
+           'source_runtime','source_resume','native_checkpoint','source_linked_update',
+           'stage6c1_control','review_fixes_control_plane')
 print('Offline evidence:', ARTIFACTS, flush=True)
 raise SystemExit(pytest.main([
     *[f'tests/test_{name}.py' for name in SUITE], '-q', '-p', 'no:cacheprovider',

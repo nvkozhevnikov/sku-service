@@ -11,6 +11,7 @@ class SourceBackend:
         from universal_supplier.postgres import PostgresRepository
         self.repo=PostgresRepository(config);self.config=config;self.code=code;self.run_id=None;self.summary={};self.started=time.monotonic()
     def start(self,job,mode):
+        self.is_batch = bool(job.settings_snapshot.get('source_batch'))
         value=job.settings_snapshot.get('source_input')
         if mode=='RESUME' and (job.settings_snapshot.get('crawl_settings') or {}).get('source_canary'):
             from .source_runtime import read_input
@@ -106,6 +107,15 @@ class SourceBackend:
         _finish_metadata(self.repo,self.run_id,{'source_runtime':self.summary,'progress':progress})
     def finish(self,result):
         from .adapter_registry import _finish_metadata
+        # Actual material history of this run; read only. Never infer separate
+        # price/stock changes from changed_offers (which also includes quantity).
+        if getattr(self, 'is_batch', False):
+            with self.repo.connection.cursor() as q:
+                q.execute('''SELECT old_value,new_value FROM entity_change_history
+                    WHERE crawl_run_id=%s AND field_group='commercial' ORDER BY id''', (self.run_id,))
+                history = q.fetchall()
+            from .source_batch import commercial_change_counts
+            result.update(commercial_change_counts(history))
         self.progress({**result,'phase':'FINISHED'})
         _finish_metadata(self.repo,self.run_id,{'source_runtime':result,'source_mode':result['collection_mode'],
             'identity_post_processing':result['identity_post_processing'],'termination_reason':result['termination_reason']})

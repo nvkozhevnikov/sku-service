@@ -1,0 +1,26 @@
+{
+  "evidence_class": "REPOSITORY-VERIFIED OFFLINE ONLY",
+  "parent_head": "34739cbff85c758dfaafdd27b923c9aa1e3361a9",
+  "feature": "feature/sterbrust-unified-rc-20261019",
+  "tested_engine_sha256": "861d89f1075718ae385a2bec1c80d3366b41827c53d1c24e19f1aa26f737a132",
+  "suite": "scripts/qa_source_runtime_offline.py --batch-only -x",
+  "tests": 375,
+  "passed": 374,
+  "failed": 0,
+  "skipped": 1,
+  "skip_reasons": [
+    "local evidence not in this checkout (git-ignored/uncommitted): docker-compose.qa.yml"
+  ],
+  "duration_seconds": 448.175,
+  "evidence_directory": "reports/q104456549737",
+  "large_preview_entries": 18954,
+  "large_preview_provenance": "Synthetic URLs with historical per-source cardinalities from unchanged LIVE11 matrix, not a replay of 18954 historical HTML captures",
+  "large_replay_phases": 22,
+  "large_replay_observations_test_double": 2200,
+  "external_http": 0,
+  "postgres_connections": 0,
+  "actual_enqueued_jobs": 0,
+  "source_policy_activation": 0,
+  "role_acl_changes": 0,
+  "live": "NOT_RUN; STOP; existing B0 SQL QA and Partner LIVE50 not repeated"
+}

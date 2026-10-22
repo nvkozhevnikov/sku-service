@@ -75,6 +75,36 @@ class PostgresJobQueue:
         import psycopg
         return connect_postgres(self.config, autocommit=True)
 
+    def preview_source_batch(self):
+        from .source_batch import preview
+        return preview(self)
+
+    def enqueue_source_batch(self, **approval):
+        from .source_batch import enqueue
+        return enqueue(self, **approval)
+
+    def source_batch_status(self, batch_id):
+        from .source_batch import status
+        return status(self, batch_id)
+
+    def stop_source_batch(self, batch_id):
+        """Cancel waiting intent and request existing checkpoint STOP for running work."""
+        with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            from .source_canary import validate_config, validate_connection
+            validate_config(self.config)
+            validate_connection(connection)
+            cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
+            cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),
+                error_message='OPERATOR_BATCH_STOP',updated_at=now()
+                WHERE settings_snapshot->'source_batch'->>'id'=%s AND status='queued'""", (batch_id,))
+            cursor.execute("""SELECT supplier_id,id FROM crawl_jobs
+                WHERE settings_snapshot->'source_batch'->>'id'=%s AND status='running'""", (batch_id,))
+            running = cursor.fetchall()
+            cursor.execute("""UPDATE crawl_jobs SET error_message='OPERATOR_BATCH_STOP_PENDING'
+                WHERE settings_snapshot->'source_batch'->>'id'=%s AND status='running'""", (batch_id,))
+            for supplier_id, job_id in running:
+                self.stop_source(supplier_id, job_id)
+
     def _canary_preview(self,connection,cursor,supplier_id,supplier,limit,mode='REFRESH'):
         from .source_canary import limit_value,validate_config,validate_connection,build_preview
         limit_value(limit);validate_config(self.config);validate_connection(connection)
@@ -106,7 +136,7 @@ class PostgresJobQueue:
             row=cursor.fetchone()
         if not row or row[0] not in SOURCES or row[1]!='running' or not (row[2].get('crawl_settings') or {}).get('collection_mode'):raise ValueError('NO_ACTIVE_SOURCE_RUNTIME_JOB')
         path=job_dir(row[0],job_id)/'STOP_REQUESTED'
-        if not path.parent.is_dir():raise ValueError('SOURCE_CHECKPOINT_NOT_STARTED')
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with path.open('x',encoding='utf-8') as f:f.write('OPERATOR_STOP')
         except FileExistsError:pass
@@ -186,8 +216,17 @@ class PostgresJobQueue:
                         FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.id=%s FOR SHARE OF j''',(resume_job_id,))
                     previous=cursor.fetchone()
                     if not previous or previous[1]!=supplier_id:raise ValueError('RESUME_PARENT_NAMESPACE')
+                    if previous[2].get('source_batch'):
+                        rt = (previous[3] or {}).get('source_runtime') or {}
+                        from .source_batch import resume_is_safe
+                        if not resume_is_safe(rt):
+                            raise PermissionError('BATCH_RESUME_REQUIRES_OPERATOR_DECISION')
+                        snapshot = deepcopy(previous[2])
                     parent={'status':previous[0],'supplier_code':code,'settings':previous[2],'result':(previous[3] or {}).get('source_runtime',{})}
                 snapshot=prepare_snapshot(snapshot,source_mode,known_rows=known,resume=parent,config=self.config)
+                if source_mode=='RESUME' and previous[2].get('source_batch'):
+                    from .source_batch import resume_envelope
+                    snapshot = resume_envelope(cursor, previous[2], snapshot)
             if pilot_limit is not None:
                 if code!='partner_st' or adapter_name!='partner_st' or trigger_type!='manual':raise ValueError('PILOT_PARTNER_MANUAL_ONLY')
                 cursor.execute("SELECT sp.id,sp.external_id,coalesce(sp.canonical_url,sp.source_url) FROM source_products sp WHERE sp.supplier_id=%s AND sp.active AND sp.external_id_is_stable ORDER BY sp.id LIMIT %s",(supplier_id,pilot_limit))
@@ -214,17 +253,46 @@ class PostgresJobQueue:
 
     def claim_next(self) -> CrawlJob | None:
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            # Serialize claims across worker processes, not only each thread pool.
+            # Existing host session lease remains the final network guard.
+            cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
+            cursor.execute("SELECT count(*) FROM crawl_jobs WHERE status='running'")
+            if cursor.fetchone()[0] >= 2:
+                return None
+            cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),
+                error_message='BATCH_WINDOW_EXPIRED',updated_at=now()
+                WHERE status='queued' AND settings_snapshot ? 'source_batch'
+                  AND (settings_snapshot->'source_batch'->>'deadline')::timestamptz<=now()""")
             cursor.execute(
                 """SELECT j.id,j.supplier_id,s.code,s.adapter_name,s.base_url,j.trigger_type,
                           j.crawl_type,j.status,j.scheduled_for,j.settings_snapshot
                    FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
                    WHERE j.status='queued' AND j.scheduled_for<=now() AND s.enabled
+                     AND NOT EXISTS (SELECT 1 FROM crawl_jobs running JOIN suppliers rs ON rs.id=running.supplier_id
+                         WHERE running.status='running' AND
+                         coalesce(running.settings_snapshot->>'domain',regexp_replace(lower(split_part(split_part(rs.base_url,'://',2),'/',1)),'^www[.]', ''))=
+                         coalesce(j.settings_snapshot->>'domain',regexp_replace(lower(split_part(split_part(s.base_url,'://',2),'/',1)),'^www[.]', '')))
+                     AND (NOT (j.settings_snapshot ? 'source_batch') OR s.code='beka_mak' OR EXISTS (
+                         SELECT 1 FROM crawl_jobs gate JOIN suppliers gs ON gs.id=gate.supplier_id
+                         WHERE gs.code='beka_mak' AND gate.status='succeeded'
+                           AND gate.settings_snapshot->'source_batch'->>'id'=j.settings_snapshot->'source_batch'->>'id'
+                           AND gate.settings_snapshot->'source_batch'->>'phase'='DISCOVERY'
+                           AND EXISTS (SELECT 1 FROM audit_events a WHERE a.action='SOURCE_BATCH_BEKA_ISOLATION_CONFIRMED'
+                               AND a.entity_type='source_batch' AND a.entity_id=j.settings_snapshot->'source_batch'->>'id')))
                    ORDER BY j.scheduled_for,j.requested_at,j.id
                    FOR UPDATE OF j SKIP LOCKED LIMIT 1"""
             )
             row = cursor.fetchone()
             if row is None:
                 return None
+            if row[9].get('source_batch'):
+                from .source_batch import validate_snapshot
+                try:
+                    validate_snapshot(row[9])
+                except (ValueError, PermissionError) as error:
+                    cursor.execute("UPDATE crawl_jobs SET status='failed',finished_at=now(),error_message=%s WHERE id=%s",
+                                   (str(error), row[0]))
+                    return None
             from universal_supplier.partner_pilot import enabled,validate_snapshot
             if enabled():
                 if row[2]!='partner_st' or row[3]!='partner_st' or not row[9].get('partner_pilot'):raise PermissionError('PILOT_WORKER_OTHER_JOB')
@@ -252,15 +320,21 @@ class PostgresJobQueue:
                  error_message: str | None = None) -> None:
         if status not in FINAL_STATUSES:
             raise ValueError(f"not a final status: {status}")
-        with self._connect() as connection, connection.cursor() as cursor:
+        with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
             cursor.execute(
                 """UPDATE crawl_jobs SET status=%s,finished_at=now(),lease_expires_at=NULL,
-                          crawl_run_id=coalesce(%s,crawl_run_id),error_message=%s,updated_at=now()
-                   WHERE id=%s AND status='running'""",
+                          crawl_run_id=coalesce(%s,crawl_run_id),error_message=CASE
+                          WHEN error_message='OPERATOR_BATCH_STOP_PENDING' THEN 'OPERATOR_BATCH_STOP' ELSE %s END,updated_at=now()
+                   WHERE id=%s AND status='running' RETURNING supplier_id,settings_snapshot,requested_by_user_id,error_message""",
                 (status, crawl_run_id, error_message, job_id),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError(f"job {job_id} is not running")
+            supplier_id, snapshot, user_id, saved_error = cursor.fetchone()
+            if status == 'succeeded' and snapshot.get('source_batch') and saved_error != 'OPERATOR_BATCH_STOP':
+                from .source_batch import advance
+                advance(cursor, supplier_id, snapshot, user_id)
 
     def recover_stale(self) -> int:
         """Fail uncertain jobs; never rerun them blindly after a crash."""
