@@ -25,8 +25,40 @@ def main():
     gate.add_argument('--batch-id', required=True)
     gate.add_argument('--receipt', required=True, type=Path)
     gate.add_argument('--sha256', required=True)
+    recovery=sub.add_parser('prepare-recovery',help='READ ONLY: frozen same-batch compatibility approval')
+    recovery.add_argument('--batch-id',required=True)
+    recovery.add_argument('--evidence',required=True,type=Path)
+    recovery.add_argument('--output',required=True,type=Path)
+    recovery=sub.add_parser('recover',help='WRITE only after explicit same-batch recovery approval')
+    recovery.add_argument('--approval',required=True,type=Path)
+    recovery.add_argument('--sha256',required=True)
+    recovery.add_argument('--confirm',required=True)
+    recovery.add_argument('--run',action='store_true',help='Explicit operator session: existing worker until terminal/isolation gate')
+    recovery.add_argument('--activate-approved-settings',action='store_true',help='Temporarily activate exact approval matrix; restore after worker shutdown')
     args = parser.parse_args()
-    if args.action == 'matrix':
+    if args.action in ('prepare-recovery','recover'):
+        from cabinet_batch_read import target_config,command
+        from universal_supplier.control_plane.source_recovery import prepare,file_sha,ENV,require
+        import os
+        if args.action=='prepare-recovery':
+            result=prepare(PostgresJobQueue(target_config()),args.evidence,args.batch_id)
+            require(not args.output.exists(),'RECOVERY_OUTPUT_ALREADY_EXISTS')
+            args.output.parent.mkdir(parents=True,exist_ok=True)
+            args.output.write_text(json.dumps(result,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
+            result={'approval_file':str(args.output.resolve()),'sha256':file_sha(args.output),'activated':False}
+        else:
+            require(args.confirm==args.sha256 and file_sha(args.approval)==args.sha256,'RECOVERY_OPERATOR_CONFIRMATION_REQUIRED')
+            os.environ[ENV+'_FILE']=str(args.approval.resolve())
+            os.environ[ENV+'_SHA256']=args.sha256
+            os.environ[ENV+'_CONFIRM']=args.confirm
+            if args.run:
+                require(args.activate_approved_settings,'RECOVERY_EXPLICIT_TEMPORARY_ACTIVATION_REQUIRED')
+                from live11_recovery_session import run
+                result=run(PostgresJobQueue(target_config()))
+            else:
+                require(not args.activate_approved_settings,'RECOVERY_ACTIVATION_REQUIRES_RUN')
+                result=command('recover',{'approval_sha256':args.sha256})
+    elif args.action == 'matrix':
         result = source_batch.matrix_rows()
     else:
         queue = PostgresJobQueue(PostgresConfig.from_env())

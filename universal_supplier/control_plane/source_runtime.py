@@ -50,7 +50,10 @@ def frozen_json(path,value):
 def checked_input(value,code):
     if value.get('format')!='source-runtime-input/v1' or value.get('supplier_code')!=code:raise ValueError('SOURCE_INPUT_NAMESPACE')
     if value.get('mode') not in ('REFRESH','DISCOVERY'):raise ValueError('SOURCE_INPUT_MODE')
-    if value.get('engine_sha256')!=engine_fingerprint():raise ValueError('SOURCE_ENGINE_CHANGED_REQUIRES_REVIEW')
+    if value.get('engine_sha256')!=engine_fingerprint():
+        if not os.environ.get('STERBRUST_LIVE11_RECOVERY_FILE'):raise ValueError('SOURCE_ENGINE_CHANGED_REQUIRES_REVIEW')
+        from .source_recovery import allow_old_input
+        allow_old_input(value)
     entries=value.get('entries',[]);urls=set();ids=set()
     if len(entries)>100000:raise ValueError('SOURCE_INPUT_TOO_LARGE')
     for e in entries:
@@ -153,6 +156,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     http_started=clock.monotonic();http_seconds=0.;sql_seconds=0.;parse_seconds=0.;matching_seconds=None
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     try:
+        recovery_proof = None
+        if (job.settings_snapshot.get('source_batch') or {}).get('recovery'):
+            if mode != 'RESUME':raise ValueError('RECOVERY_REQUIRES_RESUME')
+            from .source_recovery import runtime_proof
+            recovery_proof = runtime_proof(job,config)
+            identity = {**recovery_proof['result'], 'matching_applied':False, 'matching_reused':True, 'recovery_parent_job_id':17, 'recovery_run_id':18}
         if mode=='RESUME' and cp.state['inflight']:raise ValueError('UNCERTAIN_PRODUCT_RECEIPT_REQUIRES_OPERATOR')
         if persist:
             if backend_factory is None:
@@ -278,7 +287,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 for r in classified:
                     if r['state']=='COMMITTED':
                         cp.record_terminal([{**r['receipt'],'state':'COMMITTED','sql_verified':True}])
-                        if not r['receipt'].get('matching_receipt'):matching_pending.append(r['receipt']['external_id'])
+                        if not r['receipt'].get('matching_receipt') and recovery_proof is None:matching_pending.append(r['receipt']['external_id'])
                 offline=[r for r in classified if r['state']=='HTTP_CAPTURED_NOT_COMMITTED']
             else:offline=[]
             seen={}

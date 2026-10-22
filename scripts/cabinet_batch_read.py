@@ -124,7 +124,7 @@ def read(action, batch_id=None):
 
 def command(action, values):
     require_write_session()
-    if action not in {'enqueue', 'stop', 'resume', 'confirm-beka'}:
+    if action not in {'enqueue', 'stop', 'resume', 'confirm-beka', 'recover'}:
         raise ValueError('UNSUPPORTED_BATCH_ACTION')
     config = target_config()
     source_canary.validate_config(config)
@@ -133,6 +133,13 @@ def command(action, values):
     # Validate the exact cluster/role even for STOP/RESUME; never inherit RC55449.
     if checked_role(queue) != ('rc_runtime', False):
         raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
+    if action == 'recover':
+        if set(values) != {'approval_sha256'}:
+            raise ValueError('RECOVERY_EXACT_CONFIRMATION_REQUIRED')
+        from universal_supplier.control_plane.source_recovery import approval,recover,require
+        _,sha=approval()
+        require(values['approval_sha256']==sha,'RECOVERY_CONFIRMATION_CHANGED')
+        return recover(queue)
     if action == 'enqueue':
         # Existing backend repeats preview under locks, checks exact digest/head,
         # enabled, approved policy, immutable scopes and T0 before any inserts.

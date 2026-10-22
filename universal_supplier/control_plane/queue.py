@@ -157,7 +157,9 @@ class PostgresJobQueue:
         return True
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
-                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None) -> EnqueueResult:
+                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None, recovery_sha256: str | None = None) -> EnqueueResult:
+        if recovery_sha256 is not None and (source_mode != 'RESUME' or resume_job_id != 17):
+            raise PermissionError('RECOVERY_REQUIRES_APPROVED_PARENT_RESUME')
         if source_limit is not None:
             from .source_canary import limit_value,validate_config
             limit_value(source_limit);validate_config(self.config)
@@ -219,7 +221,14 @@ class PostgresJobQueue:
                     if previous[2].get('source_batch'):
                         rt = (previous[3] or {}).get('source_runtime') or {}
                         from .source_batch import resume_is_safe
-                        if not resume_is_safe(rt):
+                        recovery_proof = None
+                        if recovery_sha256 is not None:
+                            from .source_recovery import approval, validate_matching, require, admission_runtime
+                            _, approved_sha = approval()
+                            require(recovery_sha256 == approved_sha, 'RECOVERY_CONFIRMATION_CHANGED')
+                            recovery_proof = validate_matching(cursor, previous[2], resume_job_id, config=self.config)
+                            admission_runtime(rt,recovery_proof)
+                        if not resume_is_safe(rt) and recovery_proof is None:
                             raise PermissionError('BATCH_RESUME_REQUIRES_OPERATOR_DECISION')
                         snapshot = deepcopy(previous[2])
                     parent={'status':previous[0],'supplier_code':code,'settings':previous[2],'result':(previous[3] or {}).get('source_runtime',{})}
@@ -227,6 +236,8 @@ class PostgresJobQueue:
                 if source_mode=='RESUME' and previous[2].get('source_batch'):
                     from .source_batch import resume_envelope
                     snapshot = resume_envelope(cursor, previous[2], snapshot)
+                    if recovery_proof is not None:
+                        snapshot['source_batch']['recovery'] = {k: recovery_proof[k] for k in ('kind','parent_job_id','run_id','approval_sha256')}
             if pilot_limit is not None:
                 if code!='partner_st' or adapter_name!='partner_st' or trigger_type!='manual':raise ValueError('PILOT_PARTNER_MANUAL_ONLY')
                 cursor.execute("SELECT sp.id,sp.external_id,coalesce(sp.canonical_url,sp.source_url) FROM source_products sp WHERE sp.supplier_id=%s AND sp.active AND sp.external_id_is_stable ORDER BY sp.id LIMIT %s",(supplier_id,pilot_limit))
