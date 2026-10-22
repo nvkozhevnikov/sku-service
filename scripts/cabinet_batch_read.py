@@ -13,14 +13,32 @@ from universal_supplier.control_plane.queue import PostgresJobQueue
 from universal_supplier.postgres import PostgresConfig
 
 
+def target_config():
+    return PostgresConfig('127.0.0.1', 55461, 'rc_verify_vi_20261019', 'rc_owner', None, 'disable')
+
+
+def require_write_session():
+    if os.environ.get('STERBRUST_CABINET_LIVE11_WRITE_CONFIRM') != 'rc_verify_vi_20261019':
+        raise PermissionError('LIVE11_WRITE_SESSION_NOT_APPROVED')
+
+
+def checked_role(queue):
+    source_canary.validate_config(queue.config)
+    with queue._connect() as connection:
+        connection.read_only = True
+        source_canary.validate_connection(connection)
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT current_user,rolsuper FROM pg_roles WHERE rolname=current_user')
+            return cursor.fetchone()
+
+
 def read(action, batch_id=None):
     if action not in {'preview', 'status'}:
         raise ValueError('READ_ONLY_ACTION_REQUIRED')
     if action == 'status':
         batch_id = str(UUID(batch_id))
     # This is the exact existing guarded target, never the serving panel's DB.
-    config = PostgresConfig('127.0.0.1', 55461, 'rc_verify_vi_20261019',
-                            'rc_owner', None, 'disable')
+    config = target_config()
     os.environ['PGCONNECT_TIMEOUT'] = '2'
     os.environ['PGOPTIONS'] = '-c default_transaction_read_only=on -c statement_timeout=5000'
     queue = PostgresJobQueue(config)
@@ -50,22 +68,16 @@ def read(action, batch_id=None):
 
 
 def command(action, values):
-    if os.environ.get('STERBRUST_CABINET_LIVE11_WRITE_CONFIRM') != 'rc_verify_vi_20261019':
-        raise PermissionError('LIVE11_WRITE_SESSION_NOT_APPROVED')
+    require_write_session()
     if action not in {'enqueue', 'stop', 'resume', 'confirm-beka'}:
         raise ValueError('UNSUPPORTED_BATCH_ACTION')
-    config = PostgresConfig('127.0.0.1', 55461, 'rc_verify_vi_20261019', 'rc_owner', None, 'disable')
+    config = target_config()
     source_canary.validate_config(config)
     os.environ['PGCONNECT_TIMEOUT'] = '2'
     queue = PostgresJobQueue(config)
     # Validate the exact cluster/role even for STOP/RESUME; never inherit RC55449.
-    with queue._connect() as connection:
-        connection.read_only = True
-        source_canary.validate_connection(connection)
-        with connection.cursor() as cursor:
-            cursor.execute('SELECT current_user,rolsuper FROM pg_roles WHERE rolname=current_user')
-            if cursor.fetchone() != ('rc_owner', False):
-                raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
+    if checked_role(queue) != ('rc_owner', False):
+        raise PermissionError('BATCH_ROLE_PREREQUISITE_UNRESOLVED')
     if action == 'enqueue':
         # Existing backend repeats preview under locks, checks exact digest/head,
         # enabled, approved policy, immutable scopes and T0 before any inserts.
@@ -92,14 +104,31 @@ def command(action, values):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['preview', 'status', 'enqueue', 'stop', 'resume', 'confirm-beka'])
+    parser.add_argument('action', choices=['preview', 'status', 'enqueue', 'stop', 'resume', 'confirm-beka',
+                                         'source', 'source-enqueue', 'source-stop', 'source-resume'])
     parser.add_argument('--batch-id')
+    parser.add_argument('--source')
+    parser.add_argument('--mode', choices=['REFRESH', 'DISCOVERY', 'RESUME'], default='REFRESH')
+    parser.add_argument('--limit', type=int)
+    parser.add_argument('--job-id', type=int)
     args = parser.parse_args()
-    if args.action in {'preview', 'status'}:
+    if args.action == 'source':
+        from cabinet_source import inspect_source
+        try:
+            result = inspect_source(args.source, args.mode, args.limit, args.job_id)
+        except (PermissionError, ValueError) as error:
+            result = {'code': args.source, 'mode': args.mode, 'limit': args.limit,
+                      'connected': False, 'ready': False, 'source': None, 'jobs': [],
+                      'preview': None, 'reason': str(error)}
+    elif args.action in {'preview', 'status'}:
         result = read(args.action, args.batch_id)
     else:
         try:
-            result = {'result': command(args.action, json.load(sys.stdin))}
+            if args.action.startswith('source-'):
+                from cabinet_source import source_command
+                result = {'result': source_command(args.action, json.load(sys.stdin))}
+            else:
+                result = {'result': command(args.action, json.load(sys.stdin))}
         except (PermissionError, ValueError, KeyError) as error:
             result = {'error': str(error).strip("'")}
         except Exception:
