@@ -178,6 +178,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     isolated=[];consecutive_card_errors=0
     try:
         recovery_proof = None
+        blocked_scope_urls=set()
+        if job.settings_snapshot.get('source_batch'):
+            from .source_recovery import ENV,approval,require
+            if os.environ.get(ENV+'_FILE'):
+                approved,_=approval()
+                require(approved['batch_id']==job.settings_snapshot['source_batch']['id'],'RECOVERY_BATCH_CHANGED')
+                blocked_scope_urls={i['url'] for i in approved.get('continuation',{}).get('quarantine',[])
+                    if i.get('kind')=='operator-scope-quarantine/v1' and i['source']==code}
         if (job.settings_snapshot.get('source_batch') or {}).get('recovery'):
             if mode != 'RESUME':raise ValueError('RECOVERY_REQUIRES_RESUME')
             from .source_recovery import runtime_proof
@@ -200,6 +208,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             from .source_canary import DispatchBudget
             dispatch_budget=DispatchBudget(original,robots_url)
         def request_url(url):
+            if url in blocked_scope_urls:
+                if fetcher is not None:fetcher.stop('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
+                raise ValueError('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
             if canary and original['mode']=='REFRESH' and url!=robots_url and url not in {e['url'] for e in original['entries']}:
                 if fetcher is not None:fetcher.stop('CANARY_URL_OUTSIDE_FROZEN_BATCH')
                 raise ValueError('CANARY_URL_OUTSIDE_FROZEN_BATCH')

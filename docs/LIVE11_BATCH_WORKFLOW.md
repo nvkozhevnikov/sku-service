@@ -286,3 +286,19 @@ rollback/status/receipt/mapping failures, unknown SQL and preservation of146135.
 After new exact HEAD/SHA confirmation the same batch resumes from current owners,
 without re-GET of COMMITTED or the saved KAMI/Vek captures. Prior attempt ceilings
 remain R8/D4; proof renewal never replenishes attempts, T0/deadline or scopes.
+# 2026-10-23: explicit operator scope quarantine
+
+`prepare-continuation --scope-quarantine-decision <json>` is SELECT-only. It can
+bind one explicit operator decision to an exact historic `UNCERTAIN` caused by
+`CANARY_URL_OUTSIDE_FROZEN_BATCH`: original URL/entry, owner, job/run, checkpoint,
+source-row hash, attempt start and authorization-file hash. No HTTP response is
+invented. Capture/observation/history absence must pass both preparation and
+native admission/readback; source edits or any SQL ambiguity remain STOP.
+
+Only a newly confirmed exact HEAD/SHA can execute the proposal. The leased
+runtime appends `operator_scope` quarantine through existing SourceCheckpoint,
+retaining UNCERTAIN history and excluding it from HTTP/ingest/matching. Other
+UNCERTAIN states are unchanged. Subsequent phases cannot fetch the same blocked
+URL: encountering it trips `OPERATOR_SCOPE_QUARANTINE_NO_HTTP`, requiring a
+separate decision rather than silently following a redirect or shrinking scope.
+Signed attempt ceilings, original T0/deadline and all identity/SQL guards remain.

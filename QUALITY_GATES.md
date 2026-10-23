@@ -123,3 +123,21 @@ rollback/status/receipt/mapping failures, unknown SQL and preservation of146135.
 After new exact HEAD/SHA confirmation the same batch resumes from current owners,
 without re-GET of COMMITTED or the saved KAMI/Vek captures. Prior attempt ceilings
 remain R8/D4; proof renewal never replenishes attempts, T0/deadline or scopes.
+# 2026-10-23 — explicit operator decision for scope-blocked UNCERTAIN
+
+A scope-blocked transport with no archived response remains UNCERTAIN by default.
+Only a signed exact case with an operator authorization hash, unchanged source
+row, original checkpoint/owner/input and proven absence of capture, observation
+and run history can be proposed as `operator_scope` quarantine. Native runtime
+appends the decision through SourceCheckpoint and preserves prior UNCERTAIN.
+No response/capture/COMMITTED/matching success is invented. Any SQL ambiguity,
+source edit, unknown role/target, unapproved case or HEAD/SHA mismatch remains STOP.
+The blocked URL is also denied before HTTP in subsequent phases; no redirect
+allowlist expansion or automatic UNKNOWN retry is implied by this decision.
+
+Scope-decision focused QA:95 PASS; runtime/readback follow-up52 PASS (overlap).
+Extended regression:210 PASS including2200 saved cards/22phases and F01/F03;
+five obsolete four-parameter SQL assertions were updated to the existing typed
+nullable-ID contract and pass in the52-case follow-up. Three separate UI-auth
+test failures reproduce on prior HEAD016ab79; they are not marked PASS and no
+web/security implementation was changed by this recovery task.

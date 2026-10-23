@@ -103,6 +103,11 @@ class SourceBackend:
                        currency,card.availability_raw,card.availability_normalized,Jsonb({'parser':self.code,'evidence_sha256':capture.evidence_sha256})))
         return {'ingest_counts':counts}
     def probe(self,entry,receipt):
+        if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')=='operator_scope':
+            from .source_recovery import approved_scope_item,scope_sql_absent
+            item=approved_scope_item(receipt,entry)
+            with self.repo.connection.cursor() as q:scope_sql_absent(q,item)
+            return 'NOT_FOUND'
         if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')=='http':
             from .source_resume import quarantine_evidence_present
             if not quarantine_evidence_present(receipt,entry):return 'UNKNOWN'

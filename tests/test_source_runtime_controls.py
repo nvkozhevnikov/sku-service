@@ -118,7 +118,8 @@ def test_lease_loss_stops_before_sql_and_retains_capture():
     assert (job_dir('kami',1)/'FIRST_STOP.json').is_file()
 
 @pytest.mark.parametrize('kind',['none','missing_observation','wrong_sha','duplicate','good'])
-def test_production_backend_uses_exact_capture_and_observation_readback(kind):
+@pytest.mark.parametrize('external_id',['987',None])
+def test_production_backend_uses_exact_capture_and_observation_readback(kind,external_id):
     from universal_supplier.commercial_persistence import HttpCapture
     from universal_supplier.control_plane.source_runtime import receipt_for
     cap=HttpCapture('https://vekprom.ru/catalog/a/b/','https://vekprom.ru/catalog/a/b/',200,'text/html',datetime.now(timezone.utc),'a'*64,'b'*64,'capture://offline/fixture')
@@ -130,10 +131,11 @@ def test_production_backend_uses_exact_capture_and_observation_readback(kind):
         def execute(self,q,args):self.q=q;self.args=args
         def fetchall(self):return rows
     cursor=Cursor();backend=SourceBackend.__new__(SourceBackend);backend.code='vekprom';backend.repo=SimpleNamespace(connection=SimpleNamespace(cursor=lambda:cursor))
-    receipt=receipt_for(cap.requested_url,'HTTP_CAPTURED_NOT_COMMITTED',cap,'vekprom',1,'f'*64,'987')
+    receipt=receipt_for(cap.requested_url,'HTTP_CAPTURED_NOT_COMMITTED',cap,'vekprom',1,'f'*64,external_id)
     result=backend.probe({'url':cap.requested_url},receipt)
     assert result==('COMMITTED' if kind=='good' else 'NOT_FOUND' if kind=='none' else 'UNKNOWN')
-    assert cursor.q.strip().startswith('SELECT') and cursor.args==('vekprom',cap.fingerprint,cap.requested_url,'987')
+    assert cursor.q.strip().startswith('SELECT') and cursor.args==('vekprom',cap.fingerprint,cap.requested_url,external_id,external_id)
+    assert '%s::text IS NULL' in cursor.q  # Native typed nullable-ID contract; no SQL type ambiguity.
 
 def test_summary_never_counts_failed_http_as_parsed_or_sql():
     summary=phase_summary({'metadata':{'source_runtime':{'processed':3,'parsed_this_job':1,'sql_committed_this_job':0,'request_metrics':{'http_2xx':2}}}})

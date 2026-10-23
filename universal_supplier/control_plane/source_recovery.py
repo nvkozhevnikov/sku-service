@@ -826,6 +826,11 @@ def continuation_receipts(value,code,owner,input_sha,state):
         if (item['source'],item['owner_job_id'],item['input_sha256'])!=(code,owner,input_sha):continue
         row=state['terminal'].get(item['url'])
         if row and row['state']=='QUARANTINED':continue
+        if item.get('kind')=='operator-scope-quarantine/v1':
+            require(row==item['failed_row'] and row['state']=='UNCERTAIN',
+                    'RECOVERY_SCOPE_DECISION_CHANGED')
+            overrides[item['url']]=scope_quarantine_receipt(item)
+            continue
         require(row==item['failed_row'] and row['state']=='FAILED','RECOVERY_QUARANTINE_EVIDENCE_CHANGED')
         capture=item['captured_receipt'];meta=capture['original_capture_metadata']
         require(capture in row['history'] and capture['state']=='HTTP_CAPTURED_NOT_COMMITTED' and
@@ -837,6 +842,56 @@ def continuation_receipts(value,code,owner,input_sha,state):
             'reason':row['receipt']['reason'],'operator_authorized':True}
         overrides[item['url']]=proposed
     return overrides
+
+
+def scope_quarantine_receipt(item):
+    """An explicit signed decision is not a capture or a successful ingest."""
+    decision=item['decision']
+    require(decision['action']=='QUARANTINE_WITHOUT_RETRY' and
+            decision['url']==item['url']==item['entry']['url'] and
+            decision['source']==item['source'] and decision['owner_job_id']==item['owner_job_id'] and
+            item['failed_row']['receipt']['origin']=={'source':item['source'],'job_id':item['owner_job_id'],'manifest_sha256':item['input_sha256']} and
+            decision['reason']=='ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH' and
+            item['failed_row']['receipt']['reason']==decision['reason'] and
+            item['failed_row']['state']=='UNCERTAIN' and
+            file_sha(decision['authorization_path'])==decision['authorization_sha256'],
+            'RECOVERY_SCOPE_DECISION_INVALID')
+    return {'url':item['url'],'state':'QUARANTINED',
+        'origin':{'source':item['source'],'job_id':item['owner_job_id'],'manifest_sha256':item['input_sha256']},
+        'isolation':{'format':'source-url-isolation/v1','category':'operator_scope',
+            'before_ingest':True,'operator_authorized':True,'reason':decision['reason'],
+            'decision_sha256':digest(item),'http_response_available':False}}
+
+
+def approved_scope_item(receipt,entry):
+    value,_=approval()  # Exact operator HEAD/SHA, engine and deadline guard.
+    matches=[i for i in value['continuation']['quarantine']
+        if i.get('kind')=='operator-scope-quarantine/v1' and i['url']==entry['url']
+        and scope_quarantine_receipt(i)==receipt]
+    require(len(matches)==1,'RECOVERY_SCOPE_DECISION_NOT_APPROVED')
+    item=matches[0]
+    require(entry==item['entry'],'RECOVERY_SCOPE_ENTRY_CHANGED')
+    return item
+
+
+def scope_sql_absent(cursor,item):
+    """No replacement identity, source edits or unreceipted write can pass."""
+    d=item['decision']
+    cursor.execute('''SELECT md5(to_jsonb(sp)::text) FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+        WHERE s.code=%s AND sp.id=%s AND sp.external_id=%s''',
+        (item['source'],item['entry']['source_product_id'],item['entry']['source_external_id']))
+    require(cursor.fetchall()==[(item['source_row_md5'],)],'RECOVERY_SCOPE_SOURCE_CHANGED')
+    cursor.execute('''SELECT count(*) FROM supplier_http_captures c JOIN suppliers s ON s.id=c.supplier_id
+        WHERE s.code=%s AND c.requested_url=%s AND c.observed_at>=%s''',
+        (item['source'],item['url'],item['attempt_started_at']))
+    require(cursor.fetchone()==(0,),'RECOVERY_SCOPE_SQL_CAPTURE_EXISTS')
+    cursor.execute('''SELECT count(*) FROM offer_commercial_observations WHERE source_product_id=%s AND observed_at>=%s''',
+        (item['entry']['source_product_id'],item['attempt_started_at']))
+    require(cursor.fetchone()==(0,),'RECOVERY_SCOPE_SQL_OBSERVATION_EXISTS')
+    cursor.execute('SELECT count(*) FROM entity_change_history WHERE crawl_run_id=%s AND source_product_id=%s',
+        (d['run_id'],item['entry']['source_product_id']))
+    require(cursor.fetchone()==(0,),'RECOVERY_SCOPE_SQL_HISTORY_EXISTS')
+    return True
 
 
 def continuation_invariants(cursor,value,config):
@@ -903,10 +958,18 @@ def validate_continuation(cursor,snapshot,parent_id,config,lock_parent,value,sha
                 'RECOVERY_CHECKPOINT_CHANGED')
     original=read_input(snapshot['supplier_code'],owner,input_sha)
     require(original==snapshot['source_input'],'RECOVERY_INPUT_NOT_APPROVED')
+    for item in value['continuation']['quarantine']:
+        if item.get('kind')=='operator-scope-quarantine/v1' and item['owner_job_id']==owner:
+            require(item['source']==snapshot['supplier_code'] and item['input_sha256']==input_sha and
+                    item['entry'] in original['entries'],'RECOVERY_SCOPE_ENTRY_CHANGED')
+            continuation_receipts(value,item['source'],owner,input_sha,cp)
+            scope_sql_absent(cursor,item)
     verify_resume(snapshot['supplier_code'],owner,input_sha,original,config)
     return {'kind':'continuation','parent_job_id':parent_id,'owner_job_id':owner,'run_id':row[1],
             'approval_sha256':sha,'input_sha256':input_sha,'runtime_sha256':digest(runtime),
-            'allowed_cached_uncertain':sorted(allowed)}
+            'allowed_cached_uncertain':sorted(allowed),
+            'blocked_scope_urls':sorted(i['url'] for i in value['continuation']['quarantine']
+                if i.get('kind')=='operator-scope-quarantine/v1' and i['source']==snapshot['supplier_code'])}
 
 
 def recover_continuation(queue,value,sha):
@@ -954,7 +1017,7 @@ def recover_continuation(queue,value,sha):
     return {'batch_id':value['batch_id'],'resumed_partial':resumed,'retried_roots':retried,'worker_started':False}
 
 
-def prepare_continuation(queue,previous,previous_sha,quarantine_urls):
+def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=()):
     """Read-only, concrete current-batch plan; exact HEAD/SHA still unconfirmed."""
     from . import source_batch as batch
     from .source_runtime import job_dir
@@ -963,6 +1026,8 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls):
     require(value.get('format')=='live11-recovery/v1',
             'RECOVERY_PREVIOUS_APPROVAL_FORMAT')
     prior_plan=value.get('continuation')
+    require(len(scope_decisions)<=1,'RECOVERY_SCOPE_DECISION_COUNT')
+    previous_scope=[i for i in (prior_plan or {}).get('quarantine',[]) if i.get('kind')=='operator-scope-quarantine/v1']
     extra={'format':'live11-continuation/v1','batch_id':value['batch_id'],'phases':{},'quarantine':[],
            'historical_envelopes':[],'manual_hashes':{},'mappings1282':(prior_plan or value['post_stop'])['mappings1282']}
     with queue._connect() as c,c.cursor() as q:
@@ -971,6 +1036,12 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls):
         require(not q.fetchall(),'RECOVERY_ACTIVE_JOBS')
         q.execute('SELECT id,code,enabled,rate_settings,crawl_settings FROM suppliers ORDER BY code')
         require(normal(q.fetchall())==value['settings_before'],'RECOVERY_SETTINGS_BASELINE_DRIFT')
+        for item in previous_scope:
+            cp=json.loads((job_dir(item['source'],item['owner_job_id'])/'checkpoint.json').read_text(encoding='utf-8'))
+            check=deepcopy(cp);checksum=check.pop('checksum')
+            require(digest(check)==checksum and cp['terminal'][item['url']]['receipt']==scope_quarantine_receipt(item),
+                    'RECOVERY_SCOPE_DECISION_CHANGED')
+            scope_sql_absent(q,item);extra['quarantine'].append(deepcopy(item))
         q.execute('''SELECT j.id,j.supplier_id,j.status,j.crawl_run_id,j.settings_snapshot,r.metadata
             FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
             WHERE j.settings_snapshot->'source_batch'->>'id'=%s ORDER BY j.id''',(value['batch_id'],))
@@ -1011,6 +1082,28 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls):
             require(digest(check)==checksum and not cp['inflight'] and cp['manifest_sha256']==digest(snap['source_input']),
                     'RECOVERY_CHECKPOINT_CHECKSUM')
             initial.update(checkpoint_sha256=file_sha(folder/'checkpoint.json'),runtime_sha256=digest(rt))
+            for decision in scope_decisions:
+                if decision['job_id']!=jid:continue
+                require(decision['batch_id']==value['batch_id'] and decision['run_id']==run and
+                        decision['source']==snap['supplier_code'] and decision['owner_job_id']==owner and
+                        decision['action']=='QUARANTINE_WITHOUT_RETRY', 'RECOVERY_SCOPE_DECISION_OWNER')
+                url=decision['url'];entry=next((e for e in snap['source_input']['entries'] if e['url']==url),None)
+                row=cp['terminal'].get(url)
+                require(entry is not None and row and row['state']=='UNCERTAIN' and
+                        row['receipt'].get('reason')=='ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH' and
+                        not row['receipt'].get('original_capture_metadata') and
+                        all(h['state']=='UNCERTAIN' for h in row['history']) and
+                        rt['termination_reason']=='CANARY_URL_OUTSIDE_FROZEN_BATCH',
+                        'RECOVERY_SCOPE_DECISION_NOT_EXACT')
+                q.execute('SELECT started_at FROM crawl_runs WHERE id=%s',(run,))
+                started=q.fetchone()[0].isoformat()
+                q.execute('SELECT md5(to_jsonb(sp)::text) FROM source_products sp WHERE sp.id=%s',(entry['source_product_id'],))
+                source_hash=q.fetchone()[0]
+                item={'kind':'operator-scope-quarantine/v1','source':snap['supplier_code'],'owner_job_id':owner,
+                    'input_sha256':cp['manifest_sha256'],'url':url,'entry':entry,'failed_row':row,
+                    'attempt_started_at':started,'source_row_md5':source_hash,'decision':deepcopy(decision)}
+                scope_quarantine_receipt(item);scope_sql_absent(q,item)
+                extra['quarantine'].append(item)
             for url,row in cp['terminal'].items():
                 if row['state']=='FAILED':
                     require(url in quarantine_urls,'RECOVERY_UNAPPROVED_FAILED_OR_UNCERTAIN')
@@ -1021,7 +1114,7 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls):
                             'RECOVERY_QUARANTINE_CAPTURE_CHANGED')
                     extra['quarantine'].append({'source':snap['supplier_code'],'owner_job_id':owner,
                         'input_sha256':cp['manifest_sha256'],'url':url,'failed_row':row,'captured_receipt':capture})
-        require({item['url'] for item in extra['quarantine']}==set(quarantine_urls),'RECOVERY_QUARANTINE_SCOPE_CHANGED')
+        require({item['url'] for item in extra['quarantine']}==set(quarantine_urls)|{d['url'] for d in scope_decisions}|{i['url'] for i in previous_scope},'RECOVERY_QUARANTINE_SCOPE_CHANGED')
         require(len(extra['phases'])==22,'RECOVERY_EXPECTS_22_PHASES')
         for table in ('review_decisions','candidate_rejections'):
             q.execute(f'''SELECT count(*),md5(coalesce(string_agg(md5(to_jsonb(t)::text),''

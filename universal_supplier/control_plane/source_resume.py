@@ -27,6 +27,10 @@ def original_capture_present(receipt,entry):
 
 
 def quarantine_evidence_present(receipt,entry):
+    if receipt.get('isolation',{}).get('category')=='operator_scope':
+        from .source_recovery import approved_scope_item
+        try:approved_scope_item(receipt,entry);return True
+        except (PermissionError,ValueError,KeyError,OSError):return False
     if receipt.get('isolation',{}).get('category')!='http':return original_capture_present(receipt,entry)
     record=receipt.get('http_evidence') or {}
     try:
@@ -63,7 +67,7 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
             if state=='HTTP_CAPTURED_NOT_COMMITTED' and not original_capture_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not quarantine_evidence_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not (receipt.get('isolation',{}).get('before_ingest') is True and
-                    receipt['isolation'].get('category') in ('parse','identity','http','matching')):state='UNCERTAIN'
+                    receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope')):state='UNCERTAIN'
             if state=='QUARANTINED' and receipt['isolation']['category']=='matching':
                 proof=receipt['isolation'].get('rejection_proof',{})
                 if not (proof.get('rollback_verified') is True and proof.get('sql_absent') is True and
