@@ -127,7 +127,13 @@ def parse_bekamak_official_detail(source: str, *, source_url: str | None = None)
         raise ValueError("official JSON-LD product identity is not unique")
     record = matching[0]
     model = normalise_model(title)
-    if normalise_model(str(record.get("name") or "")) != model or normalise_model(str(record.get("sku") or "")) != model:
+    sku_model = normalise_model(str(record.get("sku") or ""))
+    # The captured 613vt page uses its URL-local slug as schema SKU, while
+    # both primary H1 and schema name explicitly identify BMSY-613VT. Keep
+    # the full corroborated model; never use the shortened SKU as identity.
+    slug_sku = (model.startswith("BMSY-") and
+                sku_model == normalise_model(slug) == model.removeprefix("BMSY-"))
+    if normalise_model(str(record.get("name") or "")) != model or (sku_model != model and not slug_sku):
         raise ValueError("official title, name and SKU disagree")
     if not re.fullmatch(r"[A-Z0-9]+(?:-[A-Z0-9]+)*", model):
         raise ValueError("official model token is not confirmed")
@@ -151,7 +157,8 @@ def parse_bekamak_official_detail(source: str, *, source_url: str | None = None)
         supplier="beka_mak_tr", source_url=source_url, name=title,
         supplier_model=model, manufacturer_article=model, site_internal_id=slug,
         availability=None, price=price,
-        diagnostics=("manufacturer_reference_not_commercial_offer", "official_schema_availability_not_stock_proof"),
+        diagnostics=("manufacturer_reference_not_commercial_offer", "official_schema_availability_not_stock_proof") +
+                    (("official_slug_sku_full_model_corroborated",) if slug_sku else ()),
         description_text=str(record.get("description") or "").strip(),
         technical_properties=properties, source_images=images,
         source_category=category[0], source_category_url=category[1],
