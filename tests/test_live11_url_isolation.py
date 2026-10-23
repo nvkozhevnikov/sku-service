@@ -139,6 +139,68 @@ def test_sql_probe_types_null_external_id_for_archived_preparse_capture():
     assert 'OR %s::text IS NULL' in query and args[-2:]==(None,None)
 
 
+@pytest.mark.parametrize('status,probe,reason,rows,expected',[
+    ('IDLE','NOT_FOUND','SOURCE_UPDATE_SEMANTIC_CONFLICT:EXISTING_LINK_CONFLICT',[(7188,57914,'146135')],'rejected'),
+    ('IDLE','NOT_FOUND','SOURCE_UPDATE_SEMANTIC_CONFLICT:AMBIGUOUS_SAVED_BRAND',[(7188,57914,'146135')],'rejected'),
+    ('INERROR','NOT_FOUND','SOURCE_UPDATE_SEMANTIC_CONFLICT:EXISTING_LINK_CONFLICT',[(7188,57914,'146135')],'ROLLBACK_NOT_PROVEN'),
+    ('IDLE','UNKNOWN','SOURCE_UPDATE_SEMANTIC_CONFLICT:EXISTING_LINK_CONFLICT',[(7188,57914,'146135')],'SQL_NOT_PROVEN'),
+    ('IDLE','COMMITTED','SOURCE_UPDATE_SEMANTIC_CONFLICT:EXISTING_LINK_CONFLICT',[(7188,57914,'146135')],'SQL_NOT_PROVEN'),
+    ('IDLE','NOT_FOUND','SOURCE_UPDATE_SEMANTIC_CONFLICT:EXISTING_LINK_CONFLICT',[],'MAPPING_NOT_PROVEN'),
+    ('IDLE','NOT_FOUND','SOURCE_UPDATE_MAPPING_CONFLICT',[(7188,57914,'146135')],'SOURCE_UPDATE_MAPPING_CONFLICT'),
+])
+def test_actual_kami_link_rejection_only_isolates_proven_rollback(status,probe,reason,rows,expected):
+    from types import SimpleNamespace
+    from psycopg.pq import TransactionStatus
+    from universal_supplier.control_plane.source_backend import SourceBackend,SourceUpdateRejected
+    from universal_supplier.control_plane.source_runtime import restore_capture
+    from universal_supplier.control_plane.source_jobs import parse_existing
+    saved=json.loads(gzip.decompress((FIX.parent/'kami_linked_rejection.json.gz').read_bytes()))
+    receipt=saved['receipt'];capture=restore_capture(receipt['original_capture_metadata'])
+    body=base64.b64decode(saved['body_base64']);assert hashlib.sha256(body).hexdigest()==capture.evidence_sha256
+    card=parse_existing('kami',body.decode('utf-8'),capture.final_url)
+    assert card.external_id=='variant:9833201'
+    class Cursor:
+        def __enter__(self):return self
+        def __exit__(self,*a):pass
+        def execute(self,query,args):assert args==('kami',card.external_id)
+        def fetchall(self):return rows
+    def guarded(*a,**kw):raise RuntimeError(reason)
+    connection=SimpleNamespace(info=SimpleNamespace(transaction_status=getattr(TransactionStatus,status)),cursor=Cursor)
+    backend=SourceBackend.__new__(SourceBackend);backend.code='kami';backend.run_id=33
+    backend.repo=SimpleNamespace(connection=connection,persist_kami_observation=guarded)
+    backend.probe=lambda e,r:probe
+    if expected=='rejected':
+        with pytest.raises(SourceUpdateRejected) as error:backend.persist(card,capture)
+        assert error.value.proof=={'rollback_verified':True,'sql_absent':True,'source_product_id':7188,'catalog_product_id':57914,'sterbrust_product_id':'146135'}
+    else:
+        with pytest.raises(RuntimeError,match=expected) as error:backend.persist(card,capture)
+        assert not isinstance(error.value,SourceUpdateRejected)
+
+
+def test_native_runtime_preserves_link_by_quarantining_rejected_update():
+    from universal_supplier.control_plane.source_backend import SourceUpdateRejected
+    backend=Backend()
+    def reject(*a):raise SourceUpdateRejected('SOURCE_UPDATE_SEMANTIC_CONFLICT:EXISTING_LINK_CONFLICT',
+        {'rollback_verified':True,'sql_absent':True,'source_product_id':7188,'catalog_product_id':57914,'sterbrust_product_id':'146135'})
+    backend.persist=reject
+    run,job,backend,calls,url=setup('kami',backend=backend)
+    result=run()
+    assert result['status']=='succeeded' and not result['collection_complete'] and result['sql_committed']==0,result
+    assert len(result['quarantined'])==1 and result['quarantined'][0]['isolation']['category']=='matching'
+    assert result['quarantined'][0]['isolation']['rejection_proof']['sterbrust_product_id']=='146135'
+    assert not backend.writes and not backend.matches and result['termination_reason'] is None
+
+
+def test_final_unknown_quarantine_sql_probe_is_global_stop():
+    backend=Backend();backend.probe=lambda *a:'UNKNOWN'
+    run,job,backend,calls,url=execution(backend=backend)
+    snapshot=deepcopy(job.settings_snapshot)
+    snapshot['source_input']['entries']=[e for e in snapshot['source_input']['entries'] if e['url']==BAD]
+    result=run(replace(job,settings_snapshot=snapshot))
+    assert result['status']=='partial' and result['resume_uncertain']
+    assert result['termination_reason'] in ('SQL_COMMIT_NOT_PROVEN','UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR')
+
+
 def test_bounded_continuation_cannot_extend_scope_sha_or_attempts(monkeypatch):
     env={'scope_sha256':'scope','attempt':4,'id':'batch'};previous={'source_batch':env}
     scopes=['scope']+[str(n) for n in range(21)]

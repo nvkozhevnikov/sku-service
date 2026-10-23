@@ -6,6 +6,13 @@ Construction is deferred until explicit runtime SQL permission passes.
 from datetime import datetime,timezone
 import time
 
+
+class SourceUpdateRejected(RuntimeError):
+    """Known semantic rejection, AFTER proven rollback/no capture SQL write."""
+    def __init__(self,reason,proof):
+        super().__init__(reason)
+        self.proof=proof
+
 class SourceBackend:
     def __init__(self,config,code):
         from universal_supplier.postgres import PostgresRepository
@@ -29,8 +36,34 @@ class SourceBackend:
     def persist(self,product,capture):
         if self.code in ('partner_st','optimum'):return self.persist_native(product,capture)
         if self.run_id is None:raise RuntimeError('SOURCE_RUN_NOT_STARTED')
-        if self.code=='kami':return self.repo.persist_kami_observation(product,capture,source_run_id=self.run_id)
-        return self.repo.persist_commercial_observation(product,capture,source_run_id=self.run_id)
+        try:
+            if self.code=='kami':return self.repo.persist_kami_observation(product,capture,source_run_id=self.run_id)
+            return self.repo.persist_commercial_observation(product,capture,source_run_id=self.run_id)
+        except RuntimeError as error:
+            # This exact guard is raised before source updates by prepare_update,
+            # under the passive writer's own transaction. Do NOT generalize to
+            # permission, target/URL/mapping errors, or arbitrary SQL failures.
+            if not str(error).startswith('SOURCE_UPDATE_SEMANTIC_CONFLICT:'):raise
+            from psycopg.pq import TransactionStatus
+            if self.repo.connection.info.transaction_status!=TransactionStatus.IDLE:
+                raise RuntimeError('SEMANTIC_REJECTION_ROLLBACK_NOT_PROVEN') from error
+            from dataclasses import asdict
+            fields=asdict(capture);fields['observed_at']=capture.observed_at.isoformat()
+            receipt={'capture_fingerprint':capture.fingerprint,'original_capture_metadata':fields,'external_id':product.external_id}
+            if self.probe({'url':capture.requested_url},receipt)!='NOT_FOUND':
+                raise RuntimeError('SEMANTIC_REJECTION_SQL_NOT_PROVEN') from error
+            with self.repo.connection.cursor() as q:
+                q.execute('''SELECT sp.id,sp.catalog_product_id,sb.sterbrust_product_id
+                    FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+                    JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id
+                    WHERE s.code=%s AND sp.external_id=%s AND sp.external_id_is_stable''',
+                    (self.code,product.external_id))
+                mappings=q.fetchall()
+            if len(mappings)!=1 or not all(x is not None for x in mappings[0]):
+                raise RuntimeError('SEMANTIC_REJECTION_MAPPING_NOT_PROVEN') from error
+            source_id,catalog_id,target=mappings[0]
+            raise SourceUpdateRejected(str(error),{'rollback_verified':True,'sql_absent':True,
+                'source_product_id':source_id,'catalog_product_id':catalog_id,'sterbrust_product_id':target}) from error
     def persist_native(self,card,capture):
         """Native bounded ingest and receipt ledger commit in ONE transaction.
 

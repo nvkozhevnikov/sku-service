@@ -255,3 +255,34 @@ continuation as its proof-chain input. It resnapshots current native parent/job/
 checkpoint/SQL evidence, preserving or reducing the previously signed phase
 attempt ceilings, original22scopes/T0/deadline/matrix/host/rate. It cannot replenish
 attempts. New exact HEAD/engine/manifest SHA confirmation remains mandatory.
+
+
+## Proven semantic update rejection — 2026-10-23
+
+Session3a57fc4b… reached422COMMITTED/319unique,3native phases succeeded,19TR
+quarantines; then KAMI variant:9833201 / source7188 / protected ProductID146135
+triggered SOURCE_UPDATE_SEMANTIC_CONFLICT:EXISTING_LINK_CONFLICT. Current captured
+G5-42Y standard conflicts with its retained catalogue family G5-Y/G5-42Y. The
+source_update guard and all1282mappings remain unchanged. Native transaction
+rolled back, exact capture/observation absent; no model/target override allowed.
+
+SourceBackend now exposes only the unique native SOURCE_UPDATE_SEMANTIC_CONFLICT:
+rejection as an isolatable matching quarantine AFTER TransactionStatus.IDLE,
+exact SQL capture NOT_FOUND, and one preserved mapped source/target readback.
+Non-idle rollback, UNKNOWN/COMMITTED receipt, missing mapping, permissions,
+URL/namespace/target/mapping errors remain global STOP. Matching rules/F01/F03
+and source_update.py are unchanged. No alternative writer/ingest path exists.
+The leased runtime appends QUARANTINED with rejection proof and mapping evidence;
+no durable ingest, canonical rewrite or AUTO occurs for the rejected card.
+Matching quarantines are not source-layout failures and do not dilute SQL proof.
+Incomplete/invalid matching rejection proof classifies UNCERTAIN and blocks
+completion/automatic RESUME; final reconciliation cannot advance an uncertainphase.
+Existing accepted IDs/manual locks remain operator authority; quarantine requires
+REVIEW before any correction of that mapping. Native matching only includes
+actually COMMITTED cards. Old historical buckets are not fresh matching.
+
+Real captured KAMI regression fixture retains bytes/hash/IDs; offline tests cover
+rollback/status/receipt/mapping failures, unknown SQL and preservation of146135.
+After new exact HEAD/SHA confirmation the same batch resumes from current owners,
+without re-GET of COMMITTED or the saved KAMI/Vek captures. Prior attempt ceilings
+remain R8/D4; proof renewal never replenishes attempts, T0/deadline or scopes.

@@ -63,7 +63,11 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
             if state=='HTTP_CAPTURED_NOT_COMMITTED' and not original_capture_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not quarantine_evidence_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not (receipt.get('isolation',{}).get('before_ingest') is True and
-                    receipt['isolation'].get('category') in ('parse','identity','http')):state='UNCERTAIN'
+                    receipt['isolation'].get('category') in ('parse','identity','http','matching')):state='UNCERTAIN'
+            if state=='QUARANTINED' and receipt['isolation']['category']=='matching':
+                proof=receipt['isolation'].get('rejection_proof',{})
+                if not (proof.get('rollback_verified') is True and proof.get('sql_absent') is True and
+                        all(proof.get(k) is not None for k in ('source_product_id','catalog_product_id','sterbrust_product_id'))):state='UNCERTAIN'
         output.append({'entry':deepcopy(entry),'receipt':deepcopy(receipt),'state':state,'origin':dict(origin)})
     return output
 

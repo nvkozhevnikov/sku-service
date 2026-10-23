@@ -17,6 +17,7 @@ from .source_resume import SourceCheckpoint, classify, pending_manifest, digest
 from .source_discovery import HOSTS, root_urls, validate_node, decode_node
 from .source_jobs import RUNTIME_SOURCES, NATIVE_SOURCES, validate_url, parse_existing
 from .rate_control import SystemClock
+from .source_backend import SourceUpdateRejected
 from universal_supplier.commercial_persistence import HttpCapture, product_card_from_snapshot
 from universal_supplier.http_capture import UrllibPublicHttpClient, MAX_RESPONSE_BYTES, sanitise_html
 from universal_supplier.ltt_uss_capture import sanitise_for_charset, charset_from_response
@@ -30,9 +31,10 @@ AGENT = 'UniversalSupplierReadOnly/1.0'
 
 class CardExtractionError(ValueError):
     """Only pre-ingest extraction/identity errors are isolatable, never SQL errors."""
-    def __init__(self, reason, category='parse'):
+    def __init__(self, reason, category='parse',proof=None):
         super().__init__(reason)
         self.category=category
+        self.proof=proof
 
 
 def mass_identity_failure(terminal,gate_size):
@@ -350,7 +352,11 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     if reason:
                         fetcher.stop(str(reason));raise RuntimeError(str(reason))
                     began=time.perf_counter();known_before=counts_known;counts_known=False
-                    written=backend.persist(product,cap);sql_seconds+=time.perf_counter()-began
+                    try:written=backend.persist(product,cap)
+                    except SourceUpdateRejected as error:
+                        counts_known=known_before
+                        raise CardExtractionError(str(error),'matching',error.proof) from error
+                    finally:sql_seconds+=time.perf_counter()-began
                     count=(written or {}).get('ingest_counts')
                     if count is not None:
                         count=count if isinstance(count,dict) else vars(count)
@@ -372,11 +378,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     value=receipt_for(entry['url'],'QUARANTINED',cap,code,owner,sha,entry.get('source_external_id'))
                 value['isolation']={'format':'source-url-isolation/v1','before_ingest':True,
                     'category':category or error.category,'reason':str(error)}
+                if error.proof is not None:value['isolation']['rejection_proof']=error.proof
                 cp.record_terminal([value]);isolated.append(value)
                 # A coherent page with a contradictory model is a semantic
                 # quarantine, not evidence that the parser/site structure broke.
                 # Keep the original consecutive threshold for parse/HTTP failures.
-                consecutive_card_errors=0 if value['isolation']['category']=='identity' else consecutive_card_errors+1
+                consecutive_card_errors=0 if value['isolation']['category'] in ('identity','matching') else consecutive_card_errors+1
                 if consecutive_card_errors>=rate.consecutive_error_threshold or mass_identity_failure(cp.state['terminal'],gate_size):
                     fetcher.stop('SOURCE_CARD_ERROR_THRESHOLD')
             for item in offline:
@@ -420,6 +427,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     if backend:backend.progress({'collection_mode':mode,'phase':'PRODUCTS','safety_gate_passed':gate_passed,'approved_total_cap':limit,'found':len(entries),'processed':sum(x['state']!='NOT_REQUESTED' for x in cp.state['terminal'].values()),'parsed_this_job':len(rows),'remaining':len(cp.state['frontier']),'sql_committed_this_job':len(committed),'sql_committed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values()),'request_metrics':fetcher.metrics.as_metadata(),'http_seconds':http_seconds,'http_cards_per_minute':None if http_seconds<=0 else 60*sum(u in byurl for u in records)/http_seconds})
                 termination=termination or fetcher.stop_reason or ('PRODUCT_BATCH_BUDGET' if cp.state['frontier'] else None)
             classified,plan=reconcile()
+            if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR')
             resume_safe=plan['automatic_resume_allowed'] and bool(cp.state['frontier'] or plan['offline_pending'])
         else:
             plan={'uncertain':[],'failed_requires_decision':[]};resume_safe=bool(termination=='DISCOVERY_PAGE_BUDGET' and not discovery.state['inflight'])
@@ -441,7 +449,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     except Exception as e:
         termination=(fetcher.stop_reason if fetcher else None) or str(e) or type(e).__name__
         errors.append({'type':type(e).__name__,'reason':str(e)})
-        resume_safe=False;plan={'uncertain':list(cp.state['inflight']),'failed_requires_decision':[]}
+        resume_safe=False
+        prior_plan=locals().get('plan') or {}
+        plan={**prior_plan,'uncertain':sorted(set(cp.state['inflight'])|set(prior_plan.get('uncertain',[]))),
+            'failed_requires_decision':prior_plan.get('failed_requires_decision',[])}
     finally:
         # Result always describes actual commits and checkpoints, even if SQL
         # raised after committing but before a local terminal receipt was saved.
