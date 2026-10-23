@@ -174,6 +174,21 @@ class SourceCheckpoint:
             self.state['terminal'][url]={'state':'NOT_REQUESTED','receipt':deepcopy(receipt),'history':history}
             self.state['inflight'].pop(url)
             if url not in self.state['frontier']:self.state['frontier'].insert(0,url)
+    def quarantine_unrequested(self,receipt):
+        """Only reuse an approved prior refusal; never invent transport/UNCERTAIN."""
+        from .source_recovery import approved_scope_item
+        with self._change():
+            url=receipt['url'];self.validator(url)
+            if (url not in self.state['frontier'] or url in self.state['inflight'] or
+                    receipt.get('state')!='QUARANTINED' or
+                    receipt.get('isolation',{}).get('reused_refusal') is not True or
+                    receipt.get('origin')!={'source':self.state['source'],'job_id':self.state['job_id'],'manifest_sha256':self.state['manifest_sha256']}):
+                raise ValueError('REUSED_SCOPE_REFUSAL_REQUIRED')
+            approved_scope_item(receipt,{'url':url})
+            previous=self.state['terminal'].get(url,{'history':[]})
+            if previous.get('state') not in (None,'NOT_REQUESTED'):raise ValueError('REUSED_SCOPE_CANNOT_DOWNGRADE')
+            self.state['frontier'].remove(url)
+            self.state['terminal'][url]={'state':'QUARANTINED','receipt':deepcopy(receipt),'history':previous['history']+[deepcopy(receipt)]}
     def complete_discovery_node(self,url,children,*,evidence_sha256,products=()):
         children=list(children)
         if len(evidence_sha256)!=64 or any(c not in '0123456789abcdef' for c in evidence_sha256):raise ValueError('DISCOVERY_EVIDENCE_SHA256')

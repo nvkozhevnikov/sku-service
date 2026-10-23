@@ -25,6 +25,7 @@ ENGINE_CHANGES = {
     'universal_supplier/control_plane/source_controls.py',
     'universal_supplier/control_plane/source_resume.py',
     'universal_supplier/control_plane/source_backend.py',
+    'universal_supplier/control_plane/host_fetch.py',
     'universal_supplier/adapters/bekamak_official.py',
 }
 REVIEWED_PARSER_SHA = 'bba4ffdea6591488f0873243b5106426056ee821d8edd8741f28dd2c7f09d4f4'
@@ -787,7 +788,11 @@ def continuation_rule(value,scope):
             len(plan.get('mappings1282',[]))==1282,'RECOVERY_CONTINUATION_PROOF_INCOMPLETE')
     rule=plan.get('phases',{}).get(scope)
     require(rule and scope in value['scope_hashes'] and type(rule.get('max_attempt')) is int and
-            1<=rule['max_attempt']<=8,'RECOVERY_CONTINUATION_BOUND')
+            1<=rule['max_attempt']<=9,'RECOVERY_CONTINUATION_BOUND')
+    if rule['max_attempt']==9:
+        policy=scope_policy(value)
+        require(rule.get('phase')=='REFRESH' and rule.get('r9_parent_id') in policy['extra_refresh_parents'],
+                'RECOVERY_R9_NOT_APPROVED')
     return rule
 
 
@@ -851,7 +856,7 @@ def scope_quarantine_receipt(item):
             decision['url']==item['url']==item['entry']['url'] and
             decision['source']==item['source'] and decision['owner_job_id']==item['owner_job_id'] and
             item['failed_row']['receipt']['origin']=={'source':item['source'],'job_id':item['owner_job_id'],'manifest_sha256':item['input_sha256']} and
-            decision['reason']=='ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH' and
+            decision['reason'] in ('ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH','FrozenScopeRefusal:CANARY_URL_OUTSIDE_FROZEN_BATCH') and
             item['failed_row']['receipt']['reason']==decision['reason'] and
             item['failed_row']['state']=='UNCERTAIN' and
             file_sha(decision['authorization_path'])==decision['authorization_sha256'],
@@ -865,18 +870,48 @@ def scope_quarantine_receipt(item):
 
 def approved_scope_item(receipt,entry):
     value,_=approval()  # Exact operator HEAD/SHA, engine and deadline guard.
+    reused=receipt.get('isolation',{}).get('reused_refusal') is True
+    def expected(item,base):
+        if reused:
+            origin=receipt['origin']
+            phases=[p['snapshot']['source_batch']['next_snapshot']['source_input'] for p in value['parents']
+                    if p['snapshot']['supplier_code']==item['source']]
+            require(len(phases)==1 and origin['source']==item['source'] and
+                    origin['manifest_sha256']==digest(phases[0]),'RECOVERY_SCOPE_REUSE_NOT_APPROVED')
+            base=deepcopy(base);base['origin']=origin;base['isolation']['reused_refusal']=True
+        return base
     matches=[i for i in value['continuation']['quarantine']
         if i.get('kind')=='operator-scope-quarantine/v1' and i['url']==entry['url']
-        and scope_quarantine_receipt(i)==receipt]
+        and expected(i,scope_quarantine_receipt(i))==receipt]
+    if not matches and receipt.get('isolation',{}).get('policy_evidence'):
+        ref=receipt['isolation']['policy_evidence'];path=Path(ref['path'])
+        require(file_sha(path)==ref['sha256'],'RECOVERY_SCOPE_POLICY_EVIDENCE_CHANGED')
+        item=json.loads(path.read_text(encoding='utf-8'))
+        from .source_runtime import job_dir
+        require(path.resolve().parent==(job_dir(item['source'],item['owner_job_id'])/'scope-refusals').resolve(),
+                'RECOVERY_SCOPE_POLICY_NAMESPACE')
+        rule=scope_policy_entry(value,item['source'],item['entry'])
+        require(item['source_row_md5']==rule['source_row_md5'] and item['input_sha256']==rule['input_sha256'] and
+                item['decision']['authorization_sha256']==scope_policy(value)['authorization_sha256'] and
+                expected(item,policy_scope_receipt(item,ref))==receipt,'RECOVERY_SCOPE_POLICY_NOT_APPROVED')
+        matches=[item]
     require(len(matches)==1,'RECOVERY_SCOPE_DECISION_NOT_APPROVED')
     item=matches[0]
-    require(entry==item['entry'],'RECOVERY_SCOPE_ENTRY_CHANGED')
+    require(entry==item['entry'] or reused and entry['url']==item['url'],'RECOVERY_SCOPE_ENTRY_CHANGED')
     return item
 
 
 def scope_sql_absent(cursor,item):
     """No replacement identity, source edits or unreceipted write can pass."""
     d=item['decision']
+    if item.get('policy_case'):
+        cursor.execute('''SELECT j.crawl_run_id,s.code,r.started_at,j.settings_snapshot FROM crawl_jobs j
+            JOIN suppliers s ON s.id=j.supplier_id JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.id=%s''',(d['job_id'],))
+        row=cursor.fetchone()
+        require(row and row[:2]==(d['run_id'],item['source']) and
+                row[2]==datetime.fromisoformat(item['attempt_started_at']) and
+                row[3]['source_batch']['id']==d['batch_id'] and row[3]['source_batch']['phase']=='REFRESH' and
+                digest(row[3]['source_input'])==item['input_sha256'],'RECOVERY_SCOPE_POLICY_RUN_CHANGED')
     cursor.execute('''SELECT md5(to_jsonb(sp)::text) FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
         WHERE s.code=%s AND sp.id=%s AND sp.external_id=%s''',
         (item['source'],item['entry']['source_product_id'],item['entry']['source_external_id']))
@@ -892,6 +927,87 @@ def scope_sql_absent(cursor,item):
         (d['run_id'],item['entry']['source_product_id']))
     require(cursor.fetchone()==(0,),'RECOVERY_SCOPE_SQL_HISTORY_EXISTS')
     return True
+
+
+def scope_policy(value):
+    policy=value.get('continuation',{}).get('scope_policy')
+    require(policy and policy['format']=='live11-frozen-scope-quarantine/v1' and
+            policy['batch_id']==value['batch_id'] and policy['extra_refresh_parents']==list(range(92,101)) and
+            file_sha(policy['authorization_path'])==policy['authorization_sha256'],
+            'RECOVERY_SCOPE_POLICY_NOT_APPROVED')
+    auth=json.loads(Path(policy['authorization_path']).read_text(encoding='utf-8'))
+    require(auth.get('action')=='FROZEN_REFRESH_SCOPE_QUARANTINE_AND_R9' and auth.get('batch_id')==value['batch_id'] and
+            auth.get('extra_refresh_parents')==policy['extra_refresh_parents'] and
+            auth.get('refresh_max_attempt')==9 and auth.get('discovery_max_attempt')==4,
+            'RECOVERY_SCOPE_POLICY_AUTHORIZATION')
+    return policy
+
+
+def scope_policy_entry(value,code,entry):
+    policy=scope_policy(value)
+    row=policy['entries'].get(code,{}).get(entry['url'])
+    snapshots=[p['snapshot'] for p in value['parents'] if p['snapshot']['supplier_code']==code]
+    require(len(snapshots)==1 and row and row['entry']==entry and entry in snapshots[0]['source_input']['entries'] and
+            row['input_sha256']==digest(snapshots[0]['source_input']) and
+            row['scope_sha256']==snapshots[0]['source_batch']['scope_sha256'],'RECOVERY_SCOPE_POLICY_ENTRY_CHANGED')
+    return row
+
+
+def policy_scope_receipt(item,ref):
+    result=scope_quarantine_receipt(item)
+    result['isolation']['policy_evidence']=deepcopy(ref)
+    return result
+
+
+def record_scope_policy_case(connection,value,job,run_id,owner,input_sha,entry,failed_row,refusal):
+    """Leased runtime only: preserve failed transport, prove no SQL, archive decision."""
+    from .source_runtime import job_dir,frozen_json
+    rule=scope_policy_entry(value,job.supplier_code,entry);policy=scope_policy(value)
+    require(job.settings_snapshot['source_batch']['phase']=='REFRESH' and rule['input_sha256']==input_sha and
+            failed_row['state']=='UNCERTAIN' and refusal.get('reason')=='CANARY_URL_OUTSIDE_FROZEN_BATCH' and
+            len(refusal.get('blocked_target_sha256',''))==64,'RECOVERY_SCOPE_POLICY_REFUSAL_INVALID')
+    with connection.cursor() as q:
+        q.execute('SELECT started_at FROM crawl_runs WHERE id=%s',(run_id,))
+        started=q.fetchone()[0].isoformat()
+        decision={'action':'QUARANTINE_WITHOUT_RETRY','batch_id':value['batch_id'],'source':job.supplier_code,
+            'job_id':job.id,'owner_job_id':owner,'run_id':run_id,'url':entry['url'],
+            'reason':failed_row['receipt']['reason'],
+            'authorization_path':policy['authorization_path'],'authorization_sha256':policy['authorization_sha256']}
+        item={'kind':'operator-scope-quarantine/v1','policy_case':True,'source':job.supplier_code,'owner_job_id':owner,
+            'input_sha256':input_sha,'url':entry['url'],'entry':deepcopy(entry),'failed_row':deepcopy(failed_row),
+            'attempt_started_at':started,'source_row_md5':rule['source_row_md5'],'decision':decision,
+            'refusal':deepcopy(refusal)}
+        scope_quarantine_receipt(item);scope_sql_absent(q,item)
+    path=job_dir(job.supplier_code,owner)/'scope-refusals'/(digest(item)+'.json')
+    frozen_json(path,item)
+    return policy_scope_receipt(item,{'path':str(path),'sha256':file_sha(path)})
+
+
+def scope_policy_exclusions(connection,value,code,entries,owner,input_sha):
+    """Reuse proven REFRESH refusal in DISCOVERY without even a product GET."""
+    if not value.get('continuation',{}).get('scope_policy'):return []
+    scope_policy(value)
+    with connection.cursor() as q:
+        q.execute('''SELECT r.metadata FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id
+            JOIN suppliers s ON s.id=j.supplier_id WHERE s.code=%s AND j.status='succeeded'
+            AND j.settings_snapshot->'source_batch'->>'id'=%s
+            AND j.settings_snapshot->'source_batch'->>'phase'='REFRESH' ORDER BY j.id DESC LIMIT 1''',(code,value['batch_id']))
+        row=q.fetchone()
+    if not row:return []
+    from .source_runtime import job_dir
+    parent=row[0]['source_runtime']['owner_job_id']
+    cp=json.loads((job_dir(code,parent)/'checkpoint.json').read_text(encoding='utf-8'))
+    check=deepcopy(cp);checksum=check.pop('checksum');require(digest(check)==checksum,'RECOVERY_CHECKPOINT_CHECKSUM')
+    result=[]
+    for e in entries:
+        r=cp['terminal'].get(e['url'])
+        if not r or r['state']!='QUARANTINED' or r['receipt'].get('isolation',{}).get('category')!='operator_scope':continue
+        item=approved_scope_item(r['receipt'],scope_policy(value)['entries'][code][e['url']]['entry'])
+        receipt=deepcopy(r['receipt']);receipt['origin']={'source':code,'job_id':owner,'manifest_sha256':input_sha}
+        receipt['isolation']['reused_refusal']=True
+        with connection.cursor() as q:scope_sql_absent(q,item)
+        result.append((e,receipt))
+    return result
 
 
 def continuation_invariants(cursor,value,config):
@@ -1017,7 +1133,7 @@ def recover_continuation(queue,value,sha):
     return {'batch_id':value['batch_id'],'resumed_partial':resumed,'retried_roots':retried,'worker_started':False}
 
 
-def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=()):
+def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=(),policy_authorization=None):
     """Read-only, concrete current-batch plan; exact HEAD/SHA still unconfirmed."""
     from . import source_batch as batch
     from .source_runtime import job_dir
@@ -1030,6 +1146,7 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
     previous_scope=[i for i in (prior_plan or {}).get('quarantine',[]) if i.get('kind')=='operator-scope-quarantine/v1']
     extra={'format':'live11-continuation/v1','batch_id':value['batch_id'],'phases':{},'quarantine':[],
            'historical_envelopes':[],'manual_hashes':{},'mappings1282':(prior_plan or value['post_stop'])['mappings1282']}
+    if (prior_plan or {}).get('scope_policy'):extra['scope_policy']=deepcopy(prior_plan['scope_policy'])
     with queue._connect() as c,c.cursor() as q:
         c.read_only=True;batch.validate_config(queue.config);batch.validate_connection(c)
         q.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running')")
@@ -1052,6 +1169,29 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                     digest(batch.phase_scope(snap))==env['scope_sha256'],'RECOVERY_SCOPE_CHANGED')
             groups.setdefault(env['scope_sha256'],[]).append(row)
             extra['historical_envelopes'].append(digest(env))
+        if policy_authorization:
+            auth=json.loads(Path(policy_authorization).read_text(encoding='utf-8'))
+            require(auth['action']=='FROZEN_REFRESH_SCOPE_QUARANTINE_AND_R9' and auth['batch_id']==value['batch_id'] and
+                    auth['extra_refresh_parents']==list(range(92,101)) and auth['refresh_max_attempt']==9 and
+                    auth['discovery_max_attempt']==4,'RECOVERY_SCOPE_POLICY_AUTHORIZATION')
+            latest_r=[attempts[-1] for attempts in groups.values() if attempts[-1][4]['source_batch']['phase']=='REFRESH' and attempts[-1][2]!='succeeded']
+            require(sorted(r[0] for r in latest_r)==auth['extra_refresh_parents'] and
+                    all(r[4]['source_batch']['attempt']==8 for r in latest_r),'RECOVERY_R9_PARENT_CHANGED')
+            ids=sorted({e['source_product_id'] for p in value['parents'] for e in p['snapshot']['source_input']['entries']})
+            q.execute('''SELECT sp.id,s.code,sp.external_id,md5(to_jsonb(sp)::text) FROM source_products sp
+                JOIN suppliers s ON s.id=sp.supplier_id WHERE sp.id=ANY(%s)''',(ids,))
+            source_rows={r[0]:r[1:] for r in q.fetchall()}
+            entries={}
+            for p in value['parents']:
+                snap=p['snapshot'];code=snap['supplier_code'];entries[code]={}
+                for e in snap['source_input']['entries']:
+                    row=source_rows.get(e['source_product_id'])
+                    require(row and row[:2]==(code,e['source_external_id']),'RECOVERY_SCOPE_POLICY_SOURCE_CHANGED')
+                    entries[code][e['url']]={'entry':deepcopy(e),'source_row_md5':row[2],
+                        'input_sha256':digest(snap['source_input']),'scope_sha256':snap['source_batch']['scope_sha256']}
+            extra['scope_policy']={'format':'live11-frozen-scope-quarantine/v1','batch_id':value['batch_id'],
+                'authorization_path':str(Path(policy_authorization).resolve()),'authorization_sha256':file_sha(policy_authorization),
+                'extra_refresh_parents':auth['extra_refresh_parents'],'entries':entries}
         source_by_scope={phase['source_batch']['scope_sha256']:phase['supplier_code']
             for parent in value['parents'] for phase in
             (parent['snapshot'],parent['snapshot']['source_batch']['next_snapshot'])}
@@ -1063,6 +1203,12 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                 # Renew proof after a technical STOP without replenishing the
                 # already approved per-phase attempt ceiling or time window.
                 rule['max_attempt']=min(rule['max_attempt'],continuation_rule(value,env['scope_sha256'])['max_attempt'])
+                previous_rule=continuation_rule(value,env['scope_sha256'])
+                if previous_rule.get('max_attempt')==9:
+                    rule.update(max_attempt=9,r9_parent_id=previous_rule['r9_parent_id'])
+            if policy_authorization and attempts and attempts[-1][0] in extra['scope_policy']['extra_refresh_parents']:
+                require(env['phase']=='REFRESH','RECOVERY_R9_PHASE_CHANGED')
+                rule.update(max_attempt=9,r9_parent_id=attempts[-1][0])
             extra['phases'][env['scope_sha256']]=rule
             if not attempts or attempts[-1][2]=='succeeded':continue
             jid,sid,status,run,snap,meta=attempts[-1]

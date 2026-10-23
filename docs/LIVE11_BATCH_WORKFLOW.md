@@ -302,3 +302,20 @@ UNCERTAIN states are unchanged. Subsequent phases cannot fetch the same blocked
 URL: encountering it trips `OPERATOR_SCOPE_QUARANTINE_NO_HTTP`, requiring a
 separate decision rather than silently following a redirect or shrinking scope.
 Signed attempt ceilings, original T0/deadline and all identity/SQL guards remain.
+
+## 2026-10-23 — operator-authorized unified refusal policy / R9
+
+The subsequent operator decision authorizes one policy for original frozen
+REFRESH URLs and exactly one additional attempt for parents92–100 (R8→R9;
+DISCOVERY remainsD4). `--scope-policy-authorization` adds the operator artifact
+hash and per-entry source-row hashes to the existing continuation manifest.
+Unknown roles/targets, changed rows, SQL ambiguity, cross-host/unsafe targets,
+unsigned policy/HEAD, and further attempt10 remain STOP. No attempt is replenished.
+
+A structured scope refusal never dispatches its blocked target. The existing
+leased runtime first records UNCERTAIN, verifies exact job/run/original input
+and SQL absence, then appends operator quarantine with immutable refusal evidence.
+No HTTP200/capture/ingest/matching result is invented. DISCOVERY reuses a proven
+REFRESH refusal through the same checkpoint, without another detail GET or a
+fake new transport. All original URLs stay accounted for as quarantine; they
+do not count as COMMITTED or complete clean catalogue coverage.

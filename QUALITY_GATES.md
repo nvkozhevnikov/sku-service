@@ -141,3 +141,20 @@ five obsolete four-parameter SQL assertions were updated to the existing typed
 nullable-ID contract and pass in the52-case follow-up. Three separate UI-auth
 test failures reproduce on prior HEAD016ab79; they are not marked PASS and no
 web/security implementation was changed by this recovery task.
+
+The later explicit operator authorization permits a signed class policy for
+frozen REFRESH scope refusals and R9 only for parents92–100. Required: exact
+frozen entry/identity, preapproved unchanged source-row hash, real job/run/time,
+absence of capture/observation/history, immutable refusal evidence, no blocked
+target dispatch, no HTTP retry/ingest, preserved UNCERTAIN history. Subsequent
+DISCOVERY reuses proof without fetching the same detail. SQL/identity/unsafe
+host/other UNCERTAIN failures remain STOP; D4, original budgets and exact HEAD/SHA
+guards remain. This policy is not authority to follow redirects or expand scope.
+
+Unified policy/R9 final offline QA:132 focused PASS;253 runtime/batch/F01F03/canary
+PASS including2200 saved-model cards/22phases. The3 previously reproduced UI-auth
+baseline failures were explicitly deselected from the latter set and remain
+documented, not converted to PASS. Safe same-host HTTPS target refusals, including
+root redirects, never dispatch; cross-host, credentials, HTTP downgrade, non443
+port, fragment, source drift and any SQL ambiguity remain global STOP. Native
+DISCOVERY reuse adds no new transport/UNCERTAIN and performs no detail GET.

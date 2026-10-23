@@ -35,6 +35,8 @@ def main():
     continuation.add_argument('--quarantine-url',action='append',default=[])
     continuation.add_argument('--scope-quarantine-decision',type=Path,
         help='Explicit operator decision JSON; SELECT proof only, no checkpoint mutation')
+    continuation.add_argument('--scope-policy-authorization',type=Path,
+        help='Exact operator authorization for frozen REFRESH refusal quarantine and bounded R9')
     continuation.add_argument('--output',required=True,type=Path)
     recovery=sub.add_parser('recover',help='WRITE only after explicit same-batch recovery approval')
     recovery.add_argument('--approval',required=True,type=Path)
@@ -51,7 +53,7 @@ def main():
             if args.action=='prepare-continuation':
                 from universal_supplier.control_plane.source_recovery import prepare_continuation
                 decisions=[json.loads(args.scope_quarantine_decision.read_text(encoding='utf-8'))] if args.scope_quarantine_decision else []
-                result=prepare_continuation(PostgresJobQueue(target_config()),args.previous,args.previous_sha256,args.quarantine_url,decisions)
+                result=prepare_continuation(PostgresJobQueue(target_config()),args.previous,args.previous_sha256,args.quarantine_url,decisions,args.scope_policy_authorization)
             else:result=prepare(PostgresJobQueue(target_config()),args.evidence,args.batch_id)
             require(not args.output.exists(),'RECOVERY_OUTPUT_ALREADY_EXISTS')
             args.output.parent.mkdir(parents=True,exist_ok=True)

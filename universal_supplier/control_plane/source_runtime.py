@@ -12,7 +12,7 @@ import hashlib, json, math, os, time, threading
 from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
-from .host_fetch import BoundedHostFetcher, compile_policy, host_key
+from .host_fetch import BoundedHostFetcher, compile_policy, host_key, FrozenScopeRefusal
 from .source_resume import SourceCheckpoint, classify, pending_manifest, digest
 from .source_discovery import HOSTS, root_urls, validate_node, decode_node
 from .source_jobs import RUNTIME_SOURCES, NATIVE_SOURCES, validate_url, parse_existing
@@ -179,6 +179,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     try:
         recovery_proof = None
         blocked_scope_urls=set()
+        approved=None;scope_policy_active=False
         if job.settings_snapshot.get('source_batch'):
             from .source_recovery import ENV,approval,require
             if os.environ.get(ENV+'_FILE'):
@@ -186,6 +187,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 require(approved['batch_id']==job.settings_snapshot['source_batch']['id'],'RECOVERY_BATCH_CHANGED')
                 blocked_scope_urls={i['url'] for i in approved.get('continuation',{}).get('quarantine',[])
                     if i.get('kind')=='operator-scope-quarantine/v1' and i['source']==code}
+                if approved.get('continuation',{}).get('scope_policy'):
+                    from .source_recovery import scope_policy
+                    scope_policy(approved);scope_policy_active=True
         if (job.settings_snapshot.get('source_batch') or {}).get('recovery'):
             if mode != 'RESUME':raise ValueError('RECOVERY_REQUIRES_RESUME')
             from .source_recovery import runtime_proof
@@ -211,7 +215,16 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if url in blocked_scope_urls:
                 if fetcher is not None:fetcher.stop('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
                 raise ValueError('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
-            if canary and original['mode']=='REFRESH' and url!=robots_url and url not in {e['url'] for e in original['entries']}:
+            if (canary or scope_policy_active) and original['mode']=='REFRESH' and url!=robots_url and url not in {e['url'] for e in original['entries']}:
+                if scope_policy_active:
+                    try:
+                        from universal_supplier.url_safety import validate_public_http_url
+                        p=urlsplit(url)
+                        if (host_key(url)!=host_key('https://'+HOSTS[code]) or p.scheme!='https' or
+                                p.port not in (None,443) or p.fragment):raise ValueError('UNSAFE_SCOPE_REFUSAL_TARGET')
+                        validate_public_http_url(url)
+                    except ValueError:pass  # Unsafe/cross-host target remains the original global STOP.
+                    else:raise FrozenScopeRefusal(url)
                 if fetcher is not None:fetcher.stop('CANARY_URL_OUTSIDE_FROZEN_BATCH')
                 raise ValueError('CANARY_URL_OUTSIDE_FROZEN_BATCH')
             p=urlsplit(url)
@@ -303,6 +316,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         # bounded batches; unselected URLs remain provably NOT_REQUESTED.
         if entries and not termination:
             cp.add_urls([e['url'] for e in entries]);byurl={e['url']:e for e in entries}
+            if scope_policy_active and original['mode']=='DISCOVERY':
+                from .source_recovery import scope_policy_exclusions
+                for entry,receipt in scope_policy_exclusions(backend.repo.connection,approved,code,entries,owner,sha):
+                    if entry['url'] not in cp.state['frontier']:continue
+                    if backend.probe(entry,receipt)!='NOT_FOUND':raise ValueError('RECOVERY_SCOPE_SQL_NOT_PROVEN')
+                    cp.quarantine_unrequested(receipt);isolated.append(receipt)
             def reconcile():
                 receipts=[]
                 approved_receipts={}
@@ -419,6 +438,18 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     if not gate_passed:batch=min(batch,max(1,gate_target-verified))
                     urls=cp.claim_batch(batch);outcomes=fetch(urls);fetched_count+=len(urls)
                     for outcome in outcomes:
+                        if outcome.scope_refusal:
+                            if (not scope_policy_active or original['mode']!='REFRESH' or backend is None or
+                                    outcome.response is not None or outcome.transport_started is not True):
+                                raise ValueError('RECOVERY_SCOPE_POLICY_NOT_APPROVED')
+                            receipt={'url':outcome.url,'state':'UNCERTAIN',
+                                'origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcome.error}
+                            cp.record_terminal([receipt])
+                            from .source_recovery import record_scope_policy_case
+                            proposed=record_scope_policy_case(backend.repo.connection,approved,job,run_id,owner,sha,
+                                byurl[outcome.url],cp.state['terminal'][outcome.url],outcome.scope_refusal)
+                            if backend.probe(byurl[outcome.url],proposed)!='NOT_FOUND':raise ValueError('RECOVERY_SCOPE_SQL_NOT_PROVEN')
+                            cp.record_terminal([proposed]);isolated.append(proposed);continue
                         if outcome.error or outcome.response is None or outcome.response.status_code!=200:
                             if outcome.response is None and outcome.transport_started is False:
                                 cp.return_not_requested({'url':outcome.url,'state':'NOT_REQUESTED','transport_started':False,'origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcome.error})
