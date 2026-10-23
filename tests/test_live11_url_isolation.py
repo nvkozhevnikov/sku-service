@@ -98,6 +98,23 @@ def test_quarantine_receipt_needs_capture_and_absence_of_sql():
     assert classify_one(broken,'NOT_FOUND')[0]['state']=='UNCERTAIN'
 
 
+def test_sql_probe_types_null_external_id_for_archived_preparse_capture():
+    from types import SimpleNamespace
+    from universal_supplier.control_plane.source_backend import SourceBackend
+    run,job,_,_,_=execution();result=run();receipt={**result['quarantined'][0],'external_id':None}
+    queries=[]
+    class Cursor:
+        def __enter__(self):return self
+        def __exit__(self,*a):pass
+        def execute(self,query,args):queries.append((query,args))
+        def fetchall(self):return []
+    backend=SourceBackend.__new__(SourceBackend);backend.code='beka_mak_tr'
+    backend.repo=SimpleNamespace(connection=SimpleNamespace(cursor=Cursor))
+    assert backend.probe(job.settings_snapshot['source_input']['entries'][0],receipt)=='NOT_FOUND'
+    query,args=queries[0]
+    assert 'OR %s::text IS NULL' in query and args[-2:]==(None,None)
+
+
 def test_bounded_continuation_cannot_extend_scope_sha_or_attempts(monkeypatch):
     env={'scope_sha256':'scope','attempt':4,'id':'batch'};previous={'source_batch':env}
     scopes=['scope']+[str(n) for n in range(21)]

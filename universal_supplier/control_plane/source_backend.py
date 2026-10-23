@@ -91,7 +91,7 @@ class SourceBackend:
                        FROM supplier_http_captures c JOIN suppliers s ON s.id=c.supplier_id
                        JOIN source_products sp ON sp.id=c.source_product_id
                        WHERE s.code=%s AND c.capture_fingerprint=%s AND c.requested_url=%s
-                           AND (sp.external_id=%s OR %s IS NULL)''',
+                           AND (sp.external_id=%s OR %s::text IS NULL)''',
                       (self.code,capture.fingerprint,entry['url'],receipt.get('external_id'),receipt.get('external_id')))
             rows=q.fetchall()
         if not rows:return 'NOT_FOUND'
