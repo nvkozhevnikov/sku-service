@@ -960,10 +960,11 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls):
     from .source_runtime import job_dir
     require(file_sha(previous)==previous_sha,'RECOVERY_PREVIOUS_APPROVAL_CHANGED')
     value=json.loads(Path(previous).read_text(encoding='utf-8'))
-    require(value.get('format')=='live11-recovery/v1' and not value.get('continuation'),
+    require(value.get('format')=='live11-recovery/v1',
             'RECOVERY_PREVIOUS_APPROVAL_FORMAT')
+    prior_plan=value.get('continuation')
     extra={'format':'live11-continuation/v1','batch_id':value['batch_id'],'phases':{},'quarantine':[],
-           'historical_envelopes':[],'manual_hashes':{},'mappings1282':value['post_stop']['mappings1282']}
+           'historical_envelopes':[],'manual_hashes':{},'mappings1282':(prior_plan or value['post_stop'])['mappings1282']}
     with queue._connect() as c,c.cursor() as q:
         c.read_only=True;batch.validate_config(queue.config);batch.validate_connection(c)
         q.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running')")
@@ -987,6 +988,10 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls):
             attempts=groups.get(env['scope_sha256'],[])
             rule={'source':source_by_scope[env['scope_sha256']],
                 'phase':env['phase'],'max_attempt':min(8,len(attempts)+4)}
+            if prior_plan:
+                # Renew proof after a technical STOP without replenishing the
+                # already approved per-phase attempt ceiling or time window.
+                rule['max_attempt']=min(rule['max_attempt'],continuation_rule(value,env['scope_sha256'])['max_attempt'])
             extra['phases'][env['scope_sha256']]=rule
             if not attempts or attempts[-1][2]=='succeeded':continue
             jid,sid,status,run,snap,meta=attempts[-1]

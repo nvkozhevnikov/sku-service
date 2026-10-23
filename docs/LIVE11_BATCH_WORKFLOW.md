@@ -229,3 +229,29 @@ original checkpoint/SQL receipts/active leases/settings before a confirmed recov
 Never initdb, overwrite PGDATA, switch cluster, or silently clear writer/pid locks.
 Check settings restored and0active after session shutdown; preserve all journals.
 Saved actual BMDO and59COMMITTED checkpoint fixtures are offline evidence only.
+
+
+## Semantic quarantine is not a consecutive structural error — 2026-10-23
+
+LIVE session37491ed0… demonstrated a classification defect: the three captured
+BMSO C-NC/CS, GLS-NC/GLS and GS-NC/GS contradictions after59COMMITTED were counted
+as consecutive source/parser failures. The native safety STOP and settings restore
+worked; nothing was force-resumed. The4semantic quarantines among63attempted cards
+are valid evidence, not permission to select a model or strip NC.
+
+Correction: semantic identity quarantines do not increment the structural/HTTP
+error counter. Structural parse failures retain the source consecutive threshold;
+HTTP breaker/403/429/Retry-After remain unchanged. A semantic source-quality STOP
+requires at least safety_gate_size identity quarantines AND at least half of all
+actually attempted cards in that phase (including its earlier COMMITTED). This
+is a source-quality check, never a product processing cap. Quarantine still does
+not count as SQL proof, does not enter matching, and never implies full coverage.
+The actual59good+4quarantine replay must continue without SOURCE_CARD_ERROR_THRESHOLD;
+a source dominated by identity failures must still STOP. F01/F03/parser/identity
+rules are unchanged; all three real followup captures remain rejected by parser.
+
+After a technical STOP, prepare-continuation accepts the previous signed
+continuation as its proof-chain input. It resnapshots current native parent/job/
+checkpoint/SQL evidence, preserving or reducing the previously signed phase
+attempt ceilings, original22scopes/T0/deadline/matrix/host/rate. It cannot replenish
+attempts. New exact HEAD/engine/manifest SHA confirmation remains mandatory.

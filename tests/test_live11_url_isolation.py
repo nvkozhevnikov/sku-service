@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import json
 import gzip
+import base64
 import pytest
 
 from test_source_runtime import isolation, setup, Backend
@@ -20,10 +21,11 @@ BAD='https://www.bekamak.com/urun/bmdo-120-xs/en'
 FIX=Path(__file__).parent/'fixtures/live11_recovery/bmdo120_conflict.html.gz'
 
 
-def execution(*,bad_status=200,backend=None,bad_count=1,monkeypatch=None):
+def execution(*,bad_status=200,backend=None,bad_count=1,bad_body=None,monkeypatch=None):
     _,job,backend,_,good=setup('beka_mak_tr',backend=backend)
     body,_,_,_=saved_case('beka_mak_tr');bad=gzip.decompress(FIX.read_bytes());clock=Clock();calls=[]
     assert hashlib.sha256(bad).hexdigest()=='3afa05063cf40cec299729514849d78e9309327e3b73357861a0422f097005b8'
+    if bad_body is not None:bad=bad_body
     urls=[BAD] if bad_count==1 else [f'https://www.bekamak.com/urun/bad-{n}/en' for n in range(bad_count)]
     snapshot=deepcopy(job.settings_snapshot)
     snapshot['source_input']['entries']=[{'url':u,'source_external_id':'bad-'+str(i)} for i,u in enumerate(urls)]+snapshot['source_input']['entries']
@@ -76,12 +78,34 @@ def test_sql_valueerror_is_never_misclassified_as_parser_error(reason):
     assert result['quarantined'][0]['url']==BAD
 
 
-def test_mass_parser_errors_stop_source_not_unbounded_quarantine():
-    run,job,backend,calls,_=execution(bad_count=12)
+@pytest.mark.parametrize('kind',['parse','identity'])
+def test_mass_parser_errors_stop_source_not_unbounded_quarantine(kind):
+    run,job,backend,calls,_=execution(bad_count=12,bad_body=b'<html><body>Broken layout without product</body></html>' if kind=='parse' else None)
     result=run()
     assert result['status']=='partial' and result['termination_reason']=='SOURCE_CARD_ERROR_THRESHOLD'
-    assert len(result['quarantined'])==job.settings_snapshot['rate_settings']['consecutive_error_threshold']
+    assert len(result['quarantined'])==(job.settings_snapshot['rate_settings']['consecutive_error_threshold'] if kind=='parse' else result['safety_gate_size'])
     assert result['remaining']>0 and not backend.writes and not backend.matches
+
+
+def test_real_59_committed_and_four_quarantines_are_not_mass_source_failure():
+    from universal_supplier.control_plane.source_runtime import mass_identity_failure
+    saved=json.loads(gzip.decompress((FIX.parent/'beka_tr_59_checkpoint.json.gz').read_bytes()))
+    rows={u:r for u,r in saved['checkpoint']['terminal'].items() if r['state']=='COMMITTED'}
+    for n in range(4):rows[str(n)]={'state':'QUARANTINED','receipt':{'isolation':{'category':'identity'}}}
+    assert len(rows)==63 and not mass_identity_failure(rows,5)
+    for n in range(60):rows['bad'+str(n)]={'state':'QUARANTINED','receipt':{'isolation':{'category':'identity'}}}
+    assert mass_identity_failure(rows,5)
+
+
+def test_actual_three_followup_variants_remain_semantic_quarantine():
+    from universal_supplier.control_plane.source_jobs import parse_existing
+    rows=json.loads(gzip.decompress((FIX.parent/'semantic_followup_pages.json.gz').read_bytes()))
+    assert len(rows)==3
+    for row in rows:
+        body=base64.b64decode(row['body_base64'])
+        assert hashlib.sha256(body).hexdigest()==row['sha256']
+        with pytest.raises(ValueError,match='title, name and SKU disagree'):
+            parse_existing('beka_mak_tr',body.decode('utf-8'),row['url'])
 
 
 def test_quarantine_receipt_needs_capture_and_absence_of_sql():
@@ -136,7 +160,8 @@ def test_bounded_continuation_cannot_extend_scope_sha_or_attempts(monkeypatch):
     with pytest.raises(PermissionError):recovery.continuation_rule(value,'unknown-scope')
 
 
-def test_actual_59_committed_plus_failed_capture_recovery_no_http_ingest(monkeypatch,tmp_path):
+@pytest.mark.parametrize('followups',[False,True])
+def test_actual_59_committed_plus_failed_capture_recovery_no_http_ingest(monkeypatch,tmp_path,followups):
     from universal_supplier.control_plane.queue import CrawlJob
     from test_partner_pilot import CFG
     from test_source_jobs import deny
@@ -173,21 +198,34 @@ def test_actual_59_committed_plus_failed_capture_recovery_no_http_ingest(monkeyp
     # Stop immediately AFTER native reconciliation, before robots/new URL GET.
     def stop_before_http(*a,**kw):
         raise AssertionError('UNEXPECTED_HTTP')
+    captures={row['url']:base64.b64decode(row['body_base64']) for row in
+        json.loads(gzip.decompress((FIX.parent/'semantic_followup_pages.json.gz').read_bytes()))}
+    requested=[]
+    class FollowupClient:
+        def get_validated(self,url,*,validator,timeout_seconds):
+            validator(url);self.before_request(url)
+            if url.endswith('robots.txt'):return HttpResponse(url,200,'text/plain',b'User-agent: *\nAllow: /')
+            assert url in captures,'Unexpected followup outside actual saved fixture'
+            requested.append(url)
+            if len(requested)==3:(folder.parent/'job-61/STOP_REQUESTED').write_text('OPERATOR_FIXTURE_REPLAY_DONE')
+            return HttpResponse(url,200,'text/html; charset=utf-8',captures[url])
     from universal_supplier.control_plane import source_runtime as runtime
     original_classify=runtime.classify
     def reconciled(*args,**kwargs):
         rows=original_classify(*args,**kwargs)
         stop=folder.parent/'job-61/STOP_REQUESTED';stop.parent.mkdir(parents=True,exist_ok=True)
-        stop.write_text('OPERATOR_FIXTURE_STOP_BEFORE_HTTP')
+        if not followups:stop.write_text('OPERATOR_FIXTURE_STOP_BEFORE_HTTP')
         return rows
     monkeypatch.setattr(runtime,'classify',reconciled)
     token=LEASED_HOST.set(job.domain)
-    try:result=run_source(job,CFG,backend_factory=lambda *a:backend,client_factory=stop_before_http,clock=Clock())
+    try:result=run_source(job,CFG,backend_factory=lambda *a:backend,client_factory=FollowupClient if followups else stop_before_http,clock=Clock())
     finally:LEASED_HOST.reset(token)
     assert result['sql_committed']==59 and result['sql_committed_this_job']==0,result
-    assert result['request_metrics']['requests_total']==0 and not backend.writes and not backend.matches
+    assert result['request_metrics']['requests_total']==(4 if followups else 0) and not backend.writes and not backend.matches
+    assert result['termination_reason'].startswith('OPERATOR_FIXTURE') and len(requested)==(3 if followups else 0),result
     after=json.loads(Path(result['checkpoint']).read_text(encoding='utf-8'))
-    assert after['terminal'][url]['state']=='QUARANTINED' and len(after['frontier'])==18
+    assert after['terminal'][url]['state']=='QUARANTINED' and len(after['frontier'])==(15 if followups else 18)
+    assert sum(row['state']=='QUARANTINED' for row in after['terminal'].values())==(4 if followups else 1)
     for u,row in cp['terminal'].items():
         assert after['terminal'][u]['history'][:len(row['history'])]==row['history']
         if row['state']=='COMMITTED':assert after['terminal'][u]['receipt']==row['receipt']

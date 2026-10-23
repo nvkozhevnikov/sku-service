@@ -34,6 +34,17 @@ class CardExtractionError(ValueError):
         super().__init__(reason)
         self.category=category
 
+
+def mass_identity_failure(terminal,gate_size):
+    """Semantic data quality STOP requires enough failures and a majority.
+
+    Count the whole actual phase, including earlier COMMITTED receipts, rather
+    than treating three new ambiguous cards after59successes as site failure.
+    """
+    attempted=[r for r in terminal.values() if r['state']!='NOT_REQUESTED']
+    semantic=sum(r['state']=='QUARANTINED' and r['receipt'].get('isolation',{}).get('category')=='identity' for r in attempted)
+    return semantic>=gate_size and semantic*2>=len(attempted)
+
 def engine_fingerprint():
     root=Path(__file__).resolve().parents[2]
     files=sorted([*root.joinpath('universal_supplier').rglob('*.py'),*root.joinpath('sterbrust_matching').rglob('*.py')])
@@ -361,9 +372,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     value=receipt_for(entry['url'],'QUARANTINED',cap,code,owner,sha,entry.get('source_external_id'))
                 value['isolation']={'format':'source-url-isolation/v1','before_ingest':True,
                     'category':category or error.category,'reason':str(error)}
-                cp.record_terminal([value]);isolated.append(value);consecutive_card_errors+=1
-                # Reuse the approved source's error threshold, not a product cap.
-                if consecutive_card_errors>=rate.consecutive_error_threshold:
+                cp.record_terminal([value]);isolated.append(value)
+                # A coherent page with a contradictory model is a semantic
+                # quarantine, not evidence that the parser/site structure broke.
+                # Keep the original consecutive threshold for parse/HTTP failures.
+                consecutive_card_errors=0 if value['isolation']['category']=='identity' else consecutive_card_errors+1
+                if consecutive_card_errors>=rate.consecutive_error_threshold or mass_identity_failure(cp.state['terminal'],gate_size):
                     fetcher.stop('SOURCE_CARD_ERROR_THRESHOLD')
             for item in offline:
                 if stopped():termination=str(stopped());break
