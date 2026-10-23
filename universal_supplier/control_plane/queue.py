@@ -158,7 +158,7 @@ class PostgresJobQueue:
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
                 scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None, recovery_sha256: str | None = None) -> EnqueueResult:
-        if recovery_sha256 is not None and (source_mode != 'RESUME' or resume_job_id != 17):
+        if recovery_sha256 is not None and (source_mode != 'RESUME' or type(resume_job_id) is not int or resume_job_id < 1):
             raise PermissionError('RECOVERY_REQUIRES_APPROVED_PARENT_RESUME')
         if source_limit is not None:
             from .source_canary import limit_value,validate_config

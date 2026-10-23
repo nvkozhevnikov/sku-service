@@ -157,6 +157,10 @@ def approval():
             'BATCH_WINDOW_EXPIRED')
     for artifact in value['artifacts'].values():
         require(file_sha(artifact['path']) == artifact['sha256'], 'RECOVERY_EVIDENCE_CHANGED')
+    for item in value.get('matching_recoveries', {}).values():
+        for key in ('receipt', 'verified', 'before'):
+            artifact = item[key]
+            require(file_sha(artifact['path']) == artifact['sha256'], 'RECOVERY_EVIDENCE_CHANGED')
     return value, sha
 
 
@@ -223,11 +227,14 @@ def validate_saved(value, data, checkpoint, input_value):
     return result
 
 
-def validate_matching(cursor, snapshot, parent_id=17, run_id=18, config=None, lock_parent=True):
+def validate_matching(cursor, snapshot, parent_id=17, run_id=None, config=None, lock_parent=True):
     """Fresh SQL readback under the queue's admission lock, and again in worker."""
     from .source_runtime import job_dir, read_input
     from .source_batch import validate_snapshot
     value, sha = approval()
+    if parent_id != 17:
+        return validate_discovery_matching(cursor, snapshot, parent_id, run_id, config, lock_parent, value, sha)
+    run_id = 18 if run_id is None else run_id
     data = read_artifacts(value)
     require(parent_id == 17 and run_id == 18, 'RECOVERY_PARENT_NOT_APPROVED')
     frozen = next(r for r in value['parents'] if r['id'] == parent_id)
@@ -250,10 +257,109 @@ def validate_matching(cursor, snapshot, parent_id=17, run_id=18, config=None, lo
 
 
 def admission_runtime(runtime,proof):
-    require(runtime.get('owner_job_id')==17 and runtime.get('input_sha256')==proof['input_sha256'] and
-            runtime.get('status')=='partial' and runtime.get('sql_committed')==109 and
+    require(runtime.get('owner_job_id')==proof.get('parent_job_id') and runtime.get('input_sha256')==proof['input_sha256'] and
+            runtime.get('status')=='partial' and runtime.get('sql_committed')==proof.get('result',{}).get('total') and
             runtime.get('remaining')==0 and not runtime.get('resume_uncertain'),
             'RECOVERY_RUNTIME_OWNER_OR_RECEIPTS_CHANGED')
+
+
+def validate_discovery_saved(item, receipt, verified, before, cp, node, original, snapshot):
+    """Pure proof check; a finished traversal and committed products are required."""
+    parent=item['parent_job_id']; run=item['run_id']; code=snapshot['supplier_code']
+    require(parent==39 and run==20 and code=='beka_mak', 'RECOVERY_PARENT_NOT_APPROVED')
+    for state in (cp,node):
+        unsigned=deepcopy(state); checksum=unsigned.pop('checksum')
+        require(digest(unsigned)==checksum and state['job_id']==parent and state['source']==code and
+                state['manifest_sha256']==digest(original), 'RECOVERY_CHECKPOINT_CHECKSUM')
+        require(not state['frontier'] and not state['inflight'], 'RECOVERY_UNFINISHED_OR_UNCERTAIN')
+    require(original['mode']=='DISCOVERY' and node['discovery_finished'] and not node['category_failures'],
+            'RECOVERY_DISCOVERY_NOT_FINISHED')
+    urls={p['url'] for r in node['discovery_receipts'].values() for p in r.get('products',[])}
+    terminal=cp['terminal']; ids=[r['receipt']['external_id'] for r in terminal.values()]
+    require(set(terminal)==urls and len(ids)==len(set(ids))==104 and
+            all(r['state']==r['receipt']['state']=='COMMITTED' for r in terminal.values()),
+            'RECOVERY_NOT_104_COMMITTED')
+    require(digest(original)==digest(snapshot['source_input']) and receipt['committed'] and receipt['job_id']==parent and receipt['run_id']==run and
+            receipt['batch_id']==snapshot['source_batch']['id'] and receipt['input_sha256']==digest(original) and
+            sorted(receipt['external_ids'])==sorted(ids), 'RECOVERY_RECEIPT_LINEAGE_CHANGED')
+    result=receipt['result']
+    require(result['status']=='succeeded' and result['total']==104 and result['apply_allowed'] and
+            result['existing_ids_preserved'] and result['f01_f03_enforced'] and
+            not result['review_conflict_auto_accept'] and result['by_source']=={'beka_mak':{**verified['buckets'],'NOT_PROCESSED':0}} and
+            sum(verified['buckets'].values())==104 and verified['buckets'].get('NOT_PROCESSED',0)==0,
+            'RECOVERY_MATCHING_NOT_PROVEN')
+    require(verified['mappings1282_exact'] and verified['protected_tables_exact'] and verified['checkpoint_unchanged'] and
+            verified['http']==verified['ingest']==0 and len(before['state']['mappings'])==1282 and
+            before['state']['mappings']==verified['after']['mappings'] and
+            len(verified['current_matches'])==len({r[0] for r in verified['current_matches']})==104,
+            'RECOVERY_VERIFICATION_MISSING')
+    return result
+
+
+def validate_discovery_matching(cursor,snapshot,parent_id,run_id,config,lock_parent,value,sha):
+    from . import source_batch as batch
+    from .source_runtime import job_dir,read_input,evidence_root
+    from .source_controls import verify_resume
+    item=value.get('matching_recoveries',{}).get(str(parent_id))
+    require(item and item['parent_job_id']==parent_id and (run_id is None or item['run_id']==run_id),
+            'RECOVERY_PARENT_NOT_APPROVED')
+    require(snapshot==item['snapshot'], 'RECOVERY_PARENT_SCOPE_CHANGED')
+    batch.validate_snapshot(snapshot)
+    cursor.execute('SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs WHERE id=%s'+
+                   (' FOR SHARE' if lock_parent else ''),(parent_id,))
+    require(cursor.fetchone()==('partial',item['run_id'],snapshot), 'RECOVERY_PARENT_CHANGED')
+    data={k:json.loads(Path(item[k]['path']).read_text(encoding='utf-8')) for k in ('receipt','verified','before')}
+    cp_path=job_dir('beka_mak',parent_id)/'checkpoint.json'
+    node_path=evidence_root()/'discovery/beka_mak'/('job-'+str(parent_id))/'checkpoint.json'
+    require(file_sha(cp_path)==data['receipt']['checkpoint_sha256'] and
+            file_sha(node_path)==data['receipt']['discovery_checkpoint_sha256'], 'RECOVERY_CHECKPOINT_CHANGED')
+    cp=json.loads(cp_path.read_text(encoding='utf-8'));node=json.loads(node_path.read_text(encoding='utf-8'))
+    refresh_path=job_dir('beka_mak',17)/'checkpoint.json'
+    refresh_sha=next((h for p,h in data['before']['checkpoints'].items()
+        if p.replace('\\','/')=='reports/source-runner-evidence/beka_mak/job-17/checkpoint.json'),None)
+    require(refresh_sha and file_sha(refresh_path)==refresh_sha,
+            'RECOVERY_REFRESH_CHECKPOINT_CHANGED')
+    original=read_input('beka_mak',parent_id,cp['manifest_sha256'])
+    require(digest(original) in value['input_hashes'], 'RECOVERY_INPUT_NOT_APPROVED')
+    result=validate_discovery_saved(item,data['receipt'],data['verified'],data['before'],cp,node,original,snapshot)
+    # Same exact target/role guards as normal queue runtime. No writes here.
+    batch.validate_config(config)
+    cursor.execute("""SELECT current_database(),system_identifier::text,current_setting('server_version'),
+        current_setting('data_directory'),host(inet_server_addr()),inet_server_port(),
+        current_user,rolsuper,rolbypassrls FROM pg_control_system(),pg_roles WHERE rolname=current_user""")
+    target=cursor.fetchone(); t=batch.TARGET
+    require(target and target[:3]==(t['dbname'],t['system_identifier'],'17.11') and
+        Path(target[3]).resolve()==Path(t['pgdata']).resolve() and
+        target[4:]==(t['host'],t['port'],'rc_runtime',False,False),'RECOVERY_SQL_TARGET_OR_ROLE_CHANGED')
+    fingerprints=[r['receipt']['capture_fingerprint'] for r in cp['terminal'].values()]
+    cursor.execute('''SELECT count(DISTINCT c.id),count(DISTINCT o.id),count(DISTINCT c.source_product_id)
+        FROM supplier_http_captures c JOIN offer_commercial_observations o ON o.capture_id=c.id
+        AND o.source_product_id=c.source_product_id AND o.observed_at=c.observed_at
+        JOIN suppliers s ON s.id=c.supplier_id WHERE s.code='beka_mak' AND c.capture_fingerprint=ANY(%s)''',(fingerprints,))
+    require(cursor.fetchone()==(104,104,104),'RECOVERY_SQL_RECEIPTS_CHANGED')
+    cursor.execute('''SELECT sp.id,s.code,sp.external_id,sp.catalog_product_id,sb.sterbrust_product_id
+        FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+        LEFT JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id
+        WHERE sp.catalog_product_id IS NOT NULL ORDER BY sp.id,sb.sterbrust_product_id''')
+    verified=data['verified']
+    require(normal(cursor.fetchall())==verified['after']['mappings'],'RECOVERY_SQL_MAPPINGS_CHANGED')
+    ids=[r[0] for r in verified['current_matches']]
+    for query,key in [
+        ('SELECT source_product_id,status,auto_accepted,match_method,id,catalog_product_id FROM product_matches WHERE source_product_id=ANY(%s) AND is_current ORDER BY source_product_id','current_matches'),
+        ('SELECT source_product_id,decision,best_sterbrust_id,rule_version FROM product_identity_decisions WHERE source_product_id=ANY(%s) ORDER BY source_product_id','identity_decisions'),
+        ('SELECT source_product_id,lifecycle_status,automatic_decision,source_identity_fingerprint FROM review_cases WHERE source_product_id=ANY(%s) ORDER BY source_product_id','review_cases')]:
+        cursor.execute(query,(ids,))
+        require(normal(cursor.fetchall())==verified[key],'RECOVERY_SQL_'+key.upper()+'_CHANGED')
+    for table in ('source_products','review_cases','review_decisions','candidate_rejections'):
+        cursor.execute(f'''SELECT count(*),md5(coalesce(string_agg(md5(to_jsonb(t)::text),''
+            ORDER BY md5(to_jsonb(t)::text) COLLATE "C"),'')) FROM {table} t''')
+        require(normal(cursor.fetchone())==verified['after']['hashes'][table],'RECOVERY_SQL_IDENTITY_OR_MANUAL_CHANGED')
+    verify_resume('beka_mak',parent_id,cp['manifest_sha256'],original,config)
+    refresh=json.loads(refresh_path.read_text(encoding='utf-8'))
+    refresh_input=read_input('beka_mak',17,refresh['manifest_sha256'])
+    verify_resume('beka_mak',17,refresh['manifest_sha256'],refresh_input,config)
+    return {'kind':'matching-only','parent_job_id':parent_id,'run_id':item['run_id'],'approval_sha256':sha,
+            'input_sha256':cp['manifest_sha256'],'result':result,'external_ids':sorted(data['receipt']['external_ids'])}
 
 
 def verify_sql(cursor,data,cp,original,config):
@@ -311,8 +417,8 @@ def runtime_proof(job, config):
     value, sha = approval()
     require(proof['approval_sha256'] == sha, 'RECOVERY_CHILD_APPROVAL_CHANGED')
     settings=job.settings_snapshot['crawl_settings']
-    require(settings.get('collection_mode')=='RESUME' and settings.get('resume_owner_job_id')==17 and
-            settings.get('resume_input_sha256')==digest(value['parents'][0]['snapshot']['source_input']),
+    owner=proof['parent_job_id']
+    require(settings.get('collection_mode')=='RESUME' and settings.get('resume_owner_job_id')==owner,
             'RECOVERY_CHILD_OWNER_CHANGED')
     from .queue import PostgresJobQueue
     from .source_canary import validate_config, validate_connection
@@ -322,10 +428,11 @@ def runtime_proof(job, config):
         validate_connection(connection)
         cursor.execute('SELECT current_user,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user')
         require(cursor.fetchone() == ('rc_runtime',False,False), 'RECOVERY_ROLE')
-        cursor.execute('SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs WHERE id=%s', (17,))
+        cursor.execute('SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs WHERE id=%s', (owner,))
         parent = cursor.fetchone()
-        require(parent and parent[:2] == ('partial',18), 'RECOVERY_PARENT_CHANGED')
-        return validate_matching(cursor, parent[2], config=config, lock_parent=False)
+        require(parent and parent[:2] == ('partial',proof['run_id']), 'RECOVERY_PARENT_CHANGED')
+        require(settings.get('resume_input_sha256')==digest(parent[2]['source_input']), 'RECOVERY_CHILD_OWNER_CHANGED')
+        return validate_matching(cursor, parent[2], owner, proof['run_id'], config=config, lock_parent=False)
 
 
 def retry_cancelled(queue):
@@ -352,6 +459,21 @@ def retry_cancelled(queue):
                 AND settings_snapshot->'source_batch'->>'id'=%s
                 AND settings_snapshot->'source_batch'->>'phase'='REFRESH' ORDER BY id DESC''', (row[3],value['batch_id']))
             attempts=cursor.fetchall()
+            if value.get('matching_recoveries'):
+                snapshot=retry_stopped_snapshot(value,expected,attempts,sha)
+                if snapshot is None:
+                    cursor.execute('SELECT status FROM crawl_jobs WHERE id=%s FOR UPDATE',(attempts[0][0],))
+                    require(cursor.fetchone()[0] in ('queued','running','succeeded'),'RECOVERY_RETRY_REQUIRES_DECISION')
+                    jobs.append(attempts[0][0]);continue
+                approved=value['cancelled_attempts'][str(expected['id'])]
+                cursor.execute('SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs WHERE id=%s FOR UPDATE',(approved['id'],))
+                require(cursor.fetchone()==('cancelled',None,approved['snapshot']),'RECOVERY_CANCELLED_STARTED_OR_CHANGED')
+                cursor.execute("SELECT id FROM crawl_jobs WHERE supplier_id=%s AND status IN ('queued','running')",(row[3],))
+                require(not cursor.fetchone(),'BATCH_SOURCE_ALREADY_ACTIVE')
+                from .source_runtime import checked_input
+                checked_input(snapshot['source_input'],code)
+                checked_input(snapshot['source_batch']['next_snapshot']['source_input'],code)
+                jobs.append(batch.insert(cursor,row[3],snapshot));continue
             if len(attempts)>1:
                 require(len(attempts)==2 and attempts[0][1]['source_batch'].get('retry_parent_id') == expected['id'], 'RECOVERY_RETRY_ALREADY_CHANGED')
                 jobs.append(attempts[0][0]);continue
@@ -368,9 +490,31 @@ def retry_cancelled(queue):
         return jobs
 
 
+def retry_stopped_snapshot(value,expected,attempts,sha):
+    """Pure attempt-3 plan; only approved never-started attempt-2 cancellations."""
+    from . import source_batch as batch
+    approved=value.get('cancelled_attempts',{}).get(str(expected['id']))
+    require(approved is not None and len(attempts) in (2,3),'RECOVERY_CANCELLED_ATTEMPTS_CHANGED')
+    require(attempts[-1]==(expected['id'],expected['snapshot']), 'RECOVERY_ROOT_SCOPE_CHANGED')
+    second=attempts[-2]
+    require(second[0]==approved['id'] and second[1]==approved['snapshot'] and
+            second[1]['source_batch']['attempt']==2 and
+            second[1]['source_batch']['retry_parent_id']==expected['id'] and
+            batch.phase_scope(second[1])==batch.phase_scope(expected['snapshot']),
+            'RECOVERY_CANCELLED_SCOPE_CHANGED')
+    result=deepcopy(expected['snapshot'])
+    result['source_batch'].update(attempt=3,retry_parent_id=second[0],retry_root_id=expected['id'],recovery_approval_sha256=sha)
+    if len(attempts)==3:
+        require(attempts[0][1]==result,'RECOVERY_RETRY_ALREADY_CHANGED')
+        return None
+    return result
+
+
 def recover(queue):
     """Existing RESUME first, then idempotent cancelled-root retry; no worker start."""
     value, sha = approval()
+    if value.get('matching_recoveries'):
+        return recover_discovery(queue,value,sha)
     expected=value['parents'][0]
     require(expected['id']==17, 'RECOVERY_FIRST_PARENT')
     with queue._connect() as connection, connection.cursor() as cursor:
@@ -390,3 +534,35 @@ def recover(queue):
     return {'batch_id':value['batch_id'],'technical_child':child_id,
             'retried_roots':retry_cancelled(queue),'worker_started':False,
             'note':'Old partial/cancelled jobs retained; native completion advances Beka to frozen DISCOVERY.'}
+
+
+def recover_discovery(queue,value,sha):
+    """Continue the same batch; no edits to parent statuses or checkpoint flags."""
+    require(set(value['matching_recoveries'])=={'39'},'RECOVERY_PARENT_NOT_APPROVED')
+    item=value['matching_recoveries']['39']
+    with queue._connect() as connection,connection.cursor() as cursor:
+        connection.read_only=True
+        cursor.execute('SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs WHERE id=28')
+        completed=cursor.fetchone()
+        require(completed and completed[:2]==('succeeded',19) and
+                completed[2]['source_batch']['id']==value['batch_id'] and
+                completed[2]['source_batch']['recovery']['parent_job_id']==17,
+                'RECOVERY_REFRESH_NOT_COMPLETED')
+        for approved in value['cancelled_attempts'].values():
+            cursor.execute('SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs WHERE id=%s',(approved['id'],))
+            require(cursor.fetchone()==('cancelled',None,approved['snapshot']), 'RECOVERY_CANCELLED_STARTED_OR_CHANGED')
+        cursor.execute('''SELECT id,status,settings_snapshot FROM crawl_jobs
+            WHERE settings_snapshot->'source_batch'->>'id'=%s
+            AND settings_snapshot->'source_batch'->'recovery'->>'parent_job_id'='39' ORDER BY id''',(value['batch_id'],))
+        children=cursor.fetchall()
+    if children:
+        require(len(children)==1 and children[0][1] in ('queued','running','succeeded') and
+                children[0][2]['source_batch']['recovery']['approval_sha256']==sha,
+                'RECOVERY_CHILD_ALREADY_CHANGED')
+        child_id=children[0][0]
+    else:
+        child=queue.enqueue(item['supplier_id'],trigger_type='manual',crawl_type='full',source_mode='RESUME',
+                            resume_job_id=39,recovery_sha256=sha)
+        child_id=child.job_id
+    return {'batch_id':value['batch_id'],'technical_child':child_id,'retried_roots':retry_cancelled(queue),
+            'worker_started':False,'note':'DISCOVERY COMMITTED receipts reused; Beka isolation confirmation remains mandatory.'}

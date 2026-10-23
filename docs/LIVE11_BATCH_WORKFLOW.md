@@ -130,3 +130,30 @@ LIVE remains BLOCKED pending one explicit execution/setup authorization:
 existing runtime HTTP/SQL/session admission; fresh frozen preview/digest/current
 HEAD/T0 approval; existing worker max2 different hosts; Beka isolation gate.
 No old checkpoint migration to changed HEAD; UNCERTAIN requires operator decision.
+
+
+## DISCOVERY matching recovery after committed ingest (2026-10-23)
+
+The existing proof-aware RESUME path also admits the exact saved Beka DISCOVERY
+job39/run20,104COMMITTED, only with a new exact hash-confirmed continuation
+manifest. It binds the parent frozen snapshot, both product/node checkpoints,
+finished discovery frontier, all SQL receipts, current matching/identity/REVIEW
+rows, manual/rejection hashes and the original1282 mappings. Original partial
+job metadata is evidence and is not edited to fabricate success. A technical
+child reuses the durable matching result, performs native SQL reconciliation,
+and completes through the normal queue path: HTTP0,ingest0,rematching0.
+
+The same manifest binds cancelled never-started attempt2 roots29–38. The existing
+queue may create their final attempt3 with unchanged scopes and original batch ID,
+T0/deadline. It does not permit attempt4, a started cancellation, scope drift or
+unknown parents. Parent rows stay unchanged; retry insertion remains atomic.
+The Beka isolation confirmation and exact HEAD/engine/approval SHA guards remain
+mandatory. A code change does not itself approve its new compatibility manifest.
+
+Execution continues through `scripts/source_batch.py recover --approval <new file>
+--sha256 <exact SHA> --confirm <operator-confirmed SHA> --run
+--activate-approved-settings`. Do not reuse RESUME_APPROVED.ps1 from the first
+recovery. Existing session restores temporary settings after worker shutdown.
+The actual104fixture and tests are tests/fixtures/live11_recovery/
+beka_job39_run20.json.gz and tests/test_source_discovery_recovery.py. Offline
+replay is not fresh LIVE collection or proof of a complete external catalog.

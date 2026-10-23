@@ -161,7 +161,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if mode != 'RESUME':raise ValueError('RECOVERY_REQUIRES_RESUME')
             from .source_recovery import runtime_proof
             recovery_proof = runtime_proof(job,config)
-            identity = {**recovery_proof['result'], 'matching_applied':False, 'matching_reused':True, 'recovery_parent_job_id':17, 'recovery_run_id':18}
+            identity = {**recovery_proof['result'], 'matching_applied':False, 'matching_reused':True, 'recovery_parent_job_id':recovery_proof['parent_job_id'], 'recovery_run_id':recovery_proof['run_id']}
         if mode=='RESUME' and cp.state['inflight']:raise ValueError('UNCERTAIN_PRODUCT_RECEIPT_REQUIRES_OPERATOR')
         if persist:
             if backend_factory is None:

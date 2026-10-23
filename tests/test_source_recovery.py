@@ -243,6 +243,8 @@ class RetryDB:
                     selected=[r for r in db.rows.values() if r[3]==args[1] and r[2]['source_batch']['phase']==args[2]]
                     self.rows=[(len(selected),any(r[0]=='succeeded' for r in selected),max(r[2]['source_batch']['attempt'] for r in selected))]
                 elif 'SELECT status,crawl_run_id,settings_snapshot,supplier_id' in query:self.rows=[tuple(db.rows[args[0]])]
+                elif 'SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs' in query:self.rows=[tuple(db.rows[args[0]][:3])]
+                elif 'SELECT status FROM crawl_jobs' in query:self.rows=[(db.rows[args[0]][0],)]
                 elif 'SELECT enabled,code,adapter_name,base_url' in query:
                     row=next(r for r in db.rows.values() if r[3]==args[0]);s=row[2]
                     self.rows=[(not db.disabled,s['supplier_code'],s['adapter_name'],'https://'+s['domain'])]
@@ -436,7 +438,7 @@ def test_worker_rechecks_proof_with_read_only_sql_no_row_locks(real,monkeypatch)
         def cursor(self):return Cursor(value)
     monkeypatch.setattr('universal_supplier.control_plane.queue.PostgresJobQueue._connect',lambda *a:Connection())
     snapshot=deepcopy(value['parents'][0][4])
-    snapshot['source_batch']['recovery']={'kind':'matching-only','approval_sha256':sha}
+    snapshot['source_batch']['recovery']={'kind':'matching-only','approval_sha256':sha,'parent_job_id':17,'run_id':18}
     snapshot['crawl_settings'].update(collection_mode='RESUME',resume_owner_job_id=17,resume_input_sha256=digest(value['input']))
     job=CrawlJob(28,11,'beka_mak','beka_mak','https://beka-mak.su','manual','full','running',None,snapshot)
     proof=recovery.runtime_proof(job,CFG)
