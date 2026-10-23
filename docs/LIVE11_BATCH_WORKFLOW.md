@@ -157,3 +157,30 @@ recovery. Existing session restores temporary settings after worker shutdown.
 The actual104fixture and tests are tests/fixtures/live11_recovery/
 beka_job39_run20.json.gz and tests/test_source_discovery_recovery.py. Offline
 replay is not fresh LIVE collection or proof of a complete external catalog.
+
+
+## One bounded post-stop exception (operator authorization2026-10-23)
+
+The general three-attempt rule is retained. A separately hash-confirmed
+`post_stop` manifest may authorize exactly one child/retry for terminal parents
+41–50 (attempt3→4), preserving the original22scopes/batch/T0/deadline and all
+profiles. A fifth attempt, another parent or changed scope still fails closed.
+Never-started cancelled parents get a frozen REFRESH retry in the same queue;
+partial41/42/43 use its normal RESUME/reconciliation path. No parent status or
+checkpoint is rewritten to claim completion.
+
+The reviewed parser delta is pinned to exact file SHA, not an open-ended parser
+allowlist. The known613vt FAILED receipt can supply an offline input only when
+its original200capture, hash, input identity and full failed history match the
+approved manifest. It is never returned to HTTP frontier. Existing SQL probing
+checks all COMMITTED and detects lost commits using the frozen external ID,
+including captures archived before parsing supplied that ID. Only normal
+persistence writes COMMITTED after readback. All other FAILED/UNCERTAIN stop.
+
+Run22resume_uncertain includes the known failed613vt parse because the old
+terminal error omitted capture metadata; it does not signify lost transport.
+Only this proof-bound URL can be reconciled; the array is not ignored globally.
+Original58TRmatching receipts are reused, pending105Vekprom matching remains
+pending until actually executed. Active settings are restored by the same
+existing session context manager. A new exact HEAD/engine/manifest SHA must be
+confirmed before execution; operator permission to implement is not that SHA.

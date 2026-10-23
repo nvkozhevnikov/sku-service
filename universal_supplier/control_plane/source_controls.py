@@ -64,9 +64,14 @@ def verify_resume(code,owner,sha,original,config):
         entries=list({e['url']:e for e in entries}.values())
     else:entries=original['entries']
     receipts=[]
+    approved_receipts={}
+    import os
+    if os.environ.get('STERBRUST_LIVE11_RECOVERY_FILE'):
+        from .source_recovery import post_stop_receipts
+        approved_receipts=post_stop_receipts(code,owner,sha,state)
     for entry in entries:
         url=entry['url']
-        if url in state['terminal']:receipts.append(state['terminal'][url]['receipt'])
+        if url in state['terminal']:receipts.append(approved_receipts.get(url,state['terminal'][url]['receipt']))
         elif url in state['frontier']:receipts.append({'url':url,'state':'NOT_REQUESTED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha}})
     from .source_backend import SourceBackend
     backend=SourceBackend(config,code)

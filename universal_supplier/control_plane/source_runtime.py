@@ -161,7 +161,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if mode != 'RESUME':raise ValueError('RECOVERY_REQUIRES_RESUME')
             from .source_recovery import runtime_proof
             recovery_proof = runtime_proof(job,config)
-            identity = {**recovery_proof['result'], 'matching_applied':False, 'matching_reused':True, 'recovery_parent_job_id':recovery_proof['parent_job_id'], 'recovery_run_id':recovery_proof['run_id']}
+            if recovery_proof['kind']=='matching-only':
+                identity = {**recovery_proof['result'], 'matching_applied':False, 'matching_reused':True, 'recovery_parent_job_id':recovery_proof['parent_job_id'], 'recovery_run_id':recovery_proof['run_id']}
         if mode=='RESUME' and cp.state['inflight']:raise ValueError('UNCERTAIN_PRODUCT_RECEIPT_REQUIRES_OPERATOR')
         if persist:
             if backend_factory is None:
@@ -272,9 +273,13 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             cp.add_urls([e['url'] for e in entries]);byurl={e['url']:e for e in entries}
             def reconcile():
                 receipts=[]
+                approved_receipts={}
+                if recovery_proof and recovery_proof['kind']=='post-stop':
+                    from .source_recovery import post_stop_receipts
+                    approved_receipts=post_stop_receipts(code,owner,sha,cp.state)
                 for e in entries:
                     url=e['url']
-                    if url in cp.state['terminal']:receipts.append(cp.state['terminal'][url]['receipt'])
+                    if url in cp.state['terminal']:receipts.append(approved_receipts.get(url,cp.state['terminal'][url]['receipt']))
                     elif url in cp.state['frontier']:receipts.append({'url':url,'state':'NOT_REQUESTED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha}})
                 def probe(e,r):
                     if r and r['state']=='NOT_REQUESTED':return 'NOT_FOUND'
@@ -287,7 +292,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 for r in classified:
                     if r['state']=='COMMITTED':
                         cp.record_terminal([{**r['receipt'],'state':'COMMITTED','sql_verified':True}])
-                        if not r['receipt'].get('matching_receipt') and recovery_proof is None:matching_pending.append(r['receipt']['external_id'])
+                        if not r['receipt'].get('matching_receipt') and not (recovery_proof and recovery_proof['kind']=='matching-only'):matching_pending.append(r['receipt']['external_id'])
                 offline=[r for r in classified if r['state']=='HTTP_CAPTURED_NOT_COMMITTED']
             else:offline=[]
             seen={}

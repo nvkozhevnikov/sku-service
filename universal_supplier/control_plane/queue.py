@@ -235,7 +235,7 @@ class PostgresJobQueue:
                 snapshot=prepare_snapshot(snapshot,source_mode,known_rows=known,resume=parent,config=self.config)
                 if source_mode=='RESUME' and previous[2].get('source_batch'):
                     from .source_batch import resume_envelope
-                    snapshot = resume_envelope(cursor, previous[2], snapshot)
+                    snapshot = resume_envelope(cursor, previous[2], snapshot, recovery_proof)
                     if recovery_proof is not None:
                         snapshot['source_batch']['recovery'] = {k: recovery_proof[k] for k in ('kind','parent_job_id','run_id','approval_sha256')}
             if pilot_limit is not None:

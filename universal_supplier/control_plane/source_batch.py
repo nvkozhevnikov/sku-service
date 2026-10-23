@@ -225,7 +225,7 @@ def advance(cursor, supplier_id, snapshot, user_id=None):
     insert(cursor, supplier_id, following, user_id)
 
 
-def resume_envelope(cursor, previous, snapshot):
+def resume_envelope(cursor, previous, snapshot, recovery_proof=None):
     envelope = previous.get('source_batch')
     if not envelope:
         return snapshot
@@ -238,7 +238,11 @@ def resume_envelope(cursor, previous, snapshot):
     if succeeded or latest_attempt != envelope['attempt']:
         raise PermissionError('BATCH_RESUME_LATEST_UNFINISHED_PHASE_ONLY')
     if count >= 3:
-        raise PermissionError('BATCH_RESUME_ATTEMPTS_EXHAUSTED')
+        from .source_recovery import post_stop_envelope
+        snapshot['source_batch']=post_stop_envelope(previous,count,latest_attempt,recovery_proof)
+        snapshot['source_input']=deepcopy(previous['source_input'])
+        validate_snapshot(snapshot)
+        return snapshot
     snapshot['source_input'] = deepcopy(previous['source_input'])
     snapshot['source_batch'] = {**deepcopy(envelope), 'attempt': count + 1}
     validate_snapshot(snapshot)
