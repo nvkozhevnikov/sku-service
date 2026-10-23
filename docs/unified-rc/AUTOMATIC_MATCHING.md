@@ -58,3 +58,16 @@ guard rechecks and deterministic ledger simulation do not prove SQL idempotency
 or Linux operation. Separate authorization is required for an isolated SQL test
 against the exact proposed scope. No matching apply, PostgreSQL startup, live
 HTTP, migrations, dump rebuild, production/develop/push/deploy/cron/ESOL occurred.
+
+
+## LIVE11 URL isolation boundary — 2026-10-23
+
+The matching engine, F01/F03 and matching rules are unchanged. A conflicting
+page identity (BMDO120 URL/SKU versus BMDO130 H1/name) is quarantined BEFORE ingest;
+neither value is selected and it is never AUTO/NEW canonical creation. Only
+actual COMMITTED external IDs reach the existing scoped matching engine. Durable
+matching receipts prevent repeat work on already completed cards; pending113
+Vekprom cards must receive fresh native matching and SQL readback after approval.
+Review locks, accepted Product IDs, supplier namespaces and original1282mappings
+remain protected. REVIEW/CONFLICT totals are actual durable buckets, not parser
+errors or quarantine counts. Existing historical buckets are not fresh results.

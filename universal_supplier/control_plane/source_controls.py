@@ -71,7 +71,11 @@ def verify_resume(code,owner,sha,original,config):
         approved_receipts=post_stop_receipts(code,owner,sha,state)
     for entry in entries:
         url=entry['url']
-        if url in state['terminal']:receipts.append(approved_receipts.get(url,state['terminal'][url]['receipt']))
+        if url in state['terminal']:
+            receipt=approved_receipts.get(url,state['terminal'][url]['receipt'])
+            if receipt['state']=='HTTP_CAPTURED_NOT_COMMITTED' and not receipt.get('external_id') and entry.get('source_external_id'):
+                receipt={**receipt,'external_id':entry['source_external_id']}
+            receipts.append(receipt)
         elif url in state['frontier']:receipts.append({'url':url,'state':'NOT_REQUESTED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha}})
     from .source_backend import SourceBackend
     backend=SourceBackend(config,code)

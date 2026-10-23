@@ -12,7 +12,7 @@ import hashlib,json,os,threading
 from universal_supplier.kami_checkpoint import write_checkpoint
 from universal_supplier.postgres import SUPPLIER_CONFIGS
 
-STATES=frozenset({'COMMITTED','HTTP_CAPTURED_NOT_COMMITTED','FAILED','NOT_REQUESTED','UNCERTAIN'})
+STATES=frozenset({'COMMITTED','HTTP_CAPTURED_NOT_COMMITTED','FAILED','NOT_REQUESTED','UNCERTAIN','QUARANTINED'})
 
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
 
@@ -24,6 +24,18 @@ def original_capture_present(receipt,entry):
         capture=HttpCapture(**fields)
         return capture.requested_url==entry['url'] and capture.fingerprint==receipt.get('capture_fingerprint')
     except (ValueError,TypeError,KeyError):return False
+
+
+def quarantine_evidence_present(receipt,entry):
+    if receipt.get('isolation',{}).get('category')!='http':return original_capture_present(receipt,entry)
+    record=receipt.get('http_evidence') or {}
+    try:
+        return (record['url']==entry['url'] and type(record['http_status']) is int and
+            400<=record['http_status']<=599 and record['http_status'] not in (403,429) and
+            not record.get('error') and len(record['evidence_sha256'])==64 and
+            hashlib.sha256(Path(record['file']).read_bytes()).hexdigest()==record['evidence_sha256'] and
+            datetime.fromisoformat(record['observed_at']).tzinfo is not None)
+    except (KeyError,ValueError,TypeError,OSError):return False
 
 def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
     """Probe is supplied by an approved reader and returns COMMITTED/NOT_FOUND/UNKNOWN.
@@ -42,13 +54,16 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
     output=[]
     for entry in entries:
         receipt=by_url.get(entry['url']);sql=sql_probe(entry,receipt)
-        if sql=='COMMITTED':state='COMMITTED'
+        if sql=='COMMITTED':state='UNCERTAIN' if receipt and receipt.get('state')=='QUARANTINED' else 'COMMITTED'
         elif sql!='NOT_FOUND' or receipt is None:state='UNCERTAIN'
         else:
             state=receipt.get('state','UNCERTAIN')
             if state not in STATES:raise ValueError('UNKNOWN_RECEIPT_STATE')
             if state=='COMMITTED':state='UNCERTAIN'
             if state=='HTTP_CAPTURED_NOT_COMMITTED' and not original_capture_present(receipt,entry):state='UNCERTAIN'
+            if state=='QUARANTINED' and not quarantine_evidence_present(receipt,entry):state='UNCERTAIN'
+            if state=='QUARANTINED' and not (receipt.get('isolation',{}).get('before_ingest') is True and
+                    receipt['isolation'].get('category') in ('parse','identity','http')):state='UNCERTAIN'
         output.append({'entry':deepcopy(entry),'receipt':deepcopy(receipt),'state':state,'origin':dict(origin)})
     return output
 
@@ -59,7 +74,7 @@ def pending_manifest(original,classified,*,parent_job_id,parent_manifest_sha256,
     known={e['url']:e for e in original['entries']}
     if len(known)!=len(original['entries']):raise ValueError('DUPLICATE_MANIFEST_URL')
     if len(classified)!=len(known) or {x['entry']['url'] for x in classified}!=set(known):raise ValueError('INCOMPLETE_OR_DUPLICATE_CLASSIFICATION')
-    http=[];offline=[];uncertain=[];failed=[]
+    http=[];offline=[];uncertain=[];failed=[];quarantined=[]
     for row in classified:
         entry=row['entry'];state=row['state']
         if entry!=known[entry['url']]:raise ValueError('MANIFEST_ENTRY_CHANGED')
@@ -67,8 +82,10 @@ def pending_manifest(original,classified,*,parent_job_id,parent_manifest_sha256,
         elif state=='HTTP_CAPTURED_NOT_COMMITTED':offline.append(deepcopy(row))
         elif state=='UNCERTAIN':uncertain.append(entry['url'])
         elif state=='FAILED':failed.append(entry['url'])
+        elif state=='QUARANTINED':quarantined.append(deepcopy(row))
     return {'http_pending':{**deepcopy(original),'entries':http,'resume':{'parent_job_id':parent_job_id,'parent_manifest_sha256':parent_manifest_sha256,'mode':'PENDING_ONLY','discovery_complete':False}},
-            'offline_pending':offline,'uncertain':uncertain,'failed_requires_decision':failed,'automatic_resume_allowed':not uncertain and not failed}
+            'offline_pending':offline,'uncertain':uncertain,'failed_requires_decision':failed,
+            'quarantined':quarantined,'automatic_resume_allowed':not uncertain and not failed}
 
 class SourceCheckpoint:
     """Single leased collector owns this job checkpoint; O_EXCL guards concurrent writers.

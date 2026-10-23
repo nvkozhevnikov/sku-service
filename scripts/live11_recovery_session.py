@@ -112,6 +112,17 @@ def execute(queue,manifest,folder):
                 save(folder,'STATUS.json',status)
                 if status['complete']:reason='COMPLETED';break
                 phases=status['phases']
+                if manifest.get('continuation'):
+                    # Proven time-budget boundaries reuse the SAME queue;
+                    # semantic URL quarantine does not cancel unrelated hosts.
+                    pending=[p for p in phases if p.get('job_id') is not None and
+                        p.get('state') in ('ошибка','остановлено','требуется решение оператора')]
+                    if pending:
+                        recovery.recover_continuation(queue,manifest,recovery.file_sha(os.environ[recovery.ENV+'_FILE']))
+                        continue
+                    if len(phases)==22 and all(p.get('execution_finished') for p in phases):
+                        reason='COMPLETED_WITH_QUARANTINE' if any(p.get('quarantined_count') for p in phases) else 'COMPLETED'
+                        break
                 if any(p.get('job_id') is not None and p.get('state') in ('ошибка','остановлено','требуется решение оператора') for p in phases):
                     # report projects latest attempts; old evidence is retained.
                     raise RuntimeError('RECOVERY_PHASE_REQUIRES_OPERATOR_DECISION')

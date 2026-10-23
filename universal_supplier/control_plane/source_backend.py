@@ -70,6 +70,15 @@ class SourceBackend:
                        currency,card.availability_raw,card.availability_normalized,Jsonb({'parser':self.code,'evidence_sha256':capture.evidence_sha256})))
         return {'ingest_counts':counts}
     def probe(self,entry,receipt):
+        if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')=='http':
+            from .source_resume import quarantine_evidence_present
+            if not quarantine_evidence_present(receipt,entry):return 'UNKNOWN'
+            record=receipt['http_evidence']
+            with self.repo.connection.cursor() as q:
+                q.execute('''SELECT count(*) FROM supplier_http_captures c JOIN suppliers s ON s.id=c.supplier_id
+                    WHERE s.code=%s AND c.requested_url=%s AND c.evidence_sha256=%s AND c.observed_at=%s''',
+                    (self.code,entry['url'],record['evidence_sha256'],record['observed_at']))
+                return 'NOT_FOUND' if q.fetchone()==(0,) else 'UNKNOWN'
         if not receipt or not receipt.get('original_capture_metadata'):return 'UNKNOWN'
         from universal_supplier.commercial_persistence import HttpCapture
         fields=dict(receipt['original_capture_metadata']);fields['observed_at']=datetime.fromisoformat(fields['observed_at'])
@@ -82,8 +91,8 @@ class SourceBackend:
                        FROM supplier_http_captures c JOIN suppliers s ON s.id=c.supplier_id
                        JOIN source_products sp ON sp.id=c.source_product_id
                        WHERE s.code=%s AND c.capture_fingerprint=%s AND c.requested_url=%s
-                           AND sp.external_id=%s''',
-                      (self.code,capture.fingerprint,entry['url'],receipt.get('external_id')))
+                           AND (sp.external_id=%s OR %s IS NULL)''',
+                      (self.code,capture.fingerprint,entry['url'],receipt.get('external_id'),receipt.get('external_id')))
             rows=q.fetchall()
         if not rows:return 'NOT_FOUND'
         if len(rows)!=1:return 'UNKNOWN'

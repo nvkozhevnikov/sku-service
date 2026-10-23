@@ -27,6 +27,13 @@ LEASE_ALIVE = ContextVar('source_collector_lease_alive', default=None)
 MODES = ('REFRESH', 'DISCOVERY', 'RESUME')
 AGENT = 'UniversalSupplierReadOnly/1.0'
 
+
+class CardExtractionError(ValueError):
+    """Only pre-ingest extraction/identity errors are isolatable, never SQL errors."""
+    def __init__(self, reason, category='parse'):
+        super().__init__(reason)
+        self.category=category
+
 def engine_fingerprint():
     root=Path(__file__).resolve().parents[2]
     files=sorted([*root.joinpath('universal_supplier').rglob('*.py'),*root.joinpath('sterbrust_matching').rglob('*.py')])
@@ -155,6 +162,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     sql_counts={k:0 for k in count_names};counts_known=True
     http_started=clock.monotonic();http_seconds=0.;sql_seconds=0.;parse_seconds=0.;matching_seconds=None
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
+    isolated=[];consecutive_card_errors=0
     try:
         recovery_proof = None
         if (job.settings_snapshot.get('source_batch') or {}).get('recovery'):
@@ -274,12 +282,16 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             def reconcile():
                 receipts=[]
                 approved_receipts={}
-                if recovery_proof and recovery_proof['kind']=='post-stop':
+                if recovery_proof and recovery_proof['kind'] in ('post-stop','continuation'):
                     from .source_recovery import post_stop_receipts
                     approved_receipts=post_stop_receipts(code,owner,sha,cp.state)
                 for e in entries:
                     url=e['url']
-                    if url in cp.state['terminal']:receipts.append(approved_receipts.get(url,cp.state['terminal'][url]['receipt']))
+                    if url in cp.state['terminal']:
+                        receipt=approved_receipts.get(url,cp.state['terminal'][url]['receipt'])
+                        if receipt['state']=='HTTP_CAPTURED_NOT_COMMITTED' and not receipt.get('external_id') and e.get('source_external_id'):
+                            receipt={**receipt,'external_id':e['source_external_id']}
+                        receipts.append(receipt)
                     elif url in cp.state['frontier']:receipts.append({'url':url,'state':'NOT_REQUESTED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha}})
                 def probe(e,r):
                     if r and r['state']=='NOT_REQUESTED':return 'NOT_FOUND'
@@ -290,6 +302,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 classified,plan=reconcile()
                 if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR')
                 for r in classified:
+                    if r['state']=='QUARANTINED' and cp.state['terminal'][r['entry']['url']]['state']!='QUARANTINED':
+                        cp.record_terminal([r['receipt']])
                     if r['state']=='COMMITTED':
                         cp.record_terminal([{**r['receipt'],'state':'COMMITTED','sql_verified':True}])
                         if not r['receipt'].get('matching_receipt') and not (recovery_proof and recovery_proof['kind']=='matching-only'):matching_pending.append(r['receipt']['external_id'])
@@ -302,15 +316,19 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 began=time.perf_counter()
                 body=Path(cap.evidence_ref).read_bytes()
                 if hashlib.sha256(body).hexdigest()!=cap.evidence_sha256:raise ValueError('ARCHIVE_HASH_CHANGED')
-                product=parse_existing(code,body.decode('utf-8'),cap.final_url)
+                try:product=parse_existing(code,body.decode('utf-8'),cap.final_url)
+                except (ValueError,UnicodeError) as error:
+                    if any(marker in str(error).upper() for marker in ('CROSS_HOST','NAMESPACE','OUTSIDE_SCOPE','CHECKPOINT','CAPTURE','APPROVAL')):raise
+                    raise CardExtractionError(str(error),'identity' if 'disagree' in str(error).lower() or 'model' in str(error).lower() else 'parse') from error
                 if code in NATIVE_SOURCES:product=replace(product,requested_url=cap.requested_url,final_url=cap.final_url,redirect_urls=cap.redirects)
                 external=product.external_id if code in ('kami',*NATIVE_SOURCES) else product.site_internal_id
-                if not external or not product.name:raise ValueError('SOURCE_IDENTITY_UNRESOLVED')
-                if entry.get('source_external_id') and external!=entry['source_external_id']:raise ValueError('SOURCE_EXTERNAL_ID_CHANGED')
-                if receipt and receipt.get('external_id') and receipt['external_id']!=external:raise ValueError('RESUME_PARSER_ID_CHANGED')
+                if not external or not product.name:raise CardExtractionError('SOURCE_IDENTITY_UNRESOLVED','identity')
+                if entry.get('source_external_id') and external!=entry['source_external_id']:raise CardExtractionError('SOURCE_EXTERNAL_ID_CHANGED','identity')
+                if receipt and receipt.get('external_id') and receipt['external_id']!=external:raise CardExtractionError('RESUME_PARSER_ID_CHANGED','identity')
                 if external in seen and seen[external]!=url:raise ValueError('SOURCE_ID_REUSED_BY_ANOTHER_URL')
                 seen[external]=url
-                card=product if code in ('kami',*NATIVE_SOURCES) else product_card_from_snapshot(product,cap)
+                try:card=product if code in ('kami',*NATIVE_SOURCES) else product_card_from_snapshot(product,cap)
+                except ValueError as error:raise CardExtractionError(str(error)) from error
                 validate_url(code,card.canonical_url)
                 if card.supplier_code!=code:raise ValueError('SOURCE_NAMESPACE_CHANGED')
                 parse_seconds+=time.perf_counter()-began
@@ -332,9 +350,27 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     cp.record_terminal([{**captured,'state':'COMMITTED','sql_verified':True}]);committed.append(external)
                     matching_pending.append(external)
                 rows.append({'url':url,'external_id':external,'status':'COMMITTED' if backend else 'HTTP_CAPTURED_NOT_COMMITTED','observed_at':cap.observed_at.isoformat()})
+            def isolate(entry,error,record=None,receipt=None,category=None):
+                nonlocal consecutive_card_errors
+                if category=='http':
+                    read_body(record)
+                    value={'url':entry['url'],'state':'QUARANTINED','http_evidence':record,
+                        'origin':{'source':code,'job_id':owner,'manifest_sha256':sha}}
+                else:
+                    cap=capture_from_record(record) if record else restore_capture(receipt['original_capture_metadata'])
+                    value=receipt_for(entry['url'],'QUARANTINED',cap,code,owner,sha,entry.get('source_external_id'))
+                value['isolation']={'format':'source-url-isolation/v1','before_ingest':True,
+                    'category':category or error.category,'reason':str(error)}
+                cp.record_terminal([value]);isolated.append(value);consecutive_card_errors+=1
+                # Reuse the approved source's error threshold, not a product cap.
+                if consecutive_card_errors>=rate.consecutive_error_threshold:
+                    fetcher.stop('SOURCE_CARD_ERROR_THRESHOLD')
             for item in offline:
                 if stopped():termination=str(stopped());break
-                process(item['entry'],receipt=item['receipt'])
+                try:
+                    process(item['entry'],receipt=item['receipt']);consecutive_card_errors=0
+                except CardExtractionError as error:isolate(item['entry'],error,receipt=item['receipt'])
+                if fetcher.aborted():break
             if cp.state['frontier'] and not termination:
                 if robot is None:robots()
                 fetched_count=0
@@ -345,8 +381,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     gate_target=min(gate_size,len(entries))
                     verified=sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values())
                     gate_passed=verified>=gate_target
-                    if not gate_passed and fetched_count>=gate_target:
-                        fetcher.stop('SAFETY_GATE_SQL_NOT_PROVEN');break
+                    # Quarantine is not SQL proof. Keep narrow dispatch until
+                    # enough eligible cards have actual COMMITTED readbacks.
                     batch=min(rate.max_concurrency,limit-fetched_count,1000)
                     if not gate_passed:batch=min(batch,max(1,gate_target-verified))
                     urls=cp.claim_batch(batch);outcomes=fetch(urls);fetched_count+=len(urls)
@@ -356,13 +392,16 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                                 cp.return_not_requested({'url':outcome.url,'state':'NOT_REQUESTED','transport_started':False,'origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcome.error})
                                 fetcher.stop(fetcher.stop_reason or 'SOURCE_REQUEST_NOT_DISPATCHED');continue
                             receipt={'url':outcome.url,'state':'FAILED' if outcome.response else 'UNCERTAIN','origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcome.error or 'HTTP_'+str(outcome.response.status_code)}
-                            cp.record_terminal([receipt]);errors.append(receipt);fetcher.stop('SOURCE_CARD_HTTP_FAILED');continue
+                            if outcome.response is not None and not outcome.error and not fetcher.stop_reason and outcome.url in records:
+                                isolate(byurl[outcome.url],CardExtractionError('HTTP_'+str(outcome.response.status_code)),record=records[outcome.url],category='http')
+                            else:
+                                cp.record_terminal([receipt]);errors.append(receipt);fetcher.stop(fetcher.stop_reason or 'SOURCE_CARD_HTTP_FAILED')
+                            continue
                         # All successful responses are already durably captured.
                         if fetcher.stop_reason:continue
-                        try:process(byurl[outcome.url],records[outcome.url])
-                        except ValueError as e:
-                            if str(e)=='SQL_COMMIT_NOT_PROVEN':raise
-                            cp.record_terminal([{'url':outcome.url,'state':'FAILED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':str(e)}]);errors.append({'url':outcome.url,'error':str(e)});fetcher.stop('SOURCE_CARD_PARSE_FAILED')
+                        try:
+                            process(byurl[outcome.url],records[outcome.url]);consecutive_card_errors=0
+                        except CardExtractionError as error:isolate(byurl[outcome.url],error,record=records[outcome.url])
                     gate_passed=sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values())>=gate_target
                     if backend:backend.progress({'collection_mode':mode,'phase':'PRODUCTS','safety_gate_passed':gate_passed,'approved_total_cap':limit,'found':len(entries),'processed':sum(x['state']!='NOT_REQUESTED' for x in cp.state['terminal'].values()),'parsed_this_job':len(rows),'remaining':len(cp.state['frontier']),'sql_committed_this_job':len(committed),'sql_committed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values()),'request_metrics':fetcher.metrics.as_metadata(),'http_seconds':http_seconds,'http_cards_per_minute':None if http_seconds<=0 else 60*sum(u in byurl for u in records)/http_seconds})
                 termination=termination or fetcher.stop_reason or ('PRODUCT_BATCH_BUDGET' if cp.state['frontier'] else None)
@@ -412,7 +451,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             'discovery_complete':bool(original['mode']=='DISCOVERY' and discovery.state['discovery_finished']),
             'external_catalog_completeness':'NOT_PROVEN','deactivation_allowed':False,
             'sql_committed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values()),
-            'sql_committed_this_job':len(committed),'rows':rows,'errors':len(errors),'error_details':errors,
+            'sql_committed_this_job':len(committed),'rows':rows,'errors':len(errors)+sum(x['state']=='QUARANTINED' for x in cp.state['terminal'].values()),'error_details':errors,
+            'quarantined':[x['receipt'] for x in cp.state['terminal'].values() if x['state']=='QUARANTINED'],
+            'collection_complete':not termination and not errors and not remaining and not any(x['state']!='COMMITTED' for x in cp.state['terminal'].values()),
             'sql_counts':sql_counts if counts_known else None,
             'parsed_this_job':len(rows),
             'request_metrics':metrics,'http_seconds':http_seconds,'http_cards_per_minute':None if http_seconds<=0 else 60*len(set(records)&product_urls)/http_seconds,

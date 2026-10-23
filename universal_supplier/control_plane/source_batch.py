@@ -238,6 +238,12 @@ def resume_envelope(cursor, previous, snapshot, recovery_proof=None):
     if succeeded or latest_attempt != envelope['attempt']:
         raise PermissionError('BATCH_RESUME_LATEST_UNFINISHED_PHASE_ONLY')
     if count >= 3:
+        if recovery_proof and recovery_proof.get('kind')=='continuation':
+            from .source_recovery import continuation_envelope
+            snapshot['source_batch']=continuation_envelope(previous,count,latest_attempt,recovery_proof)
+            snapshot['source_input']=deepcopy(previous['source_input'])
+            validate_snapshot(snapshot)
+            return snapshot
         from .source_recovery import post_stop_envelope
         snapshot['source_batch']=post_stop_envelope(previous,count,latest_attempt,recovery_proof)
         snapshot['source_input']=deepcopy(previous['source_input'])
@@ -264,6 +270,8 @@ def report(rows):
         rt = metadata.get('source_runtime') or {}
         reason = rt.get('termination_reason') or latest.get('error_message')
         state = STATES_RU.get(latest['status'], 'требуется решение оператора')
+        quarantine=rt.get('quarantined') or []
+        if latest['status']=='succeeded' and quarantine:state='завершено с карантином'
         if str(reason or '').startswith('OPERATOR') and latest['status'] not in ('queued','running'):
             state = 'остановлено'
         if rt.get('resume_uncertain'):
@@ -281,7 +289,9 @@ def report(rows):
             'price_changes': sum_known('batch_price_changes'), 'stock_changes': sum_known('batch_stock_changes'),
             'discovery_complete': discovery, 'external_catalog_completeness': 'NOT_PROVEN',
             'reason': reason, 'resume_available': rt.get('resume_available', False),
-            'operator_action_required': latest['status'] not in ('queued','running','succeeded') or (phase == 'DISCOVERY' and discovery is not True),
+            'quarantined':quarantine,'quarantined_count':len(quarantine),
+            'execution_finished':latest['status']=='succeeded',
+            'operator_action_required': bool(quarantine) or latest['status'] not in ('queued','running','succeeded') or (phase == 'DISCOVERY' and discovery is not True),
             'next_phase_pending': bool(latest['settings_snapshot']['source_batch'].get('next_snapshot')) and (source,'DISCOVERY') not in phases})
     # A phase not yet materialized is still a durable approved scope, visible to operator.
     for item in list(output):

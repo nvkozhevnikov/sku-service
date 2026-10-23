@@ -29,6 +29,11 @@ def main():
     recovery.add_argument('--batch-id',required=True)
     recovery.add_argument('--evidence',required=True,type=Path)
     recovery.add_argument('--output',required=True,type=Path)
+    continuation=sub.add_parser('prepare-continuation',help='READ ONLY: bounded current-batch continuation and quarantine approval')
+    continuation.add_argument('--previous',required=True,type=Path)
+    continuation.add_argument('--previous-sha256',required=True)
+    continuation.add_argument('--quarantine-url',action='append',default=[])
+    continuation.add_argument('--output',required=True,type=Path)
     recovery=sub.add_parser('recover',help='WRITE only after explicit same-batch recovery approval')
     recovery.add_argument('--approval',required=True,type=Path)
     recovery.add_argument('--sha256',required=True)
@@ -36,12 +41,15 @@ def main():
     recovery.add_argument('--run',action='store_true',help='Explicit operator session: existing worker until terminal/isolation gate')
     recovery.add_argument('--activate-approved-settings',action='store_true',help='Temporarily activate exact approval matrix; restore after worker shutdown')
     args = parser.parse_args()
-    if args.action in ('prepare-recovery','recover'):
+    if args.action in ('prepare-recovery','prepare-continuation','recover'):
         from cabinet_batch_read import target_config,command
         from universal_supplier.control_plane.source_recovery import prepare,file_sha,ENV,require
         import os
-        if args.action=='prepare-recovery':
-            result=prepare(PostgresJobQueue(target_config()),args.evidence,args.batch_id)
+        if args.action in ('prepare-recovery','prepare-continuation'):
+            if args.action=='prepare-continuation':
+                from universal_supplier.control_plane.source_recovery import prepare_continuation
+                result=prepare_continuation(PostgresJobQueue(target_config()),args.previous,args.previous_sha256,args.quarantine_url)
+            else:result=prepare(PostgresJobQueue(target_config()),args.evidence,args.batch_id)
             require(not args.output.exists(),'RECOVERY_OUTPUT_ALREADY_EXISTS')
             args.output.parent.mkdir(parents=True,exist_ok=True)
             args.output.write_text(json.dumps(result,ensure_ascii=False,indent=2,default=str),encoding='utf-8')

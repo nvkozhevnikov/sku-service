@@ -23,6 +23,8 @@ ENGINE_CHANGES = {
     'universal_supplier/control_plane/source_runtime.py',
     'universal_supplier/control_plane/queue.py',
     'universal_supplier/control_plane/source_controls.py',
+    'universal_supplier/control_plane/source_resume.py',
+    'universal_supplier/control_plane/source_backend.py',
     'universal_supplier/adapters/bekamak_official.py',
 }
 REVIEWED_PARSER_SHA = 'bba4ffdea6591488f0873243b5106426056ee821d8edd8741f28dd2c7f09d4f4'
@@ -180,7 +182,9 @@ def allow_old_head(envelope):
             envelope['scope_sha256'] in value['scope_hashes'], 'RECOVERY_ENVELOPE_CHANGED')
     expected = next(e for e in value['envelopes'] if e['scope_sha256']==envelope['scope_sha256'])
     require(all(envelope.get(k)==v for k,v in expected.items() if k!='attempt'), 'RECOVERY_APPROVED_ENVELOPE_CHANGED')
-    if envelope.get('attempt')==4:
+    if value.get('continuation'):
+        continuation_envelope_check(value,envelope)
+    elif envelope.get('attempt')==4:
         extra_attempt_envelope(value,envelope)
     else:
         require(type(envelope['attempt']) is int and 1 <= envelope['attempt'] <= 3,
@@ -241,6 +245,8 @@ def validate_matching(cursor, snapshot, parent_id=17, run_id=None, config=None, 
     from .source_runtime import job_dir, read_input
     from .source_batch import validate_snapshot
     value, sha = approval()
+    if value.get('continuation'):
+        return validate_continuation(cursor,snapshot,parent_id,config,lock_parent,value,sha)
     if str(parent_id) in value.get('post_stop',{}).get('parents',{}):
         return validate_post_stop(cursor,snapshot,parent_id,config,lock_parent,value,sha)
     if parent_id != 17:
@@ -268,7 +274,7 @@ def validate_matching(cursor, snapshot, parent_id=17, run_id=None, config=None, 
 
 
 def admission_runtime(runtime,proof):
-    if proof.get('kind')=='post-stop':
+    if proof.get('kind') in ('post-stop','continuation'):
         require(digest(runtime)==proof['runtime_sha256'] and
                 set(runtime.get('resume_uncertain') or [])<=set(proof.get('allowed_cached_uncertain',[])),
                 'RECOVERY_RUNTIME_OWNER_OR_RECEIPTS_CHANGED')
@@ -429,12 +435,12 @@ def runtime_proof(job, config):
     proof = (job.settings_snapshot.get('source_batch') or {}).get('recovery')
     if not proof:
         return None
-    require(proof['kind'] in ('matching-only','post-stop'), 'RECOVERY_CHILD_KIND')
+    require(proof['kind'] in ('matching-only','post-stop','continuation'), 'RECOVERY_CHILD_KIND')
     value, sha = approval()
     require(proof['approval_sha256'] == sha, 'RECOVERY_CHILD_APPROVAL_CHANGED')
     settings=job.settings_snapshot['crawl_settings']
     owner=proof['parent_job_id']
-    require(settings.get('collection_mode')=='RESUME' and settings.get('resume_owner_job_id')==owner,
+    require(settings.get('collection_mode')=='RESUME' and (proof['kind']=='continuation' or settings.get('resume_owner_job_id')==owner),
             'RECOVERY_CHILD_OWNER_CHANGED')
     from .queue import PostgresJobQueue
     from .source_canary import validate_config, validate_connection
@@ -448,7 +454,9 @@ def runtime_proof(job, config):
         parent = cursor.fetchone()
         require(parent and parent[:2] == ('partial',proof['run_id']), 'RECOVERY_PARENT_CHANGED')
         require(settings.get('resume_input_sha256')==digest(parent[2]['source_input']), 'RECOVERY_CHILD_OWNER_CHANGED')
-        return validate_matching(cursor, parent[2], owner, proof['run_id'], config=config, lock_parent=False)
+        result=validate_matching(cursor, parent[2], owner, proof['run_id'], config=config, lock_parent=False)
+        if proof['kind']=='continuation':require(settings.get('resume_owner_job_id')==result['owner_job_id'],'RECOVERY_CHILD_OWNER_CHANGED')
+        return result
 
 
 def retry_cancelled(queue):
@@ -529,6 +537,8 @@ def retry_stopped_snapshot(value,expected,attempts,sha):
 def recover(queue):
     """Existing RESUME first, then idempotent cancelled-root retry; no worker start."""
     value, sha = approval()
+    if value.get('continuation'):
+        return recover_continuation(queue,value,sha)
     if value.get('post_stop'):
         return recover_post_stop(queue,value,sha)
     if value.get('matching_recoveries'):
@@ -628,6 +638,8 @@ def post_stop_receipts(code,owner,input_sha,state):
     record its COMMITTED successor; no failed URL re-enters the HTTP frontier.
     """
     value,_=approval()
+    if value.get('continuation'):
+        return continuation_receipts(value,code,owner,input_sha,state)
     if str(owner) not in value.get('post_stop',{}).get('parents',{}):return {}
     item=post_stop_item(value,owner)
     require(code==item['snapshot']['supplier_code'] and input_sha==digest(item['snapshot']['source_input']),
@@ -764,3 +776,254 @@ def recover_post_stop(queue,value,sha):
             retried.append(batch.insert(q,item['supplier_id'],snapshot))
     return {'batch_id':value['batch_id'],'resumed_partial':resumed,'retried_roots':retried,
             'worker_started':False,'one_additional_attempt_only':True}
+
+
+def continuation_rule(value,scope):
+    plan=value.get('continuation',{})
+    require(plan.get('format')=='live11-continuation/v1' and plan.get('batch_id')==value['batch_id'],
+            'RECOVERY_CONTINUATION_NOT_APPROVED')
+    require(set(plan.get('phases',{}))==set(value['scope_hashes']) and len(plan['phases'])==22 and
+            set(plan.get('manual_hashes',{}))=={'review_decisions','candidate_rejections'} and
+            len(plan.get('mappings1282',[]))==1282,'RECOVERY_CONTINUATION_PROOF_INCOMPLETE')
+    rule=plan.get('phases',{}).get(scope)
+    require(rule and scope in value['scope_hashes'] and type(rule.get('max_attempt')) is int and
+            1<=rule['max_attempt']<=8,'RECOVERY_CONTINUATION_BOUND')
+    return rule
+
+
+def continuation_envelope_check(value,envelope):
+    rule=continuation_rule(value,envelope['scope_sha256'])
+    if digest(envelope) in value['continuation']['historical_envelopes']:return
+    if envelope.get('attempt',0)<=3 and not envelope.get('continuation_recovery'):
+        require(type(envelope['attempt']) is int and envelope['attempt']>=1,'BATCH_RESUME_ATTEMPTS_EXHAUSTED')
+        return
+    marker=envelope.get('continuation_recovery',{})
+    require(marker.get('approval_sha256')==os.environ.get(ENV+'_SHA256') and
+            type(marker.get('parent_job_id')) is int and
+            type(envelope['attempt']) is int and 1<=envelope['attempt']<=rule['max_attempt'],
+            'BATCH_RESUME_ATTEMPTS_EXHAUSTED')
+
+
+def continuation_envelope(previous,count,latest,proof):
+    value,sha=approval();env=previous['source_batch'];rule=continuation_rule(value,env['scope_sha256'])
+    require(proof and proof.get('kind')=='continuation' and proof['approval_sha256']==sha and
+            latest==env['attempt'] and count==latest and count<rule['max_attempt'],
+            'BATCH_RESUME_ATTEMPTS_EXHAUSTED')
+    result=deepcopy(env)
+    result.pop('post_stop_recovery',None);result.pop('recovery',None)
+    result.update(attempt=count+1,continuation_recovery={'parent_job_id':proof['parent_job_id'],'approval_sha256':sha})
+    return result
+
+
+def continuation_receipts(value,code,owner,input_sha,state):
+    """Only the exact operator-approved historic failure gets quarantined.
+
+    This is an in-memory proposal. Native runtime appends it after SQL proves
+    no ingest; old FAILED history and original immutable input remain intact.
+    """
+    overrides={}
+    for item in value['continuation'].get('quarantine',[]):
+        if (item['source'],item['owner_job_id'],item['input_sha256'])!=(code,owner,input_sha):continue
+        row=state['terminal'].get(item['url'])
+        if row and row['state']=='QUARANTINED':continue
+        require(row==item['failed_row'] and row['state']=='FAILED','RECOVERY_QUARANTINE_EVIDENCE_CHANGED')
+        capture=item['captured_receipt'];meta=capture['original_capture_metadata']
+        require(capture in row['history'] and capture['state']=='HTTP_CAPTURED_NOT_COMMITTED' and
+                capture['origin']=={'source':code,'job_id':owner,'manifest_sha256':input_sha} and
+                meta['http_status']==200 and meta['requested_url']==item['url'] and
+                file_sha(meta['evidence_ref'])==meta['evidence_sha256'],'RECOVERY_QUARANTINE_CAPTURE_CHANGED')
+        proposed=deepcopy(capture);proposed['state']='QUARANTINED'
+        proposed['isolation']={'format':'source-url-isolation/v1','before_ingest':True,'category':'identity',
+            'reason':row['receipt']['reason'],'operator_authorized':True}
+        overrides[item['url']]=proposed
+    return overrides
+
+
+def continuation_invariants(cursor,value,config):
+    from . import source_batch as batch
+    batch.validate_config(config)
+    cursor.execute("""SELECT current_database(),system_identifier::text,current_setting('server_version'),
+        current_setting('data_directory'),host(inet_server_addr()),inet_server_port(),
+        current_user,rolsuper,rolbypassrls FROM pg_control_system(),pg_roles WHERE rolname=current_user""")
+    target=cursor.fetchone();t=batch.TARGET
+    require(target and target[:3]==(t['dbname'],t['system_identifier'],'17.11') and
+            Path(target[3]).resolve()==Path(t['pgdata']).resolve() and
+            target[4:]==(t['host'],t['port'],'rc_runtime',False,False),'RECOVERY_SQL_TARGET_OR_ROLE_CHANGED')
+    for table,expected in value['continuation']['manual_hashes'].items():
+        require(table in ('review_decisions','candidate_rejections'),'RECOVERY_MANUAL_TABLE_NOT_APPROVED')
+        cursor.execute(f'''SELECT count(*),md5(coalesce(string_agg(md5(to_jsonb(t)::text),''
+            ORDER BY md5(to_jsonb(t)::text) COLLATE "C"),'')) FROM {table} t''')
+        require(normal(cursor.fetchone())==expected,'RECOVERY_MANUAL_DECISIONS_CHANGED')
+    mappings=value['continuation']['mappings1282'];require(len(mappings)==1282,'RECOVERY_MAPPINGS_CHANGED')
+    cursor.execute('''SELECT sp.id,s.code,sp.external_id,sp.catalog_product_id,sb.sterbrust_product_id
+        FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+        LEFT JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id
+        WHERE sp.id=ANY(%s) AND sp.catalog_product_id IS NOT NULL ORDER BY sp.id,sb.sterbrust_product_id''',
+        (sorted({r[0] for r in mappings}),))
+    require(normal(cursor.fetchall())==mappings,'RECOVERY_SQL_MAPPINGS_CHANGED')
+
+
+def validate_continuation(cursor,snapshot,parent_id,config,lock_parent,value,sha):
+    from . import source_batch as batch
+    from .source_runtime import job_dir,read_input
+    from .source_controls import verify_resume
+    batch.validate_snapshot(snapshot);rule=continuation_rule(value,snapshot['source_batch']['scope_sha256'])
+    continuation_invariants(cursor,value,config)
+    cursor.execute('SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs WHERE id=%s'+
+                   (' FOR SHARE' if lock_parent else ''),(parent_id,))
+    row=cursor.fetchone()
+    require(row and row[2]==snapshot and row[0] in ('partial','cancelled'),'RECOVERY_PARENT_CHANGED')
+    initial=rule.get('initial_parent')
+    if initial and initial['id']==parent_id:
+        require((row[0],row[1])==(initial['status'],initial['run_id']),'RECOVERY_PARENT_CHANGED')
+        require(set(initial.get('source_hashes',{}))=={'source_products','offers','product_matches','product_identity_decisions','review_cases'},
+                'RECOVERY_SQL_PROOF_INCOMPLETE')
+        # Before the first continuation, reject concurrent source edits.
+        for table,expected in initial['source_hashes'].items():
+            require(table in ('source_products','offers','product_matches','product_identity_decisions','review_cases'),'RECOVERY_HASH_TABLE_NOT_APPROVED')
+            predicate='t.supplier_id=%s' if table in ('source_products','offers') else 'EXISTS(SELECT 1 FROM source_products sp WHERE sp.id=t.source_product_id AND sp.supplier_id=%s)'
+            cursor.execute(f'''SELECT count(*),md5(coalesce(string_agg(md5(to_jsonb(t)::text),''
+                ORDER BY md5(to_jsonb(t)::text) COLLATE "C"),'')) FROM {table} t WHERE {predicate}''',(initial['supplier_id'],))
+            require(normal(cursor.fetchone())==expected,'RECOVERY_SQL_SOURCE_CHANGED')
+    if row[1] is None:
+        require(initial and initial['id']==parent_id and row[0]=='cancelled','RECOVERY_CANCELLED_NOT_APPROVED')
+        return {'kind':'continuation','parent_job_id':parent_id,'run_id':None,'approval_sha256':sha}
+    require(row[0]=='partial','RECOVERY_PARENT_CHANGED')
+    cursor.execute('SELECT metadata FROM crawl_runs WHERE id=%s',(row[1],))
+    runtime=(cursor.fetchone()[0] or {}).get('source_runtime',{})
+    owner=runtime.get('owner_job_id');input_sha=digest(snapshot['source_input'])
+    require(type(owner) is int and runtime.get('input_sha256')==input_sha,'RECOVERY_RUNTIME_OWNER_OR_RECEIPTS_CHANGED')
+    path=job_dir(snapshot['supplier_code'],owner)/'checkpoint.json'
+    cp=json.loads(path.read_text(encoding='utf-8'));state=deepcopy(cp);checksum=state.pop('checksum')
+    require(digest(state)==checksum and not cp['inflight'],'RECOVERY_CHECKPOINT_CHECKSUM')
+    allowed={i['url'] for i in value['continuation']['quarantine'] if i['owner_job_id']==owner}
+    require(set(runtime.get('resume_uncertain') or [])<=allowed,'RECOVERY_UNAPPROVED_FAILED_OR_UNCERTAIN')
+    if initial and initial['id']==parent_id:
+        require(file_sha(path)==initial['checkpoint_sha256'] and digest(runtime)==initial['runtime_sha256'],
+                'RECOVERY_CHECKPOINT_CHANGED')
+    original=read_input(snapshot['supplier_code'],owner,input_sha)
+    require(original==snapshot['source_input'],'RECOVERY_INPUT_NOT_APPROVED')
+    verify_resume(snapshot['supplier_code'],owner,input_sha,original,config)
+    return {'kind':'continuation','parent_job_id':parent_id,'owner_job_id':owner,'run_id':row[1],
+            'approval_sha256':sha,'input_sha256':input_sha,'runtime_sha256':digest(runtime),
+            'allowed_cached_uncertain':sorted(allowed)}
+
+
+def recover_continuation(queue,value,sha):
+    """Existing enqueue/RESUME only, signed per-phase ceiling, no new scheduler."""
+    from . import source_batch as batch
+    resumed=[];retried=[]
+    with queue._connect() as c,c.cursor() as q:
+        c.read_only=True
+        q.execute('''SELECT DISTINCT ON (supplier_id,settings_snapshot->'source_batch'->>'phase')
+            id,supplier_id,status,crawl_run_id,settings_snapshot FROM crawl_jobs
+            WHERE settings_snapshot->'source_batch'->>'id'=%s ORDER BY supplier_id,
+            settings_snapshot->'source_batch'->>'phase',id DESC''',(value['batch_id'],))
+        latest=q.fetchall()
+    latest.sort(key=lambda row:(batch.SOURCE_ORDER.index(row[4]['supplier_code']),row[4]['source_batch']['phase']))
+    for jid,sid,status,run,snapshot in latest:
+        if status in ('queued','running','succeeded'):continue
+        require(status in ('partial','cancelled'),'RECOVERY_SYSTEMIC_FAILURE_REQUIRES_OPERATOR')
+        if run is not None:
+            # A later partial may only auto-continue a proven budget boundary.
+            rule=continuation_rule(value,snapshot['source_batch']['scope_sha256'])
+            if jid!=(rule.get('initial_parent') or {}).get('id'):
+                with queue._connect() as c,c.cursor() as q:
+                    c.read_only=True;q.execute('SELECT metadata FROM crawl_runs WHERE id=%s',(run,))
+                    rt=q.fetchone()[0].get('source_runtime',{})
+                require(rt.get('resume_available') is True and rt.get('termination_reason') in
+                    ('MAX_RUN_DURATION_EXCEEDED','DISCOVERY_PAGE_BUDGET','PRODUCT_BATCH_BUDGET'),
+                    'RECOVERY_SYSTEMIC_FAILURE_REQUIRES_OPERATOR')
+            result=queue.enqueue(sid,trigger_type='manual',crawl_type='full',source_mode='RESUME',resume_job_id=jid,recovery_sha256=sha)
+            resumed.append(result.job_id);continue
+        with queue._connect() as c,c.transaction(),c.cursor() as q:
+            q.execute('SELECT enabled,code,adapter_name,base_url FROM suppliers WHERE id=%s FOR UPDATE',(sid,))
+            enabled,code,adapter,base=q.fetchone()
+            require(enabled and code==adapter==snapshot['supplier_code'] and batch.normalized_domain(base)==snapshot['domain'],
+                    'RECOVERY_SOURCE_NOT_ENABLED_OR_CHANGED')
+            q.execute('SELECT pg_advisory_xact_lock(%s)',(8611011,))
+            proof=validate_continuation(q,snapshot,jid,queue.config,True,value,sha)
+            q.execute("SELECT id FROM crawl_jobs WHERE supplier_id=%s AND status IN ('queued','running')",(sid,))
+            if q.fetchone():continue
+            q.execute("""SELECT count(*),bool_or(status='succeeded'),max((settings_snapshot->'source_batch'->>'attempt')::int)
+                FROM crawl_jobs WHERE supplier_id=%s AND settings_snapshot->'source_batch'->>'id'=%s
+                AND settings_snapshot->'source_batch'->>'phase'=%s""",(sid,value['batch_id'],snapshot['source_batch']['phase']))
+            count,done,attempt=q.fetchone();require(not done,'RECOVERY_PHASE_ALREADY_COMPLETED')
+            new=deepcopy(snapshot);new['source_batch']=continuation_envelope(snapshot,count,attempt,proof)
+            batch.validate_snapshot(new);retried.append(batch.insert(q,sid,new))
+    return {'batch_id':value['batch_id'],'resumed_partial':resumed,'retried_roots':retried,'worker_started':False}
+
+
+def prepare_continuation(queue,previous,previous_sha,quarantine_urls):
+    """Read-only, concrete current-batch plan; exact HEAD/SHA still unconfirmed."""
+    from . import source_batch as batch
+    from .source_runtime import job_dir
+    require(file_sha(previous)==previous_sha,'RECOVERY_PREVIOUS_APPROVAL_CHANGED')
+    value=json.loads(Path(previous).read_text(encoding='utf-8'))
+    require(value.get('format')=='live11-recovery/v1' and not value.get('continuation'),
+            'RECOVERY_PREVIOUS_APPROVAL_FORMAT')
+    extra={'format':'live11-continuation/v1','batch_id':value['batch_id'],'phases':{},'quarantine':[],
+           'historical_envelopes':[],'manual_hashes':{},'mappings1282':value['post_stop']['mappings1282']}
+    with queue._connect() as c,c.cursor() as q:
+        c.read_only=True;batch.validate_config(queue.config);batch.validate_connection(c)
+        q.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running')")
+        require(not q.fetchall(),'RECOVERY_ACTIVE_JOBS')
+        q.execute('SELECT id,code,enabled,rate_settings,crawl_settings FROM suppliers ORDER BY code')
+        require(normal(q.fetchall())==value['settings_before'],'RECOVERY_SETTINGS_BASELINE_DRIFT')
+        q.execute('''SELECT j.id,j.supplier_id,j.status,j.crawl_run_id,j.settings_snapshot,r.metadata
+            FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
+            WHERE j.settings_snapshot->'source_batch'->>'id'=%s ORDER BY j.id''',(value['batch_id'],))
+        rows=q.fetchall();groups={}
+        for row in rows:
+            snap=row[4];env=snap['source_batch']
+            require(env['scope_sha256'] in value['scope_hashes'] and
+                    digest(batch.phase_scope(snap))==env['scope_sha256'],'RECOVERY_SCOPE_CHANGED')
+            groups.setdefault(env['scope_sha256'],[]).append(row)
+            extra['historical_envelopes'].append(digest(env))
+        source_by_scope={phase['source_batch']['scope_sha256']:phase['supplier_code']
+            for parent in value['parents'] for phase in
+            (parent['snapshot'],parent['snapshot']['source_batch']['next_snapshot'])}
+        for env in value['envelopes']:
+            attempts=groups.get(env['scope_sha256'],[])
+            rule={'source':source_by_scope[env['scope_sha256']],
+                'phase':env['phase'],'max_attempt':min(8,len(attempts)+4)}
+            extra['phases'][env['scope_sha256']]=rule
+            if not attempts or attempts[-1][2]=='succeeded':continue
+            jid,sid,status,run,snap,meta=attempts[-1]
+            require(status in ('partial','cancelled') and len(attempts)==snap['source_batch']['attempt'],
+                    'RECOVERY_PARENT_STATE_CHANGED')
+            initial={'id':jid,'supplier_id':sid,'status':status,'run_id':run,'source_hashes':{}}
+            rule['initial_parent']=initial
+            for table in ('source_products','offers','product_matches','product_identity_decisions','review_cases'):
+                predicate='t.supplier_id=%s' if table in ('source_products','offers') else 'EXISTS(SELECT 1 FROM source_products sp WHERE sp.id=t.source_product_id AND sp.supplier_id=%s)'
+                q.execute(f'''SELECT count(*),md5(coalesce(string_agg(md5(to_jsonb(t)::text),''
+                    ORDER BY md5(to_jsonb(t)::text) COLLATE "C"),'')) FROM {table} t WHERE {predicate}''',(sid,))
+                initial['source_hashes'][table]=normal(q.fetchone())
+            if run is None:continue
+            rt=meta['source_runtime'];owner=rt['owner_job_id'];folder=job_dir(snap['supplier_code'],owner)
+            cp=json.loads((folder/'checkpoint.json').read_text(encoding='utf-8'))
+            check=deepcopy(cp);checksum=check.pop('checksum')
+            require(digest(check)==checksum and not cp['inflight'] and cp['manifest_sha256']==digest(snap['source_input']),
+                    'RECOVERY_CHECKPOINT_CHECKSUM')
+            initial.update(checkpoint_sha256=file_sha(folder/'checkpoint.json'),runtime_sha256=digest(rt))
+            for url,row in cp['terminal'].items():
+                if row['state']=='FAILED':
+                    require(url in quarantine_urls,'RECOVERY_UNAPPROVED_FAILED_OR_UNCERTAIN')
+                    captures=[h for h in row['history'] if h['state']=='HTTP_CAPTURED_NOT_COMMITTED']
+                    require(len(captures)==1,'RECOVERY_QUARANTINE_CAPTURE_AMBIGUOUS')
+                    capture=captures[0];metadata=capture['original_capture_metadata']
+                    require(file_sha(metadata['evidence_ref'])==metadata['evidence_sha256'] and metadata['http_status']==200,
+                            'RECOVERY_QUARANTINE_CAPTURE_CHANGED')
+                    extra['quarantine'].append({'source':snap['supplier_code'],'owner_job_id':owner,
+                        'input_sha256':cp['manifest_sha256'],'url':url,'failed_row':row,'captured_receipt':capture})
+        require({item['url'] for item in extra['quarantine']}==set(quarantine_urls),'RECOVERY_QUARANTINE_SCOPE_CHANGED')
+        require(len(extra['phases'])==22,'RECOVERY_EXPECTS_22_PHASES')
+        for table in ('review_decisions','candidate_rejections'):
+            q.execute(f'''SELECT count(*),md5(coalesce(string_agg(md5(to_jsonb(t)::text),''
+                ORDER BY md5(to_jsonb(t)::text) COLLATE "C"),'')) FROM {table} t''')
+            extra['manual_hashes'][table]=normal(q.fetchone())
+        value['continuation']=extra
+        continuation_invariants(q,value,queue.config)
+    value['previous_approval_sha256']=previous_sha
+    value['compatibility']=compatibility(batch.ROOT,value['compatibility']['base_head'],value['compatibility']['base_engine'])
+    return value
