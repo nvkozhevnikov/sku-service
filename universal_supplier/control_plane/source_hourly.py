@@ -85,14 +85,15 @@ def collect(config, manifest, *, previous=None, worker_state='RUNNING', now=None
                         if code == 'beka_mak' and jid in (28, 40) and state == 'succeeded' and runtime.get('identity_post_processing', {}).get('matching_reused'):
                             proven.add(receipt['external_id'])
                 fps = list(receipts)
-                saved = c.execute('''SELECT c.source_product_id,sp.external_id FROM supplier_http_captures c
+                saved = c.execute('''SELECT c.source_product_id,sp.external_id,c.capture_fingerprint FROM supplier_http_captures c
                     JOIN suppliers s ON s.id=c.supplier_id JOIN source_products sp ON sp.id=c.source_product_id
                     JOIN offer_commercial_observations o ON o.capture_id=c.id AND o.source_product_id=c.source_product_id
                     AND o.observed_at=c.observed_at WHERE s.code=%s AND c.capture_fingerprint=ANY(%s)''', (code, fps)).fetchall()
-                if len(saved) != len(fps): raise ValueError('HOURLY_SQL_RECEIPT_MISMATCH')
+                if len(saved) != len(fps) or any(fp not in receipts or receipts[fp]['external_id'] != ext for _,ext,fp in saved):
+                    raise ValueError('HOURLY_SQL_RECEIPT_MISMATCH')
                 ids = sorted({r[0] for r in saved}); external = {r[1] for r in saved}
                 matching = c.execute('SELECT source_product_id,status,auto_accepted FROM product_matches WHERE source_product_id=ANY(%s) AND is_current', (ids,)).fetchall()
-                known_ids = {i for i, ext in saved if ext in proven}
+                known_ids = {i for i, ext, fp in saved if ext in proven}
                 buckets = Counter(bucket(status, auto) for i, status, auto in matching if i in known_ids)
                 if len(known_ids) != sum(buckets.values()): raise ValueError('HOURLY_MATCHING_PROOF_MISMATCH')
                 uncommitted = sum(refresh.get(e['url'], {}).get('state') != 'COMMITTED' for e in snap['source_input']['entries'])

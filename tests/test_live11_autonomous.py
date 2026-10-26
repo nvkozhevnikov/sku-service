@@ -224,7 +224,7 @@ def test_settings_restore_even_when_activation_evidence_write_fails(tmp_path,mon
     assert state==before and saved[0][0]=='SETTINGS_RESTORED.json'
 
 
-@pytest.mark.parametrize('defect',[None,'sql_receipt','matching','durability'])
+@pytest.mark.parametrize('defect',[None,'sql_receipt','matching','durability','external_identity'])
 def test_report_validates_receipts_and_fresh_matching_without_writes(tmp_path,monkeypatch,defect):
     from contextlib import nullcontext
     import psycopg
@@ -246,7 +246,7 @@ def test_report_validates_receipts_and_fresh_matching_without_writes(tmp_path,mo
             assert sql.lstrip().startswith(('SELECT','SET TRANSACTION')),sql
             if sql.lstrip().startswith('SELECT DISTINCT'):return Result([('kami','REFRESH',120,'partial',49,{'source_runtime':{'owner_job_id':43}},None,'43')])
             if "current_setting('fsync')" in sql:return Result([('off' if defect=='durability' else 'on','on','on')])
-            if 'supplier_http_captures' in sql:return Result([] if defect=='sql_receipt' else [(42,'site:1')])
+            if 'supplier_http_captures' in sql:return Result([] if defect=='sql_receipt' else [(42,'site:wrong' if defect=='external_identity' else 'site:1','f'*64)])
             if 'FROM product_matches' in sql:return Result([] if defect=='matching' else [(42,'NEW_CANDIDATE',False)])
             return Result([])
     monkeypatch.setattr(psycopg,'connect',lambda **kw:Connection())
