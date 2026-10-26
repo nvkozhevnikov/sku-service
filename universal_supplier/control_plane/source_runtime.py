@@ -239,9 +239,13 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if url==robots_url:return url
             try:return validate_url(code,url)
             except ValueError:return validate_node(code,url)
+        isolate_timeouts=False
+        if scope_policy_active and approved.get('continuation',{}).get('timeout_authorization'):
+            from .source_recovery import timeout_authorization
+            timeout_authorization(approved);isolate_timeouts=True
         fetcher=BoundedHostFetcher(HOSTS[code],rate,client_factory or UrllibPublicHttpClient,
             validator=request_url,robots_allowed=allowed,robots_delay_seconds=0,
-            lease_acquired=True,clock=clock,stop_requested=stopped,source=code,approval=settings.get('host_policy_approval'),defer_first_start=True)
+            lease_acquired=True,clock=clock,stop_requested=stopped,source=code,approval=settings.get('host_policy_approval'),defer_first_start=True,isolate_timeouts=isolate_timeouts)
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
         if dispatch_budget:fetcher.request_start_guard=dispatch_budget
         capture_archive_lock = threading.Lock()
@@ -454,7 +458,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     if not gate_passed:batch=min(batch,max(1,gate_target-verified))
                     urls=cp.claim_batch(batch);outcomes=fetch(urls);fetched_count+=len(urls)
                     for outcome in outcomes:
-                        if outcome.scope_refusal or outcome.dispatch_refusal:
+                        if outcome.scope_refusal or outcome.dispatch_refusal or outcome.timeout_refusal:
                             if (not scope_policy_active or original['mode']!='REFRESH' or backend is None or
                                     outcome.response is not None or outcome.transport_started is not True):
                                 raise ValueError('RECOVERY_SCOPE_POLICY_NOT_APPROVED')
@@ -463,7 +467,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                             cp.record_terminal([receipt])
                             from .source_recovery import record_scope_policy_case
                             proposed=record_scope_policy_case(backend.repo.connection,approved,job,run_id,owner,sha,
-                                byurl[outcome.url],cp.state['terminal'][outcome.url],outcome.scope_refusal or outcome.dispatch_refusal)
+                                byurl[outcome.url],cp.state['terminal'][outcome.url],outcome.scope_refusal or outcome.dispatch_refusal or outcome.timeout_refusal)
                             if backend.probe(byurl[outcome.url],proposed)!='NOT_FOUND':raise ValueError('RECOVERY_SCOPE_SQL_NOT_PROVEN')
                             cp.record_terminal([proposed]);isolated.append(proposed);continue
                         if outcome.error or outcome.response is None or outcome.response.status_code!=200:

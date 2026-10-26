@@ -195,6 +195,33 @@ def extension_authorization(value):
     return auth
 
 
+def timeout_authorization(value):
+    """Exact R11 exception; neither the window nor network STOPs are relaxed."""
+    ref=value.get('continuation',{}).get('timeout_authorization')
+    require(ref and file_sha(ref['path'])==ref['sha256'],'RECOVERY_TIMEOUT_NOT_APPROVED')
+    auth=json.loads(Path(ref['path']).read_text(encoding='utf-8'))
+    window=extension_authorization(value)
+    require(auth.get('action')=='READ_TIMEOUT_QUARANTINE_AND_R11' and
+        auth.get('batch_id')==value['batch_id'] and
+        auth.get('previous_approval_sha256')=='d998d79bd79746f5cec343b695e6c45a5875cbd52a0fb8efbdf335d7c912274f' and
+        auth.get('original_started_at')==value['started_at'] and auth.get('original_deadline')==value['deadline'] and
+        auth.get('execution_until')==window['execution_until'] and
+        auth.get('extra_refresh_parents')==list(range(110,119)) and
+        auth.get('refresh_max_attempt')==11 and auth.get('discovery_max_attempt')==4 and
+        auth.get('historical_timeout_ids')==[8429,8430,8431] and
+        auth.get('consecutive_error_threshold')==3 and auth.get('cooldown_seconds')==60 and
+        auth.get('scope_hashes')==value['scope_hashes'] and auth.get('input_hashes')==value['input_hashes'] and
+        auth.get('matrix_sha256')==value['matrix_sha256'],'RECOVERY_TIMEOUT_AUTHORIZATION_CHANGED')
+    return auth
+
+
+def timeout_context(value):
+    result=extension_context(value)
+    result['continuation']['timeout_authorization']=deepcopy(value['continuation']['timeout_authorization'])
+    timeout_authorization(result)
+    return result
+
+
 def execution_deadline(value):
     if value.get('continuation',{}).get('operator_extension'):
         return datetime.fromisoformat(extension_authorization(value)['execution_until'])
@@ -856,7 +883,11 @@ def continuation_rule(value,scope):
             len(plan.get('mappings1282',[]))==1282,'RECOVERY_CONTINUATION_PROOF_INCOMPLETE')
     rule=plan.get('phases',{}).get(scope)
     require(rule and scope in value['scope_hashes'] and type(rule.get('max_attempt')) is int and
-            1<=rule['max_attempt']<=10,'RECOVERY_CONTINUATION_BOUND')
+            1<=rule['max_attempt']<=11,'RECOVERY_CONTINUATION_BOUND')
+    if rule['max_attempt']==11:
+        auth=timeout_authorization(value)
+        require(rule.get('phase')=='REFRESH' and rule.get('r11_parent_id') in auth['extra_refresh_parents'],
+                'RECOVERY_R11_PHASE_CHANGED')
     if rule['max_attempt']==10:
         auth=extension_authorization(value)
         require(rule.get('phase')=='REFRESH' and rule.get('r10_parent_id') in auth['extra_refresh_parents'],
@@ -929,7 +960,8 @@ def scope_quarantine_receipt(item):
             decision['source']==item['source'] and decision['owner_job_id']==item['owner_job_id'] and
             item['failed_row']['receipt']['origin']=={'source':item['source'],'job_id':item['owner_job_id'],'manifest_sha256':item['input_sha256']} and
             decision['reason'] in ('ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH','FrozenScopeRefusal:CANARY_URL_OUTSIDE_FROZEN_BATCH',
-                'RequestAborted:CANARY_PRODUCT_REQUEST_LIMIT','RepeatedDispatchRefusal:CANARY_PRODUCT_REQUEST_LIMIT') and
+                'RequestAborted:CANARY_PRODUCT_REQUEST_LIMIT','RepeatedDispatchRefusal:CANARY_PRODUCT_REQUEST_LIMIT',
+                'TimeoutError:The read operation timed out','ReadTimeoutRefusal:READ_TIMEOUT_UNKNOWN') and
             item['failed_row']['receipt']['reason']==decision['reason'] and
             item['failed_row']['state']=='UNCERTAIN' and
             file_sha(decision['authorization_path'])==decision['authorization_sha256'],
@@ -948,6 +980,16 @@ def scope_quarantine_receipt(item):
             1<=refusal['max_attempts']<=3 and refusal.get('dispatch_count')==refusal['max_attempts'] and
             len(refusal.get('blocked_target_sha256',''))==64,
             'RECOVERY_DISPATCH_PROOF_INVALID')
+    if decision['reason'] in ('TimeoutError:The read operation timed out','ReadTimeoutRefusal:READ_TIMEOUT_UNKNOWN'):
+        context=item.get('timeout_authorization',{})
+        timeout_authorization(context);ref=context['continuation']['timeout_authorization']
+        require(decision['authorization_path']==ref['path'] and decision['authorization_sha256']==ref['sha256'] and
+            decision['batch_id']==context['batch_id'],'RECOVERY_TIMEOUT_NOT_APPROVED')
+        refusal=item.get('refusal',{})
+        require(refusal.get('reason')=='READ_TIMEOUT_UNKNOWN' and refusal.get('exception')=='TimeoutError' and
+            refusal.get('response_available') is False and refusal.get('transport_entered') is True and
+            refusal.get('blocked_target_sha256')==hashlib.sha256(item['url'].encode()).hexdigest(),
+            'RECOVERY_TIMEOUT_PROOF_INVALID')
     return {'url':item['url'],'state':'QUARANTINED',
         'origin':{'source':item['source'],'job_id':item['owner_job_id'],'manifest_sha256':item['input_sha256']},
         'isolation':{'format':'source-url-isolation/v1','category':'operator_scope',
@@ -980,6 +1022,8 @@ def approved_scope_item(receipt,entry):
         rule=scope_policy_entry(value,item['source'],item['entry'])
         authorization_sha=(value['continuation']['operator_extension']['sha256'] if item.get('dispatch_authorization') else scope_policy(value)['authorization_sha256'])
         if item.get('dispatch_authorization'):extension_authorization(value)
+        if item.get('timeout_authorization'):
+            timeout_authorization(value);authorization_sha=value['continuation']['timeout_authorization']['sha256']
         require(item['source_row_md5']==rule['source_row_md5'] and item['input_sha256']==rule['input_sha256'] and
                 item['decision']['authorization_sha256']==authorization_sha and
                 expected(item,policy_scope_receipt(item,ref))==receipt,'RECOVERY_SCOPE_POLICY_NOT_APPROVED')
@@ -1053,6 +1097,8 @@ def record_scope_policy_case(connection,value,job,run_id,owner,input_sha,entry,f
     from .source_runtime import job_dir,frozen_json
     rule=scope_policy_entry(value,job.supplier_code,entry);policy=scope_policy(value)
     repeated=refusal.get('reason')=='CANARY_PRODUCT_REQUEST_LIMIT'
+    timed_out=refusal.get('reason')=='READ_TIMEOUT_UNKNOWN'
+    if timed_out:timeout_authorization(value)
     if repeated:
         extension_authorization(value)
         require(refusal.get('blocked_target_sha256') in
@@ -1061,7 +1107,7 @@ def record_scope_policy_case(connection,value,job,run_id,owner,input_sha,entry,f
         require(refusal.get('max_attempts')==job.settings_snapshot['source_input']['rate_policy']['max_attempts'],
             'RECOVERY_DISPATCH_ATTEMPTS_CHANGED')
     require(job.settings_snapshot['source_batch']['phase']=='REFRESH' and rule['input_sha256']==input_sha and
-            failed_row['state']=='UNCERTAIN' and refusal.get('reason') in ('CANARY_URL_OUTSIDE_FROZEN_BATCH','CANARY_PRODUCT_REQUEST_LIMIT') and
+            failed_row['state']=='UNCERTAIN' and refusal.get('reason') in ('CANARY_URL_OUTSIDE_FROZEN_BATCH','CANARY_PRODUCT_REQUEST_LIMIT','READ_TIMEOUT_UNKNOWN') and
             len(refusal.get('blocked_target_sha256',''))==64,'RECOVERY_SCOPE_POLICY_REFUSAL_INVALID')
     with connection.cursor() as q:
         q.execute('SELECT started_at FROM crawl_runs WHERE id=%s',(run_id,))
@@ -1070,14 +1116,15 @@ def record_scope_policy_case(connection,value,job,run_id,owner,input_sha,entry,f
             'job_id':job.id,'owner_job_id':owner,'run_id':run_id,'url':entry['url'],
             'reason':failed_row['receipt']['reason'],
             'authorization_path':policy['authorization_path'],'authorization_sha256':policy['authorization_sha256']}
-        if repeated:
-            ref=value['continuation']['operator_extension']
+        if repeated or timed_out:
+            ref=value['continuation']['timeout_authorization' if timed_out else 'operator_extension']
             decision.update(authorization_path=ref['path'],authorization_sha256=ref['sha256'])
         item={'kind':'operator-scope-quarantine/v1','policy_case':True,'source':job.supplier_code,'owner_job_id':owner,
             'input_sha256':input_sha,'url':entry['url'],'entry':deepcopy(entry),'failed_row':deepcopy(failed_row),
             'attempt_started_at':started,'source_row_md5':rule['source_row_md5'],'decision':decision,
             'refusal':deepcopy(refusal)}
         if repeated:item['dispatch_authorization']=extension_context(value)
+        if timed_out:item['timeout_authorization']=timeout_context(value)
         scope_quarantine_receipt(item);scope_sql_absent(q,item)
     path=job_dir(job.supplier_code,owner)/'scope-refusals'/(digest(item)+'.json')
     frozen_json(path,item)
@@ -1234,7 +1281,7 @@ def recover_continuation(queue,value,sha):
     return {'batch_id':value['batch_id'],'resumed_partial':resumed,'retried_roots':retried,'worker_started':False}
 
 
-def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=(),policy_authorization=None,operator_extension=None,matching_evidence=None):
+def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=(),policy_authorization=None,operator_extension=None,matching_evidence=None,timeout_auth=None):
     """Read-only, concrete current-batch plan; exact HEAD/SHA still unconfirmed."""
     from . import source_batch as batch
     from .source_runtime import job_dir
@@ -1243,7 +1290,7 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
     require(value.get('format')=='live11-recovery/v1',
             'RECOVERY_PREVIOUS_APPROVAL_FORMAT')
     prior_plan=value.get('continuation')
-    require(len(scope_decisions)<=1,'RECOVERY_SCOPE_DECISION_COUNT')
+    require(len(scope_decisions)<=(3 if timeout_auth else 1) and len({d['url'] for d in scope_decisions})==len(scope_decisions),'RECOVERY_SCOPE_DECISION_COUNT')
     previous_scope=[i for i in (prior_plan or {}).get('quarantine',[]) if i.get('kind')=='operator-scope-quarantine/v1']
     extra={'format':'live11-continuation/v1','batch_id':value['batch_id'],'phases':{},'quarantine':[],
            'historical_envelopes':[],'manual_hashes':{},'mappings1282':(prior_plan or value['post_stop'])['mappings1282']}
@@ -1252,6 +1299,12 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
     if operator_extension:
         extra['operator_extension']={'path':str(Path(operator_extension).resolve()),'sha256':file_sha(operator_extension)}
         candidate={**value,'continuation':extra};extension_authorization(candidate)
+    if (prior_plan or {}).get('timeout_authorization'):extra['timeout_authorization']=deepcopy(prior_plan['timeout_authorization'])
+    if timeout_auth:
+        extra['timeout_authorization']={'path':str(Path(timeout_auth).resolve()),'sha256':file_sha(timeout_auth)}
+        timeout_authorization({**value,'continuation':extra})
+        require(len(scope_decisions)==3 and {d.get('job_id') for d in scope_decisions}=={111},
+                'RECOVERY_TIMEOUT_HISTORIC_NOT_EXACT')
     if matching_evidence:
         extra['matching_only']={key:{'path':str(Path(path).resolve()),'sha256':file_sha(path)} for key,path in matching_evidence.items()}
     with queue._connect() as c,c.cursor() as q:
@@ -1311,6 +1364,11 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
             latest_r=[attempts[-1] for attempts in groups.values() if attempts[-1][4]['source_batch']['phase']=='REFRESH' and attempts[-1][2]!='succeeded']
             require(sorted(r[0] for r in latest_r)==auth['extra_refresh_parents'] and
                 all(r[4]['source_batch']['attempt']==9 for r in latest_r),'RECOVERY_R10_PARENT_CHANGED')
+        if timeout_auth:
+            network_auth=timeout_authorization({**value,'continuation':extra})
+            latest_r=[a[-1] for a in groups.values() if a[-1][4]['source_batch']['phase']=='REFRESH' and a[-1][2]!='succeeded']
+            require(sorted(r[0] for r in latest_r)==network_auth['extra_refresh_parents'] and
+                all(r[4]['source_batch']['attempt']==10 for r in latest_r),'RECOVERY_R11_PARENT_CHANGED')
         source_by_scope={phase['source_batch']['scope_sha256']:phase['supplier_code']
             for parent in value['parents'] for phase in
             (parent['snapshot'],parent['snapshot']['source_batch']['next_snapshot'])}
@@ -1327,12 +1385,17 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                     rule.update(max_attempt=9,r9_parent_id=previous_rule['r9_parent_id'])
                 if previous_rule.get('max_attempt')==10:
                     rule.update(max_attempt=10,r10_parent_id=previous_rule['r10_parent_id'])
+                if previous_rule.get('max_attempt')==11:
+                    rule.update(max_attempt=11,r11_parent_id=previous_rule['r11_parent_id'])
             if policy_authorization and attempts and attempts[-1][0] in extra['scope_policy']['extra_refresh_parents']:
                 require(env['phase']=='REFRESH','RECOVERY_R9_PHASE_CHANGED')
                 rule.update(max_attempt=9,r9_parent_id=attempts[-1][0])
             if operator_extension and attempts and attempts[-1][0] in auth['extra_refresh_parents']:
                 require(env['phase']=='REFRESH','RECOVERY_R10_PHASE_CHANGED')
                 rule.update(max_attempt=10,r10_parent_id=attempts[-1][0])
+            if timeout_auth and attempts and attempts[-1][0] in network_auth['extra_refresh_parents']:
+                require(env['phase']=='REFRESH','RECOVERY_R11_PHASE_CHANGED')
+                rule.update(max_attempt=11,r11_parent_id=attempts[-1][0])
             extra['phases'][env['scope_sha256']]=rule
             if not attempts or attempts[-1][2]=='succeeded':continue
             jid,sid,status,run,snap,meta=attempts[-1]
@@ -1365,8 +1428,9 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                 url=decision['url'];entry=next((e for e in snap['source_input']['entries'] if e['url']==url),None)
                 row=cp['terminal'].get(url)
                 repeated=decision.get('reason')=='RequestAborted:CANARY_PRODUCT_REQUEST_LIMIT'
-                expected_reason='RequestAborted:CANARY_PRODUCT_REQUEST_LIMIT' if repeated else 'ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH'
-                expected_stop='CANARY_PRODUCT_REQUEST_LIMIT' if repeated else 'CANARY_URL_OUTSIDE_FROZEN_BATCH'
+                timed_out=decision.get('reason')=='TimeoutError:The read operation timed out'
+                expected_reason='TimeoutError:The read operation timed out' if timed_out else ('RequestAborted:CANARY_PRODUCT_REQUEST_LIMIT' if repeated else 'ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH')
+                expected_stop='SOURCE_CARD_HTTP_FAILED' if timed_out else ('CANARY_PRODUCT_REQUEST_LIMIT' if repeated else 'CANARY_URL_OUTSIDE_FROZEN_BATCH')
                 require(entry is not None and row and row['state']=='UNCERTAIN' and
                         row['receipt'].get('reason')==expected_reason and
                         not row['receipt'].get('original_capture_metadata') and
@@ -1390,6 +1454,24 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                     item['refusal']={'reason':expected_stop,'cause':'URL_ATTEMPTS_EXHAUSTED','target_in_frozen_scope':True,
                         'dispatch_count':1,'max_attempts':1,'blocked_target_sha256':hashlib.sha256(url.encode()).hexdigest()}
                     item['dispatch_authorization']=extension_context({**value,'continuation':extra})
+                if timed_out:
+                    timeout_authorization({**value,'continuation':extra})
+                    expected={8429:'site:9226549',8430:'site:9226571',8431:'site:9227335'}
+                    require(jid==111 and run==46 and owner==43 and snap['supplier_code']=='kami' and
+                        entry['source_external_id']==expected.get(entry['source_product_id']),
+                        'RECOVERY_TIMEOUT_HISTORIC_NOT_EXACT')
+                    metrics=rt['request_metrics']
+                    require(metrics.get('network_errors')==3 and metrics.get('circuit_breaker_trips')==1 and
+                        metrics.get('circuit_breaker_cooldown_seconds')==60 and metrics.get('retry_count')==0 and
+                        snap['source_input']['rate_policy']['consecutive_error_threshold']==3 and
+                        snap['source_input']['rate_policy']['cooldown_seconds']==60,
+                        'RECOVERY_TIMEOUT_HISTORIC_NOT_EXACT')
+                    frozen=scope_policy_entry({**value,'continuation':extra},snap['supplier_code'],entry)
+                    require(source_hash==frozen['source_row_md5'],'RECOVERY_SCOPE_SOURCE_CHANGED')
+                    item['refusal']={'reason':'READ_TIMEOUT_UNKNOWN','exception':'TimeoutError',
+                        'response_available':False,'transport_entered':True,
+                        'blocked_target_sha256':hashlib.sha256(url.encode()).hexdigest()}
+                    item['timeout_authorization']=timeout_context({**value,'continuation':extra})
                 scope_quarantine_receipt(item);scope_sql_absent(q,item)
                 extra['quarantine'].append(item)
             for url,row in cp['terminal'].items():

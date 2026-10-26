@@ -16,7 +16,7 @@ from universal_supplier.http_capture import HttpResponse
 
 FIX=Path(__file__).parent/'fixtures/live11_recovery/kami_scope_stop.json.gz'
 
-def policy_run(tmp_path,monkeypatch,*,failure=None,repeated=False):
+def policy_run(tmp_path,monkeypatch,*,failure=None,repeated=False,timeout=False):
     real=json.loads(gzip.decompress(FIX.read_bytes()))
     bad=deepcopy(real['item']['entry'])
     _,job,backend,_,good=setup('kami')
@@ -73,6 +73,7 @@ def policy_run(tmp_path,monkeypatch,*,failure=None,repeated=False):
             validator(url);self.before_request(url);calls.append(url)
             if url.endswith('robots.txt'):return HttpResponse(url,200,'text/plain',b'User-agent: *\nAllow: /')
             if url==bad['url']:
+                if timeout:raise TimeoutError('The read operation timed out')
                 if repeated:self.before_request(url);raise AssertionError('Repeat must never be dispatched')
                 target={'host':'https://evil.example/product/','http':'http://www.stanki.ru/catalog/',
                     'credentials':'https://user:password@www.stanki.ru/catalog/','port':'https://www.stanki.ru:8443/catalog/',

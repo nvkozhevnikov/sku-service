@@ -55,6 +55,7 @@ class FetchOutcome:
     transport_started:bool|None=None
     scope_refusal:dict|None=None
     dispatch_refusal:dict|None=None
+    timeout_refusal:dict|None=None
 
 class FrozenScopeRefusal(RequestAborted):
     """Signed-policy refusal; the rejected target is NEVER dispatched."""
@@ -71,9 +72,17 @@ class RepeatedDispatchRefusal(RequestAborted):
             'blocked_target_sha256':hashlib.sha256(target.encode()).hexdigest(),
             'dispatch_count':count,'max_attempts':attempts,'target_in_frozen_scope':True}
 
+class ReadTimeoutRefusal(RequestAborted):
+    """Unknown transport result; signed isolation prevents an automatic retry."""
+    def __init__(self,url):
+        super().__init__('READ_TIMEOUT_UNKNOWN')
+        self.details={'reason':'READ_TIMEOUT_UNKNOWN','exception':'TimeoutError',
+            'response_available':False,'transport_entered':True,
+            'blocked_target_sha256':hashlib.sha256(url.encode()).hexdigest()}
+
 class BoundedHostFetcher:
     def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
-                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False):
+                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False,isolate_timeouts=False):
         if not source:raise ValueError('SOURCE_REQUIRED')
         rate=compile_policy(source,'https://'+host,rate.snapshot(),approval=approval)
         if not lease_acquired:raise PermissionError('HOST_LEASE_REQUIRED')
@@ -93,6 +102,7 @@ class BoundedHostFetcher:
         self._lock=threading.Lock();self.outcomes=[];self.receipt_sink=receipt_sink
         self.stop_sink=None
         self.request_start_guard=None
+        self.isolate_timeouts=isolate_timeouts
     def stop(self,reason='OPERATOR_STOP'):
         with self._lock:
             first=self.stop_reason is None
@@ -138,7 +148,19 @@ class BoundedHostFetcher:
                 # Once the transport is entered, absence of a response is
                 # uncertain. A limiter deadline BEFORE send proves no GET.
                 transport_started=True
-                response=client.get_validated(url,validator=self._validate,timeout_seconds=min(self.rate.request_timeout_seconds,max(.001,deadline-self.clock.monotonic())))
+                request_started=self.clock.monotonic()
+                try:
+                    response=client.get_validated(url,validator=self._validate,timeout_seconds=min(self.rate.request_timeout_seconds,max(.001,deadline-self.clock.monotonic())))
+                except TimeoutError:
+                    if not self.isolate_timeouts:raise
+                    # Keep the real network failure and native breaker. The typed
+                    # abort only prevents retrying an UNKNOWN transport result.
+                    with self._lock:
+                        self.metrics.record_network_error(self.clock.monotonic()-request_started,'TimeoutError')
+                        self.breaker.failure('TimeoutError')
+                        tripped=self.metrics.circuit_breaker_trips>0
+                    if tripped:self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
+                    raise ReadTimeoutRefusal(url)
                 self._validate(response.final_url)
                 for target in response.redirects:self._validate(target)
                 if response.status_code in (403,429):self.stop('SOURCE_BLOCKED_HTTP_'+str(response.status_code))
@@ -161,7 +183,8 @@ class BoundedHostFetcher:
         except Exception as e:
             return FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}',transport_started=transport_started,
                 scope_refusal=e.details if isinstance(e,FrozenScopeRefusal) else None,
-                dispatch_refusal=e.details if isinstance(e,RepeatedDispatchRefusal) else None)
+                dispatch_refusal=e.details if isinstance(e,RepeatedDispatchRefusal) else None,
+                timeout_refusal=e.details if isinstance(e,ReadTimeoutRefusal) else None)
         finally:
             if client and getattr(client,'session',None):client.session.close()
     def fetch(self,urls,*,limit,seconds):
