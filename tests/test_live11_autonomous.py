@@ -171,6 +171,7 @@ def test_saved_committed_matching_finishes_before_fresh_http(tmp_path,monkeypatc
     monkeypatch.setattr(source_batch,'validate_snapshot',lambda *a:None)
     monkeypatch.setenv(recovery.ENV+'_FILE','offline')
     monkeypatch.setattr(recovery,'approval',lambda:({'batch_id':'batch','continuation':{'autonomous':{'offline':True}}},'b'*64))
+    monkeypatch.setattr(auto,'require_active',lambda *a:None)  # This test isolates native matching receipt reuse; admission is tested separately.
     oldmatch=backend.matching
     def matched(ids):
         result=oldmatch(ids);job_dir('kami',2).mkdir(exist_ok=True)
@@ -260,3 +261,17 @@ def test_report_validates_receipts_and_fresh_matching_without_writes(tmp_path,mo
         report=source_hourly.collect(SimpleNamespace(kwargs=lambda:{}),manifest)
         assert report['committed']==report['unique_products']==1
         assert report['sources'][0]['NEW']==1 and report['sources'][0]['matching_pending']==0
+
+
+def test_autonomous_enqueue_cannot_escape_controlled_session(tmp_path,monkeypatch):
+    c,value,_=controller(tmp_path,monkeypatch)
+    monkeypatch.setattr(auto,'ACTIVE',None)
+    with pytest.raises(PermissionError,match='ONE_SHOT'):
+        recovery.recover_continuation(object(),value,'b'*64)
+    c.claim()
+    with pytest.raises(PermissionError,match='ONE_SHOT'):
+        recovery.recover_continuation(object(),value,'b'*64)
+    monkeypatch.setattr(auto,'ACTIVE',c)
+    auto.require_active(value)
+    c.fail('AUTONOMOUS_TIME_LIMIT')
+    with pytest.raises(RuntimeError,match='TIME_LIMIT'):auto.require_active(value)

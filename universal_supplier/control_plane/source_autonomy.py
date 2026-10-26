@@ -193,3 +193,13 @@ class Controller:
 
 def stop_reason():
     return ACTIVE.reason() if ACTIVE is not None else None
+
+
+def require_active(value):
+    """A confirmed manifest alone never creates an unbounded background queue."""
+    if not value.get('continuation',{}).get('autonomous'):return
+    from .source_recovery import require,ENV
+    context(value,required=True)
+    require(ACTIVE is not None and ACTIVE.sha==os.environ.get(ENV+'_SHA256') and
+        ACTIVE.manifest['batch_id']==value['batch_id'],'AUTONOMOUS_ONE_SHOT_LAUNCH_REQUIRED')
+    ACTIVE.check()

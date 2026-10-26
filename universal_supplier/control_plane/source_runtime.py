@@ -188,6 +188,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             from .source_recovery import ENV,approval,require
             if os.environ.get(ENV+'_FILE'):
                 approved,_=approval()
+                from .source_autonomy import require_active
+                require_active(approved)
                 from .source_recovery import execution_deadline
                 if approved.get('continuation',{}).get('operator_extension'):
                     batch_execution_until=execution_deadline(approved)

@@ -346,6 +346,8 @@ def validate_matching(cursor, snapshot, parent_id=17, run_id=None, config=None, 
     from .source_runtime import job_dir, read_input
     from .source_batch import validate_snapshot
     value, sha = approval()
+    from .source_autonomy import require_active
+    require_active(value)
     if value.get('continuation'):
         return validate_continuation(cursor,snapshot,parent_id,config,lock_parent,value,sha)
     if str(parent_id) in value.get('post_stop',{}).get('parents',{}):
@@ -1196,6 +1198,8 @@ def validate_continuation(cursor,snapshot,parent_id,config,lock_parent,value,sha
     from . import source_batch as batch
     from .source_runtime import job_dir,read_input
     from .source_controls import verify_resume
+    from .source_autonomy import require_active
+    require_active(value)
     batch.validate_snapshot(snapshot);rule=continuation_rule(value,snapshot['source_batch']['scope_sha256'])
     continuation_invariants(cursor,value,config)
     cursor.execute('SELECT status,crawl_run_id,settings_snapshot FROM crawl_jobs WHERE id=%s'+
@@ -1249,6 +1253,8 @@ def validate_continuation(cursor,snapshot,parent_id,config,lock_parent,value,sha
 def recover_continuation(queue,value,sha):
     """Existing enqueue/RESUME only, signed per-phase ceiling, no new scheduler."""
     from . import source_batch as batch
+    from .source_autonomy import require_active
+    require_active(value)
     resumed=[];retried=[]
     with queue._connect() as c,c.cursor() as q:
         c.read_only=True
