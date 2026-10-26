@@ -158,3 +158,15 @@ documented, not converted to PASS. Safe same-host HTTPS target refusals, includi
 root redirects, never dispatch; cross-host, credentials, HTTP downgrade, non443
 port, fragment, source drift and any SQL ambiguity remain global STOP. Native
 DISCOVERY reuse adds no new transport/UNCERTAIN and performs no detail GET.
+
+## 2026-10-26 — explicit R10 / repeated dispatch / execution window
+
+OPERATOR-CONFIRMED: one further REFRESH attempt for the stopped/cancelled parents101–109 (R9→R10), DISCOVERY ceiling remainsD4. The separate operator-extension artifact binds this same batch, exact originalT0/deadline, matrix,22scope/input hashes, previous approvalSHA and execution_until2026-10-27T11:27:36Z. Original SQL snapshots/envelopes/deadline are never edited; without this signed artifact and exact new HEAD/SHA the old window still expires normally. Attempt11, another batch/scope/window or unsigned authorization remains STOP.
+
+A duplicate dispatch denial is distinct from a catalogue size cap: KAMI102/run43 had101 distinct admitted URLs out of5264 and rejected a repeat of KAMI7536/site10154292. Its response is UNKNOWN, not HTTP200 or proof of no first GET. Historic quarantine requires exact stopped job/run/checkpoint, original source hash,0new captures/observations/history and the explicit operator decision. Native leased recovery appends quarantine preserving UNCERTAIN history, never repeats HTTP/ingest and never marks the partial phase complete by hand.
+
+Future signed local scope/duplicate refusals use typed RequestAborted outcomes: no network retry or host-breaker failure is invented for a local denial. Remaining role/SQL/identity/host/HTTP403/429/unsafe-target/UNCERTAIN guards retain STOP behavior. Frozen per-URL attempts, catalogue scopes and host/rate/max2 are unchanged.
+
+Matching-only884 COMMITTED (Vek549/KAMI335) was durably applied with no HTTP/ingest, eight new product_matches events, no other business-table changes,1282original mappings/manual locks preserved. Signed before/durable artifacts and native receipt fingerprints support reuse inside normal leased checkpoint reconciliation; no checkpoint is edited by the matching helper. Verified receipts are reconciled through one existing atomic record_terminal batch rather than N full-checkpoint rewrites. No new scheduler, API, schema or matcher.
+
+QA:185 focused PASS after final edits,347 broader regression PASS (overlap), including saved-model2200/22phase replay. Three known pre-existing UI-auth failures are explicitly deselected, not PASS; no UI/auth code changes. Artifacts under workspace reports/RC_LIVE11_FULL_COMPLETION_20261023/qa-monday-r10*.xml. Default Windows sandbox pytest-temp ACL errors were handled by running offline QA outside that sandbox in project-local temp folders, without changing ACLs or guards. Live execution of this new code still requires exact HEAD/SHA confirmation.

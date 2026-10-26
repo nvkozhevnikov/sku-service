@@ -9,7 +9,7 @@ import threading
 import math
 from .source_jobs import RUNTIME_SOURCES as SOURCES,validate_url
 from .source_resume import digest
-from .host_fetch import compile_policy
+from .host_fetch import compile_policy,RepeatedDispatchRefusal
 from .rate_control import RequestAborted
 from universal_supplier.partner_pilot import DATABASE,SYSTEM,PGDATA
 
@@ -118,16 +118,20 @@ class DispatchBudget:
     Legacy v1 permits one wire start per URL. V2 permits only the frozen number
     of attempts per selected URL; retries never add an identity outside scope.
     """
-    def __init__(self,value,robots_url):
+    def __init__(self,value,robots_url,*,isolate_repeats=False):
         self.urls={e['url'] for e in value['entries']};self.limit=value['canary']['max_products']
         self.attempts=1 if value['canary']['format']=='source-canary/v1' else value['rate_policy']['max_attempts']
         self.robots_url=robots_url;self.products=[];self.robots=0;self.lock=threading.Lock()
+        self.isolate_repeats=isolate_repeats
     def __call__(self,url):
         with self.lock:
             if url==self.robots_url:
                 if self.robots:raise RequestAborted('CANARY_ROBOTS_REQUEST_LIMIT')
                 self.robots+=1;return
-            if (url not in self.urls or self.products.count(url)>=self.attempts
+            count=self.products.count(url)
+            if self.isolate_repeats and url in self.urls and count>=self.attempts:
+                raise RepeatedDispatchRefusal(url,count,self.attempts)
+            if (url not in self.urls or count>=self.attempts
                     or (url not in self.products and len(set(self.products))>=self.limit)):
                 raise RequestAborted('CANARY_PRODUCT_REQUEST_LIMIT')
             self.products.append(url)

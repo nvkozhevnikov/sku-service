@@ -16,7 +16,7 @@ from universal_supplier.http_capture import HttpResponse
 
 FIX=Path(__file__).parent/'fixtures/live11_recovery/kami_scope_stop.json.gz'
 
-def policy_run(tmp_path,monkeypatch,*,failure=None):
+def policy_run(tmp_path,monkeypatch,*,failure=None,repeated=False):
     real=json.loads(gzip.decompress(FIX.read_bytes()))
     bad=deepcopy(real['item']['entry'])
     _,job,backend,_,good=setup('kami')
@@ -26,6 +26,13 @@ def policy_run(tmp_path,monkeypatch,*,failure=None):
     snapshot['source_input']['entries'].insert(0,bad);snapshot['crawl_settings']['max_products']=2
     snapshot['source_batch']={'id':real['item']['decision']['batch_id'],'phase':'REFRESH',
         'scope_sha256':'a'*64,'deadline':'2026-10-26T11:27:36.560055+00:00'}
+    if repeated:
+        # SQL/config are fake in this runtime replay; the independent canary
+        # contract tests exercise full selection/target validation.
+        from universal_supplier.control_plane import source_canary
+        snapshot['source_input']['canary']={'supplier_enabled':True,'supplier_id':1,'max_products':2,'format':source_canary.FORMAT}
+        monkeypatch.setattr(source_canary,'validate_config',lambda *a:None)
+        monkeypatch.setattr(source_canary,'validate_input',lambda *a:None)
     job=replace(job,settings_snapshot=snapshot)
     auth=tmp_path/'policy-auth.json'
     auth.write_text(json.dumps({'action':'FROZEN_REFRESH_SCOPE_QUARANTINE_AND_R9','batch_id':snapshot['source_batch']['id'],
@@ -66,6 +73,7 @@ def policy_run(tmp_path,monkeypatch,*,failure=None):
             validator(url);self.before_request(url);calls.append(url)
             if url.endswith('robots.txt'):return HttpResponse(url,200,'text/plain',b'User-agent: *\nAllow: /')
             if url==bad['url']:
+                if repeated:self.before_request(url);raise AssertionError('Repeat must never be dispatched')
                 target={'host':'https://evil.example/product/','http':'http://www.stanki.ru/catalog/',
                     'credentials':'https://user:password@www.stanki.ru/catalog/','port':'https://www.stanki.ru:8443/catalog/',
                     'fragment':'https://www.stanki.ru/catalog/#fragment','root':'https://www.stanki.ru/'}.get(failure,'https://www.stanki.ru/catalog/')

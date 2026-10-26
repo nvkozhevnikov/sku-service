@@ -60,7 +60,12 @@ def current_head():
 def deadline_check(envelope, now=None):
     now = now or datetime.now(timezone.utc)
     if now >= datetime.fromisoformat(envelope['deadline']):
-        raise PermissionError('BATCH_WINDOW_EXPIRED')
+        import os
+        if not os.environ.get('STERBRUST_LIVE11_RECOVERY_FILE'):
+            raise PermissionError('BATCH_WINDOW_EXPIRED')
+        from .source_recovery import approved_execution_deadline
+        if now >= approved_execution_deadline(envelope):
+            raise PermissionError('BATCH_WINDOW_EXPIRED')
     if envelope['head'] != current_head():
         import os
         if not os.environ.get('STERBRUST_LIVE11_RECOVERY_FILE'):

@@ -54,13 +54,22 @@ class FetchOutcome:
     retry_after_seconds:float|None=None
     transport_started:bool|None=None
     scope_refusal:dict|None=None
+    dispatch_refusal:dict|None=None
 
-class FrozenScopeRefusal(ValueError):
+class FrozenScopeRefusal(RequestAborted):
     """Signed-policy refusal; the rejected target is NEVER dispatched."""
     def __init__(self,target):
         super().__init__('CANARY_URL_OUTSIDE_FROZEN_BATCH')
         self.details={'reason':'CANARY_URL_OUTSIDE_FROZEN_BATCH',
             'blocked_target_sha256':hashlib.sha256(target.encode()).hexdigest()}
+
+class RepeatedDispatchRefusal(RequestAborted):
+    """The attempted repeat is denied; no response or successful GET is implied."""
+    def __init__(self,target,count,attempts):
+        super().__init__('CANARY_PRODUCT_REQUEST_LIMIT')
+        self.details={'reason':'CANARY_PRODUCT_REQUEST_LIMIT','cause':'URL_ATTEMPTS_EXHAUSTED',
+            'blocked_target_sha256':hashlib.sha256(target.encode()).hexdigest(),
+            'dispatch_count':count,'max_attempts':attempts,'target_in_frozen_scope':True}
 
 class BoundedHostFetcher:
     def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
@@ -118,7 +127,8 @@ class BoundedHostFetcher:
                 if self.request_start_guard:
                     try:self.request_start_guard(target)
                     except RequestAborted as error:
-                        self.stop(str(error));raise
+                        if not isinstance(error,RepeatedDispatchRefusal):self.stop(str(error))
+                        raise
                 if callback:callback(target)
             # The existing public client calls this for each redirect too.
             client.before_request=before_request
@@ -150,7 +160,8 @@ class BoundedHostFetcher:
             return outcome
         except Exception as e:
             return FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}',transport_started=transport_started,
-                scope_refusal=e.details if isinstance(e,FrozenScopeRefusal) else None)
+                scope_refusal=e.details if isinstance(e,FrozenScopeRefusal) else None,
+                dispatch_refusal=e.details if isinstance(e,RepeatedDispatchRefusal) else None)
         finally:
             if client and getattr(client,'session',None):client.session.close()
     def fetch(self,urls,*,limit,seconds):

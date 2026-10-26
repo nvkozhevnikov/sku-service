@@ -26,6 +26,7 @@ ENGINE_CHANGES = {
     'universal_supplier/control_plane/source_resume.py',
     'universal_supplier/control_plane/source_backend.py',
     'universal_supplier/control_plane/host_fetch.py',
+    'universal_supplier/control_plane/source_canary.py',
     'universal_supplier/adapters/bekamak_official.py',
 }
 REVIEWED_PARSER_SHA = 'bba4ffdea6591488f0873243b5106426056ee821d8edd8741f28dd2c7f09d4f4'
@@ -162,7 +163,7 @@ def approval():
     require(value.get('format') == 'live11-recovery/v1', 'RECOVERY_APPROVAL_FORMAT')
     require(value['compatibility'] == compatibility(ROOT, value['compatibility']['base_head'],value['compatibility']['base_engine']),
             'RECOVERY_HEAD_ENGINE_COMPATIBILITY_CHANGED')
-    require(datetime.now(timezone.utc) < datetime.fromisoformat(value['deadline']),
+    require(datetime.now(timezone.utc) < execution_deadline(value),
             'BATCH_WINDOW_EXPIRED')
     for artifact in value['artifacts'].values():
         require(file_sha(artifact['path']) == artifact['sha256'], 'RECOVERY_EVIDENCE_CHANGED')
@@ -170,7 +171,74 @@ def approval():
         for key in ('receipt', 'verified', 'before'):
             artifact = item[key]
             require(file_sha(artifact['path']) == artifact['sha256'], 'RECOVERY_EVIDENCE_CHANGED')
+    for artifact in value.get('continuation',{}).get('matching_only',{}).values():
+        require(file_sha(artifact['path'])==artifact['sha256'],'RECOVERY_MATCHING_EVIDENCE_CHANGED')
     return value, sha
+
+
+def extension_authorization(value):
+    """One explicit operator exception; original envelope/deadline remain frozen."""
+    ref=value.get('continuation',{}).get('operator_extension')
+    require(ref and file_sha(ref['path'])==ref['sha256'],'RECOVERY_EXTENSION_NOT_APPROVED')
+    auth=json.loads(Path(ref['path']).read_text(encoding='utf-8'))
+    require(auth.get('action')=='REPEATED_DISPATCH_QUARANTINE_R10_AND_WINDOW' and
+        auth.get('batch_id')==value['batch_id']=='3a69ca0d-b9d0-41f9-8f2a-49c4b43bc57d' and
+        auth.get('original_started_at')==value['started_at']=='2026-10-22T11:27:36.560055+00:00' and
+        auth.get('original_deadline')==value['deadline']=='2026-10-26T11:27:36.560055+00:00' and
+        auth.get('execution_until')=='2026-10-27T11:27:36+00:00' and
+        auth.get('extra_refresh_parents')==list(range(101,110)) and
+        auth.get('refresh_max_attempt')==10 and auth.get('discovery_max_attempt')==4 and
+        auth.get('previous_approval_sha256')=='66a80778748d79155f53cc1ce727029b8c3bb50ad2d5fde710a300e44da05b87' and
+        auth.get('matrix_sha256')==value['matrix_sha256'] and
+        auth.get('scope_hashes')==value['scope_hashes'] and auth.get('input_hashes')==value['input_hashes'],
+        'RECOVERY_EXTENSION_AUTHORIZATION_CHANGED')
+    return auth
+
+
+def execution_deadline(value):
+    if value.get('continuation',{}).get('operator_extension'):
+        return datetime.fromisoformat(extension_authorization(value)['execution_until'])
+    return datetime.fromisoformat(value['deadline'])
+
+
+def extension_context(value):
+    result={key:deepcopy(value[key]) for key in ('batch_id','started_at','deadline','matrix_sha256','scope_hashes','input_hashes')}
+    result['continuation']={'operator_extension':deepcopy(value['continuation']['operator_extension'])}
+    extension_authorization(result)
+    return result
+
+
+def approved_execution_deadline(envelope):
+    value,_=approval()
+    # The old deadline is retained verbatim; an unrelated envelope cannot borrow the extension.
+    allow_old_head(envelope)
+    return execution_deadline(value)
+
+
+def matching_only_receipts(value,code,state):
+    """Reuse signed durable engine output; append receipts only inside native leased runtime."""
+    refs=(value or {}).get('continuation',{}).get('matching_only')
+    if not refs:return {}
+    require(set(refs)=={'before','durable'},'RECOVERY_MATCHING_PROOF_PAIR')
+    for ref in refs.values():require(file_sha(ref['path'])==ref['sha256'],'RECOVERY_MATCHING_EVIDENCE_CHANGED')
+    before=json.loads(Path(refs['before']['path']).read_text(encoding='utf-8'))
+    durable=json.loads(Path(refs['durable']['path']).read_text(encoding='utf-8'))
+    selected=before['selected'].get(code)
+    if selected is None:return {}
+    result=durable['results'][code]
+    require(durable['committed'] is True and durable['http']==durable['ingest']==0 and
+        durable['original1282_exact'] is True and durable['protected_tables_exact'] is True and
+        durable['checkpoint_sha256']==before['checkpoint_sha256'] and
+        result['status']=='succeeded' and result['apply_allowed'] is True and
+        result['f01_f03_enforced'] is True and result['existing_ids_preserved'] is True and
+        result['total']==len(selected['ids']) and before['state']['mappings']==value['continuation']['mappings1282'],
+        'RECOVERY_MATCHING_DURABLE_NOT_PROVEN')
+    rows={r['receipt']['external_id']:r['receipt'] for r in state['terminal'].values() if r['state']=='COMMITTED'}
+    require(set(selected['ids'])<=set(rows) and
+        sorted(rows[i]['capture_fingerprint'] for i in selected['ids'])==selected['fingerprints'],
+        'RECOVERY_MATCHING_RECEIPTS_CHANGED')
+    return {i:{'status':'succeeded','external_id':i,'policy_version':result['policy_version'],
+        'matching_only_proof':deepcopy(refs['durable'])} for i in selected['ids']}
 
 
 def allow_old_head(envelope):
@@ -788,7 +856,11 @@ def continuation_rule(value,scope):
             len(plan.get('mappings1282',[]))==1282,'RECOVERY_CONTINUATION_PROOF_INCOMPLETE')
     rule=plan.get('phases',{}).get(scope)
     require(rule and scope in value['scope_hashes'] and type(rule.get('max_attempt')) is int and
-            1<=rule['max_attempt']<=9,'RECOVERY_CONTINUATION_BOUND')
+            1<=rule['max_attempt']<=10,'RECOVERY_CONTINUATION_BOUND')
+    if rule['max_attempt']==10:
+        auth=extension_authorization(value)
+        require(rule.get('phase')=='REFRESH' and rule.get('r10_parent_id') in auth['extra_refresh_parents'],
+                'RECOVERY_R10_NOT_APPROVED')
     if rule['max_attempt']==9:
         policy=scope_policy(value)
         require(rule.get('phase')=='REFRESH' and rule.get('r9_parent_id') in policy['extra_refresh_parents'],
@@ -856,11 +928,26 @@ def scope_quarantine_receipt(item):
             decision['url']==item['url']==item['entry']['url'] and
             decision['source']==item['source'] and decision['owner_job_id']==item['owner_job_id'] and
             item['failed_row']['receipt']['origin']=={'source':item['source'],'job_id':item['owner_job_id'],'manifest_sha256':item['input_sha256']} and
-            decision['reason'] in ('ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH','FrozenScopeRefusal:CANARY_URL_OUTSIDE_FROZEN_BATCH') and
+            decision['reason'] in ('ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH','FrozenScopeRefusal:CANARY_URL_OUTSIDE_FROZEN_BATCH',
+                'RequestAborted:CANARY_PRODUCT_REQUEST_LIMIT','RepeatedDispatchRefusal:CANARY_PRODUCT_REQUEST_LIMIT') and
             item['failed_row']['receipt']['reason']==decision['reason'] and
             item['failed_row']['state']=='UNCERTAIN' and
             file_sha(decision['authorization_path'])==decision['authorization_sha256'],
             'RECOVERY_SCOPE_DECISION_INVALID')
+    if decision['reason'].endswith(':CANARY_PRODUCT_REQUEST_LIMIT'):
+        # This authorization is separate from the earlier scope-refusal policy.
+        require(item.get('dispatch_authorization') is not None,'RECOVERY_DISPATCH_NOT_APPROVED')
+        context=item['dispatch_authorization']
+        auth=extension_authorization(context)
+        ref=context['continuation']['operator_extension']
+        require(decision['authorization_path']==ref['path'] and decision['authorization_sha256']==ref['sha256'] and
+            decision['batch_id']==auth['batch_id'],'RECOVERY_DISPATCH_NOT_APPROVED')
+        refusal=item.get('refusal',{})
+        require(refusal.get('reason')=='CANARY_PRODUCT_REQUEST_LIMIT' and refusal.get('cause')=='URL_ATTEMPTS_EXHAUSTED' and
+            refusal.get('target_in_frozen_scope') is True and type(refusal.get('max_attempts')) is int and
+            1<=refusal['max_attempts']<=3 and refusal.get('dispatch_count')==refusal['max_attempts'] and
+            len(refusal.get('blocked_target_sha256',''))==64,
+            'RECOVERY_DISPATCH_PROOF_INVALID')
     return {'url':item['url'],'state':'QUARANTINED',
         'origin':{'source':item['source'],'job_id':item['owner_job_id'],'manifest_sha256':item['input_sha256']},
         'isolation':{'format':'source-url-isolation/v1','category':'operator_scope',
@@ -891,8 +978,10 @@ def approved_scope_item(receipt,entry):
         require(path.resolve().parent==(job_dir(item['source'],item['owner_job_id'])/'scope-refusals').resolve(),
                 'RECOVERY_SCOPE_POLICY_NAMESPACE')
         rule=scope_policy_entry(value,item['source'],item['entry'])
+        authorization_sha=(value['continuation']['operator_extension']['sha256'] if item.get('dispatch_authorization') else scope_policy(value)['authorization_sha256'])
+        if item.get('dispatch_authorization'):extension_authorization(value)
         require(item['source_row_md5']==rule['source_row_md5'] and item['input_sha256']==rule['input_sha256'] and
-                item['decision']['authorization_sha256']==scope_policy(value)['authorization_sha256'] and
+                item['decision']['authorization_sha256']==authorization_sha and
                 expected(item,policy_scope_receipt(item,ref))==receipt,'RECOVERY_SCOPE_POLICY_NOT_APPROVED')
         matches=[item]
     require(len(matches)==1,'RECOVERY_SCOPE_DECISION_NOT_APPROVED')
@@ -963,8 +1052,16 @@ def record_scope_policy_case(connection,value,job,run_id,owner,input_sha,entry,f
     """Leased runtime only: preserve failed transport, prove no SQL, archive decision."""
     from .source_runtime import job_dir,frozen_json
     rule=scope_policy_entry(value,job.supplier_code,entry);policy=scope_policy(value)
+    repeated=refusal.get('reason')=='CANARY_PRODUCT_REQUEST_LIMIT'
+    if repeated:
+        extension_authorization(value)
+        require(refusal.get('blocked_target_sha256') in
+            {hashlib.sha256(u.encode()).hexdigest() for u in policy['entries'][job.supplier_code]},
+            'RECOVERY_DISPATCH_TARGET_NOT_FROZEN')
+        require(refusal.get('max_attempts')==job.settings_snapshot['source_input']['rate_policy']['max_attempts'],
+            'RECOVERY_DISPATCH_ATTEMPTS_CHANGED')
     require(job.settings_snapshot['source_batch']['phase']=='REFRESH' and rule['input_sha256']==input_sha and
-            failed_row['state']=='UNCERTAIN' and refusal.get('reason')=='CANARY_URL_OUTSIDE_FROZEN_BATCH' and
+            failed_row['state']=='UNCERTAIN' and refusal.get('reason') in ('CANARY_URL_OUTSIDE_FROZEN_BATCH','CANARY_PRODUCT_REQUEST_LIMIT') and
             len(refusal.get('blocked_target_sha256',''))==64,'RECOVERY_SCOPE_POLICY_REFUSAL_INVALID')
     with connection.cursor() as q:
         q.execute('SELECT started_at FROM crawl_runs WHERE id=%s',(run_id,))
@@ -973,10 +1070,14 @@ def record_scope_policy_case(connection,value,job,run_id,owner,input_sha,entry,f
             'job_id':job.id,'owner_job_id':owner,'run_id':run_id,'url':entry['url'],
             'reason':failed_row['receipt']['reason'],
             'authorization_path':policy['authorization_path'],'authorization_sha256':policy['authorization_sha256']}
+        if repeated:
+            ref=value['continuation']['operator_extension']
+            decision.update(authorization_path=ref['path'],authorization_sha256=ref['sha256'])
         item={'kind':'operator-scope-quarantine/v1','policy_case':True,'source':job.supplier_code,'owner_job_id':owner,
             'input_sha256':input_sha,'url':entry['url'],'entry':deepcopy(entry),'failed_row':deepcopy(failed_row),
             'attempt_started_at':started,'source_row_md5':rule['source_row_md5'],'decision':decision,
             'refusal':deepcopy(refusal)}
+        if repeated:item['dispatch_authorization']=extension_context(value)
         scope_quarantine_receipt(item);scope_sql_absent(q,item)
     path=job_dir(job.supplier_code,owner)/'scope-refusals'/(digest(item)+'.json')
     frozen_json(path,item)
@@ -1133,7 +1234,7 @@ def recover_continuation(queue,value,sha):
     return {'batch_id':value['batch_id'],'resumed_partial':resumed,'retried_roots':retried,'worker_started':False}
 
 
-def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=(),policy_authorization=None):
+def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=(),policy_authorization=None,operator_extension=None,matching_evidence=None):
     """Read-only, concrete current-batch plan; exact HEAD/SHA still unconfirmed."""
     from . import source_batch as batch
     from .source_runtime import job_dir
@@ -1147,12 +1248,25 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
     extra={'format':'live11-continuation/v1','batch_id':value['batch_id'],'phases':{},'quarantine':[],
            'historical_envelopes':[],'manual_hashes':{},'mappings1282':(prior_plan or value['post_stop'])['mappings1282']}
     if (prior_plan or {}).get('scope_policy'):extra['scope_policy']=deepcopy(prior_plan['scope_policy'])
+    if (prior_plan or {}).get('operator_extension'):extra['operator_extension']=deepcopy(prior_plan['operator_extension'])
+    if operator_extension:
+        extra['operator_extension']={'path':str(Path(operator_extension).resolve()),'sha256':file_sha(operator_extension)}
+        candidate={**value,'continuation':extra};extension_authorization(candidate)
+    if matching_evidence:
+        extra['matching_only']={key:{'path':str(Path(path).resolve()),'sha256':file_sha(path)} for key,path in matching_evidence.items()}
     with queue._connect() as c,c.cursor() as q:
         c.read_only=True;batch.validate_config(queue.config);batch.validate_connection(c)
         q.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running')")
         require(not q.fetchall(),'RECOVERY_ACTIVE_JOBS')
         q.execute('SELECT id,code,enabled,rate_settings,crawl_settings FROM suppliers ORDER BY code')
         require(normal(q.fetchall())==value['settings_before'],'RECOVERY_SETTINGS_BASELINE_DRIFT')
+        if matching_evidence:
+            before=json.loads(Path(matching_evidence['before']).read_text(encoding='utf-8'))
+            for table in ('source_products','offers','supplier_http_captures','offer_commercial_observations',
+                'entity_change_history','review_decisions','candidate_rejections','sterbrust_products','sterbrust_product_supplier_identifiers'):
+                q.execute(f'''SELECT count(*),md5(coalesce(string_agg(md5(to_jsonb(t)::text),''
+                    ORDER BY md5(to_jsonb(t)::text) COLLATE "C"),'')) FROM {table} t''')
+                require(normal(q.fetchone())==before['state']['hashes'][table],'RECOVERY_MATCHING_INPUTS_CHANGED')
         for item in previous_scope:
             cp=json.loads((job_dir(item['source'],item['owner_job_id'])/'checkpoint.json').read_text(encoding='utf-8'))
             check=deepcopy(cp);checksum=check.pop('checksum')
@@ -1192,6 +1306,11 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
             extra['scope_policy']={'format':'live11-frozen-scope-quarantine/v1','batch_id':value['batch_id'],
                 'authorization_path':str(Path(policy_authorization).resolve()),'authorization_sha256':file_sha(policy_authorization),
                 'extra_refresh_parents':auth['extra_refresh_parents'],'entries':entries}
+        if operator_extension:
+            auth=extension_authorization({**value,'continuation':extra})
+            latest_r=[attempts[-1] for attempts in groups.values() if attempts[-1][4]['source_batch']['phase']=='REFRESH' and attempts[-1][2]!='succeeded']
+            require(sorted(r[0] for r in latest_r)==auth['extra_refresh_parents'] and
+                all(r[4]['source_batch']['attempt']==9 for r in latest_r),'RECOVERY_R10_PARENT_CHANGED')
         source_by_scope={phase['source_batch']['scope_sha256']:phase['supplier_code']
             for parent in value['parents'] for phase in
             (parent['snapshot'],parent['snapshot']['source_batch']['next_snapshot'])}
@@ -1206,9 +1325,14 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                 previous_rule=continuation_rule(value,env['scope_sha256'])
                 if previous_rule.get('max_attempt')==9:
                     rule.update(max_attempt=9,r9_parent_id=previous_rule['r9_parent_id'])
+                if previous_rule.get('max_attempt')==10:
+                    rule.update(max_attempt=10,r10_parent_id=previous_rule['r10_parent_id'])
             if policy_authorization and attempts and attempts[-1][0] in extra['scope_policy']['extra_refresh_parents']:
                 require(env['phase']=='REFRESH','RECOVERY_R9_PHASE_CHANGED')
                 rule.update(max_attempt=9,r9_parent_id=attempts[-1][0])
+            if operator_extension and attempts and attempts[-1][0] in auth['extra_refresh_parents']:
+                require(env['phase']=='REFRESH','RECOVERY_R10_PHASE_CHANGED')
+                rule.update(max_attempt=10,r10_parent_id=attempts[-1][0])
             extra['phases'][env['scope_sha256']]=rule
             if not attempts or attempts[-1][2]=='succeeded':continue
             jid,sid,status,run,snap,meta=attempts[-1]
@@ -1228,6 +1352,11 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
             require(digest(check)==checksum and not cp['inflight'] and cp['manifest_sha256']==digest(snap['source_input']),
                     'RECOVERY_CHECKPOINT_CHECKSUM')
             initial.update(checkpoint_sha256=file_sha(folder/'checkpoint.json'),runtime_sha256=digest(rt))
+            if matching_evidence:
+                reuse=matching_only_receipts({**value,'continuation':extra},snap['supplier_code'],cp)
+                if reuse:
+                    require(before['checkpoint_sha256'].get(str(folder/'checkpoint.json'))==initial['checkpoint_sha256'],
+                        'RECOVERY_MATCHING_CHECKPOINT_CHANGED')
             for decision in scope_decisions:
                 if decision['job_id']!=jid:continue
                 require(decision['batch_id']==value['batch_id'] and decision['run_id']==run and
@@ -1235,11 +1364,14 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                         decision['action']=='QUARANTINE_WITHOUT_RETRY', 'RECOVERY_SCOPE_DECISION_OWNER')
                 url=decision['url'];entry=next((e for e in snap['source_input']['entries'] if e['url']==url),None)
                 row=cp['terminal'].get(url)
+                repeated=decision.get('reason')=='RequestAborted:CANARY_PRODUCT_REQUEST_LIMIT'
+                expected_reason='RequestAborted:CANARY_PRODUCT_REQUEST_LIMIT' if repeated else 'ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH'
+                expected_stop='CANARY_PRODUCT_REQUEST_LIMIT' if repeated else 'CANARY_URL_OUTSIDE_FROZEN_BATCH'
                 require(entry is not None and row and row['state']=='UNCERTAIN' and
-                        row['receipt'].get('reason')=='ValueError:CANARY_URL_OUTSIDE_FROZEN_BATCH' and
+                        row['receipt'].get('reason')==expected_reason and
                         not row['receipt'].get('original_capture_metadata') and
                         all(h['state']=='UNCERTAIN' for h in row['history']) and
-                        rt['termination_reason']=='CANARY_URL_OUTSIDE_FROZEN_BATCH',
+                        rt['termination_reason']==expected_stop,
                         'RECOVERY_SCOPE_DECISION_NOT_EXACT')
                 q.execute('SELECT started_at FROM crawl_runs WHERE id=%s',(run,))
                 started=q.fetchone()[0].isoformat()
@@ -1248,6 +1380,16 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                 item={'kind':'operator-scope-quarantine/v1','source':snap['supplier_code'],'owner_job_id':owner,
                     'input_sha256':cp['manifest_sha256'],'url':url,'entry':entry,'failed_row':row,
                     'attempt_started_at':started,'source_row_md5':source_hash,'decision':deepcopy(decision)}
+                if repeated:
+                    extension_authorization({**value,'continuation':extra})
+                    products=rt['canary']['product_requests'];canary=snap['source_input']['canary']
+                    require(jid==102 and run==43 and entry['source_product_id']==7536 and
+                        entry['source_external_id']=='site:10154292' and products.count(url)==1 and
+                        snap['source_input']['rate_policy']['max_attempts']==1 and
+                        len(set(products))<canary['max_products'], 'RECOVERY_DISPATCH_HISTORIC_NOT_EXACT')
+                    item['refusal']={'reason':expected_stop,'cause':'URL_ATTEMPTS_EXHAUSTED','target_in_frozen_scope':True,
+                        'dispatch_count':1,'max_attempts':1,'blocked_target_sha256':hashlib.sha256(url.encode()).hexdigest()}
+                    item['dispatch_authorization']=extension_context({**value,'continuation':extra})
                 scope_quarantine_receipt(item);scope_sql_absent(q,item)
                 extra['quarantine'].append(item)
             for url,row in cp['terminal'].items():

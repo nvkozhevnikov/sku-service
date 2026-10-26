@@ -162,9 +162,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     run_folder=job_dir(code,job.id);run_folder.mkdir(parents=True,exist_ok=True)
     stop_file=run_folder/'STOP_REQUESTED'
     lease_alive=LEASE_ALIVE.get()
+    batch_execution_until=None
     def stopped():
         envelope = job.settings_snapshot.get('source_batch')
-        if envelope and datetime.now(timezone.utc) >= datetime.fromisoformat(envelope['deadline']):
+        if envelope and datetime.now(timezone.utc) >= (batch_execution_until or datetime.fromisoformat(envelope['deadline'])):
             return 'BATCH_WINDOW_EXPIRED'
         if lease_alive is not None and not lease_alive():return 'HOST_LEASE_LOST'
         try:return stop_file.read_text(encoding='utf-8').strip()[:1000] or 'OPERATOR_STOP'
@@ -184,6 +185,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             from .source_recovery import ENV,approval,require
             if os.environ.get(ENV+'_FILE'):
                 approved,_=approval()
+                from .source_recovery import execution_deadline
+                if approved.get('continuation',{}).get('operator_extension'):
+                    batch_execution_until=execution_deadline(approved)
                 require(approved['batch_id']==job.settings_snapshot['source_batch']['id'],'RECOVERY_BATCH_CHANGED')
                 blocked_scope_urls={i['url'] for i in approved.get('continuation',{}).get('quarantine',[])
                     if i.get('kind')=='operator-scope-quarantine/v1' and i['source']==code}
@@ -210,7 +214,11 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         dispatch_budget=None
         if canary and original['mode']=='REFRESH':
             from .source_canary import DispatchBudget
-            dispatch_budget=DispatchBudget(original,robots_url)
+            isolate_repeats=False
+            if approved and approved.get('continuation',{}).get('operator_extension'):
+                from .source_recovery import extension_authorization
+                extension_authorization(approved);isolate_repeats=True
+            dispatch_budget=DispatchBudget(original,robots_url,isolate_repeats=isolate_repeats)
         def request_url(url):
             if url in blocked_scope_urls:
                 if fetcher is not None:fetcher.stop('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
@@ -344,12 +352,20 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if mode=='RESUME':
                 classified,plan=reconcile()
                 if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR')
+                from .source_recovery import matching_only_receipts
+                reused_matching=matching_only_receipts(approved,code,cp.state) if approved else {}
+                reconciled_receipts=[]
                 for r in classified:
                     if r['state']=='QUARANTINED' and cp.state['terminal'][r['entry']['url']]['state']!='QUARANTINED':
-                        cp.record_terminal([r['receipt']])
+                        reconciled_receipts.append(r['receipt'])
                     if r['state']=='COMMITTED':
-                        cp.record_terminal([{**r['receipt'],'state':'COMMITTED','sql_verified':True}])
+                        if r['receipt']['external_id'] in reused_matching:
+                            r['receipt']={**r['receipt'],'matching_receipt':reused_matching[r['receipt']['external_id']]}
+                        reconciled_receipts.append({**r['receipt'],'state':'COMMITTED','sql_verified':True})
                         if not r['receipt'].get('matching_receipt') and not (recovery_proof and recovery_proof['kind']=='matching-only'):matching_pending.append(r['receipt']['external_id'])
+                # Classification already verified every receipt; persist one
+                # atomic checkpoint rather than rewriting the entire catalogue N times.
+                if reconciled_receipts:cp.record_terminal(reconciled_receipts)
                 offline=[r for r in classified if r['state']=='HTTP_CAPTURED_NOT_COMMITTED']
             else:offline=[]
             seen={}
@@ -438,7 +454,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     if not gate_passed:batch=min(batch,max(1,gate_target-verified))
                     urls=cp.claim_batch(batch);outcomes=fetch(urls);fetched_count+=len(urls)
                     for outcome in outcomes:
-                        if outcome.scope_refusal:
+                        if outcome.scope_refusal or outcome.dispatch_refusal:
                             if (not scope_policy_active or original['mode']!='REFRESH' or backend is None or
                                     outcome.response is not None or outcome.transport_started is not True):
                                 raise ValueError('RECOVERY_SCOPE_POLICY_NOT_APPROVED')
@@ -447,7 +463,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                             cp.record_terminal([receipt])
                             from .source_recovery import record_scope_policy_case
                             proposed=record_scope_policy_case(backend.repo.connection,approved,job,run_id,owner,sha,
-                                byurl[outcome.url],cp.state['terminal'][outcome.url],outcome.scope_refusal)
+                                byurl[outcome.url],cp.state['terminal'][outcome.url],outcome.scope_refusal or outcome.dispatch_refusal)
                             if backend.probe(byurl[outcome.url],proposed)!='NOT_FOUND':raise ValueError('RECOVERY_SCOPE_SQL_NOT_PROVEN')
                             cp.record_terminal([proposed]);isolated.append(proposed);continue
                         if outcome.error or outcome.response is None or outcome.response.status_code!=200:
