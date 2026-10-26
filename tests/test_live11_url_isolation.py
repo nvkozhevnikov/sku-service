@@ -224,6 +224,8 @@ def test_bounded_continuation_cannot_extend_scope_sha_or_attempts(monkeypatch):
 
 @pytest.mark.parametrize('followups',[False,True])
 def test_actual_59_committed_plus_failed_capture_recovery_no_http_ingest(monkeypatch,tmp_path,followups):
+    from offline_fixture_clock import freeze_runtime_utc
+    freeze_runtime_utc(monkeypatch)
     from universal_supplier.control_plane.queue import CrawlJob
     from test_partner_pilot import CFG
     from test_source_jobs import deny

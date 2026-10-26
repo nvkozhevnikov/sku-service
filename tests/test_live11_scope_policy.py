@@ -17,6 +17,8 @@ from universal_supplier.http_capture import HttpResponse
 FIX=Path(__file__).parent/'fixtures/live11_recovery/kami_scope_stop.json.gz'
 
 def policy_run(tmp_path,monkeypatch,*,failure=None,repeated=False,timeout=False):
+    from offline_fixture_clock import freeze_runtime_utc
+    freeze_runtime_utc(monkeypatch)
     real=json.loads(gzip.decompress(FIX.read_bytes()))
     bad=deepcopy(real['item']['entry'])
     _,job,backend,_,good=setup('kami')

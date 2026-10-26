@@ -56,8 +56,9 @@ def settings_session(queue, manifest, folder):
                 'Explicit exact recovery SHA operator session',manifest['batch_id'])
         q.execute('SELECT id,code,enabled,rate_settings,crawl_settings FROM suppliers ORDER BY code')
         recovery.require(recovery.normal(q.fetchall())==active,'RECOVERY_SETTINGS_APPLY_READBACK')
-    save(folder,'SETTINGS_APPLIED.json',{'before':expected,'active':active})
-    try:yield
+    try:
+        save(folder,'SETTINGS_APPLIED.json',{'before':expected,'active':active})
+        yield
     finally:
         with queue._connect() as connection,connection.transaction(),connection.cursor() as q:
             q.execute("SELECT id FROM crawl_jobs WHERE status='running'")
@@ -75,8 +76,12 @@ def settings_session(queue, manifest, folder):
         save(folder,'SETTINGS_RESTORED.json',{'select_equal':True,'settings':restored})
 
 
-def run(queue):
+def run(queue,control=None):
     manifest,sha=recovery.approval()
+    if manifest.get('continuation',{}).get('autonomous'):
+        from universal_supplier.control_plane.source_autonomy import context
+        context(manifest,required=True)
+        recovery.require(control is not None,'AUTONOMOUS_ONE_SHOT_LAUNCH_REQUIRED')
     recovery.require(manifest['activation_matrix']==batch.matrix_rows(),'RECOVERY_ACTIVATION_MATRIX_CHANGED')
     folder=batch.ROOT/'reports/recovery-sessions'/str(uuid4());folder.mkdir(parents=True)
     save(folder,'SESSION.json',{'batch_id':manifest['batch_id'],'approval_sha256':sha,
@@ -88,20 +93,22 @@ def run(queue):
     previous={key:os.environ.get(key) for key in values}
     try:
         os.environ.update(values)
-        return execute(queue,manifest,folder)
+        return execute(queue,manifest,folder,control=control)
     finally:
         for key,value in previous.items():
             if value is None:os.environ.pop(key,None)
             else:os.environ[key]=value
 
 
-def execute(queue,manifest,folder):
+def execute(queue,manifest,folder,control=None):
     with settings_session(queue,manifest,folder):
         worker=None;reason=None
         try:
+            if control:control.check()
             admitted=recovery.recover(queue);save(folder,'RECOVERED.json',admitted)
             worker=Orchestrator(queue.config,queue=queue,max_parallel_supplier_jobs=2)
             while True:
+                if control:control.check()
                 recovery.approval()  # Recheck exact HEAD/engine/deadline/artifacts.
                 with queue._connect() as connection,connection.cursor() as q:
                     connection.read_only=True
@@ -110,6 +117,8 @@ def execute(queue,manifest,folder):
                 worker.tick()
                 status=queue.source_batch_status(manifest['batch_id'])
                 save(folder,'STATUS.json',status)
+                if control and any(p.get('reason')=='OPERATOR_STOP' for p in status['phases']):
+                    control.fail('OPERATOR_STOP');control.check()
                 if status['complete']:reason='COMPLETED';break
                 phases=status['phases']
                 if manifest.get('continuation'):

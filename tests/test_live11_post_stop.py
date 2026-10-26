@@ -20,6 +20,8 @@ from test_partner_pilot import CFG
 
 @pytest.fixture
 def stopped(monkeypatch,tmp_path):
+    from offline_fixture_clock import freeze_runtime_utc
+    freeze_runtime_utc(monkeypatch)
     v=json.loads(gzip.decompress((Path(__file__).parent/'fixtures/live11_recovery/post_stop_41_50.json.gz').read_bytes()))
     value=v['manifest'];sha='a'*64
     monkeypatch.setattr(socket.socket,'connect',denied);monkeypatch.setattr(socket,'getaddrinfo',denied)

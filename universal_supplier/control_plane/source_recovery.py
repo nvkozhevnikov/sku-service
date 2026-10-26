@@ -27,6 +27,8 @@ ENGINE_CHANGES = {
     'universal_supplier/control_plane/source_backend.py',
     'universal_supplier/control_plane/host_fetch.py',
     'universal_supplier/control_plane/source_canary.py',
+    'universal_supplier/control_plane/source_autonomy.py',
+    'universal_supplier/control_plane/source_hourly.py',
     'universal_supplier/adapters/bekamak_official.py',
 }
 REVIEWED_PARSER_SHA = 'bba4ffdea6591488f0873243b5106426056ee821d8edd8741f28dd2c7f09d4f4'
@@ -223,6 +225,9 @@ def timeout_context(value):
 
 
 def execution_deadline(value):
+    if value.get('continuation',{}).get('autonomous'):
+        from .source_autonomy import execution_deadline as autonomous_deadline
+        return autonomous_deadline(value)
     if value.get('continuation',{}).get('operator_extension'):
         return datetime.fromisoformat(extension_authorization(value)['execution_until'])
     return datetime.fromisoformat(value['deadline'])
@@ -883,7 +888,12 @@ def continuation_rule(value,scope):
             len(plan.get('mappings1282',[]))==1282,'RECOVERY_CONTINUATION_PROOF_INCOMPLETE')
     rule=plan.get('phases',{}).get(scope)
     require(rule and scope in value['scope_hashes'] and type(rule.get('max_attempt')) is int and
-            1<=rule['max_attempt']<=11,'RECOVERY_CONTINUATION_BOUND')
+            1<=rule['max_attempt']<=12,'RECOVERY_CONTINUATION_BOUND')
+    if rule['max_attempt']==12:
+        from .source_autonomy import policy
+        auth=policy(value)
+        require(rule.get('phase')=='REFRESH' and rule.get('r12_parent_id') in auth['extra_refresh_parents'],
+            'RECOVERY_R12_NOT_APPROVED')
     if rule['max_attempt']==11:
         auth=timeout_authorization(value)
         require(rule.get('phase')=='REFRESH' and rule.get('r11_parent_id') in auth['extra_refresh_parents'],
@@ -1281,7 +1291,7 @@ def recover_continuation(queue,value,sha):
     return {'batch_id':value['batch_id'],'resumed_partial':resumed,'retried_roots':retried,'worker_started':False}
 
 
-def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=(),policy_authorization=None,operator_extension=None,matching_evidence=None,timeout_auth=None):
+def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decisions=(),policy_authorization=None,operator_extension=None,matching_evidence=None,timeout_auth=None,autonomous_policy=None):
     """Read-only, concrete current-batch plan; exact HEAD/SHA still unconfirmed."""
     from . import source_batch as batch
     from .source_runtime import job_dir
@@ -1305,6 +1315,11 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
         timeout_authorization({**value,'continuation':extra})
         require(len(scope_decisions)==3 and {d.get('job_id') for d in scope_decisions}=={111},
                 'RECOVERY_TIMEOUT_HISTORIC_NOT_EXACT')
+    if (prior_plan or {}).get('autonomous'):extra['autonomous']=deepcopy(prior_plan['autonomous'])
+    if autonomous_policy:
+        extra['autonomous']={'path':str(Path(autonomous_policy).resolve()),'sha256':file_sha(autonomous_policy)}
+        from .source_autonomy import policy
+        policy({**value,'continuation':extra})
     if matching_evidence:
         extra['matching_only']={key:{'path':str(Path(path).resolve()),'sha256':file_sha(path)} for key,path in matching_evidence.items()}
     with queue._connect() as c,c.cursor() as q:
@@ -1369,6 +1384,12 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
             latest_r=[a[-1] for a in groups.values() if a[-1][4]['source_batch']['phase']=='REFRESH' and a[-1][2]!='succeeded']
             require(sorted(r[0] for r in latest_r)==network_auth['extra_refresh_parents'] and
                 all(r[4]['source_batch']['attempt']==10 for r in latest_r),'RECOVERY_R11_PARENT_CHANGED')
+        if autonomous_policy:
+            from .source_autonomy import policy
+            autonomous=policy({**value,'continuation':extra})
+            latest_r=[a[-1] for a in groups.values() if a[-1][4]['source_batch']['phase']=='REFRESH' and a[-1][2]!='succeeded']
+            require(sorted(r[0] for r in latest_r)==autonomous['extra_refresh_parents'] and
+                all(r[4]['source_batch']['attempt']==11 for r in latest_r),'RECOVERY_R12_PARENT_CHANGED')
         source_by_scope={phase['source_batch']['scope_sha256']:phase['supplier_code']
             for parent in value['parents'] for phase in
             (parent['snapshot'],parent['snapshot']['source_batch']['next_snapshot'])}
@@ -1387,6 +1408,8 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
                     rule.update(max_attempt=10,r10_parent_id=previous_rule['r10_parent_id'])
                 if previous_rule.get('max_attempt')==11:
                     rule.update(max_attempt=11,r11_parent_id=previous_rule['r11_parent_id'])
+                if previous_rule.get('max_attempt')==12:
+                    rule.update(max_attempt=12,r12_parent_id=previous_rule['r12_parent_id'])
             if policy_authorization and attempts and attempts[-1][0] in extra['scope_policy']['extra_refresh_parents']:
                 require(env['phase']=='REFRESH','RECOVERY_R9_PHASE_CHANGED')
                 rule.update(max_attempt=9,r9_parent_id=attempts[-1][0])
@@ -1396,6 +1419,9 @@ def prepare_continuation(queue,previous,previous_sha,quarantine_urls,scope_decis
             if timeout_auth and attempts and attempts[-1][0] in network_auth['extra_refresh_parents']:
                 require(env['phase']=='REFRESH','RECOVERY_R11_PHASE_CHANGED')
                 rule.update(max_attempt=11,r11_parent_id=attempts[-1][0])
+            if autonomous_policy and attempts and attempts[-1][0] in autonomous['extra_refresh_parents']:
+                require(env['phase']=='REFRESH','RECOVERY_R12_PHASE_CHANGED')
+                rule.update(max_attempt=12,r12_parent_id=attempts[-1][0])
             extra['phases'][env['scope_sha256']]=rule
             if not attempts or attempts[-1][2]=='succeeded':continue
             jid,sid,status,run,snap,meta=attempts[-1]

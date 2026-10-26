@@ -164,6 +164,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     lease_alive=LEASE_ALIVE.get()
     batch_execution_until=None
     def stopped():
+        from .source_autonomy import stop_reason
+        autonomous_stop=stop_reason()
+        if autonomous_stop:return autonomous_stop
         envelope = job.settings_snapshot.get('source_batch')
         if envelope and datetime.now(timezone.utc) >= (batch_execution_until or datetime.fromisoformat(envelope['deadline'])):
             return 'BATCH_WINDOW_EXPIRED'
@@ -286,6 +289,24 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             began=clock.monotonic()
             try:return list(fetcher.fetch(urls,limit=budget,seconds=min(remaining,3600)))
             finally:http_seconds+=clock.monotonic()-began
+        def finish_pending_matching():
+            nonlocal identity,matching_seconds
+            reason=stopped()
+            if reason:
+                fetcher.stop(str(reason));raise RuntimeError(str(reason))
+            backend.progress({'phase':'MATCHING','sql_committed_this_job':len(committed)})
+            began=time.perf_counter();identity=backend.matching(list(dict.fromkeys(matching_pending)));matching_seconds=time.perf_counter()-began
+            if identity.get('status')!='succeeded':raise ValueError('MATCHING_NOT_SUCCEEDED')
+            matching_receipts=[]
+            for url,row in list(cp.state['terminal'].items()):
+                r=row['receipt']
+                if row['state']=='COMMITTED' and r.get('external_id') in matching_pending:
+                    matching_receipts.append({**r,'matching_receipt':{'job_id':job.id,'run_id':run_id,'status':'succeeded','external_id':r['external_id'],'policy_version':identity.get('policy_version')}})
+            # One atomic receipt batch for one successful scoped matching run.
+            # Avoid N full checkpoint rewrites for a large catalogue.
+            if matching_receipts:cp.record_terminal(matching_receipts)
+            matching_pending.clear()
+
         def robots():
             nonlocal robot
             outcomes=fetch([robots_url])
@@ -442,6 +463,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     process(item['entry'],receipt=item['receipt']);consecutive_card_errors=0
                 except CardExtractionError as error:isolate(item['entry'],error,receipt=item['receipt'])
                 if fetcher.aborted():break
+            if matching_pending and approved and approved.get('continuation',{}).get('autonomous') and not termination and not fetcher.stop_reason:
+                finish_pending_matching()
             if cp.state['frontier'] and not termination:
                 if robot is None:robots()
                 fetched_count=0
@@ -493,21 +516,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             resume_safe=plan['automatic_resume_allowed'] and bool(cp.state['frontier'] or plan['offline_pending'])
         else:
             plan={'uncertain':[],'failed_requires_decision':[]};resume_safe=bool(termination=='DISCOVERY_PAGE_BUDGET' and not discovery.state['inflight'])
-        if matching_pending and not (termination and termination.startswith(('SOURCE_BLOCKED','OPERATOR','SQL_','UNCERTAIN','HOST_LEASE'))):
-            reason=stopped()
-            if reason:
-                fetcher.stop(str(reason));raise RuntimeError(str(reason))
-            backend.progress({'phase':'MATCHING','sql_committed_this_job':len(committed)})
-            began=time.perf_counter();identity=backend.matching(list(dict.fromkeys(matching_pending)));matching_seconds=time.perf_counter()-began
-            if identity.get('status')!='succeeded':raise ValueError('MATCHING_NOT_SUCCEEDED')
-            matching_receipts=[]
-            for url,row in list(cp.state['terminal'].items()):
-                r=row['receipt']
-                if row['state']=='COMMITTED' and r.get('external_id') in matching_pending:
-                    matching_receipts.append({**r,'matching_receipt':{'job_id':job.id,'run_id':run_id,'status':'succeeded','external_id':r['external_id'],'policy_version':identity.get('policy_version')}})
-            # One atomic receipt batch for one successful scoped matching run.
-            # Avoid N full checkpoint rewrites for a large catalogue.
-            if matching_receipts:cp.record_terminal(matching_receipts)
+        if matching_pending and not (termination and termination.startswith(('SOURCE_BLOCKED','OPERATOR','SQL_','UNCERTAIN','HOST_LEASE','AUTONOMOUS'))):
+            finish_pending_matching()
     except Exception as e:
         termination=(fetcher.stop_reason if fetcher else None) or str(e) or type(e).__name__
         errors.append({'type':type(e).__name__,'reason':str(e)})

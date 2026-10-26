@@ -25,6 +25,8 @@ def denied(*a,**kw):
 
 @pytest.fixture
 def real(monkeypatch,tmp_path):
+    from offline_fixture_clock import freeze_runtime_utc
+    freeze_runtime_utc(monkeypatch)
     value=json.loads(gzip.decompress((Path(__file__).parent/'fixtures/live11_recovery/beka_job17_run18.json.gz').read_bytes()))
     monkeypatch.setattr(socket.socket,'connect',denied)
     monkeypatch.setattr(socket,'getaddrinfo',denied)

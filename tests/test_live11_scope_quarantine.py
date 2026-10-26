@@ -16,6 +16,8 @@ from universal_supplier.http_capture import HttpResponse
 
 @pytest.fixture
 def saved(tmp_path,monkeypatch):
+    from offline_fixture_clock import freeze_runtime_utc
+    freeze_runtime_utc(monkeypatch)
     data=json.loads(gzip.decompress((Path(__file__).parent/'fixtures/live11_recovery/kami_scope_stop.json.gz').read_bytes()))
     auth=tmp_path/'operator.json';auth.write_text(json.dumps(data['authorization']),encoding='utf-8')
     data['item']['decision'].update(authorization_path=str(auth),authorization_sha256=hashlib.sha256(auth.read_bytes()).hexdigest())

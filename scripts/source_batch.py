@@ -39,6 +39,7 @@ def main():
         help='Exact operator authorization for frozen REFRESH refusal quarantine and bounded R9')
     continuation.add_argument('--operator-extension',type=Path,help='Explicit repeated-dispatch quarantine, R10 and execution-window authorization')
     continuation.add_argument('--timeout-authorization',type=Path,help='Exact read-timeout quarantine and R11 authorization')
+    continuation.add_argument('--autonomous-policy',type=Path,help='Proposed one-shot24h/R12 policy; exact new approval still required')
     continuation.add_argument('--matching-durable',type=Path)
     continuation.add_argument('--matching-before',type=Path)
     continuation.add_argument('--output',required=True,type=Path)
@@ -59,7 +60,7 @@ def main():
                 decisions=[json.loads(p.read_text(encoding='utf-8')) for p in args.scope_quarantine_decision]
                 require(bool(args.matching_durable)==bool(args.matching_before),'RECOVERY_MATCHING_PROOF_PAIR')
                 matching={'durable':args.matching_durable,'before':args.matching_before} if args.matching_durable else None
-                result=prepare_continuation(PostgresJobQueue(target_config()),args.previous,args.previous_sha256,args.quarantine_url,decisions,args.scope_policy_authorization,args.operator_extension,matching,args.timeout_authorization)
+                result=prepare_continuation(PostgresJobQueue(target_config()),args.previous,args.previous_sha256,args.quarantine_url,decisions,args.scope_policy_authorization,args.operator_extension,matching,args.timeout_authorization,args.autonomous_policy)
             else:result=prepare(PostgresJobQueue(target_config()),args.evidence,args.batch_id)
             require(not args.output.exists(),'RECOVERY_OUTPUT_ALREADY_EXISTS')
             args.output.parent.mkdir(parents=True,exist_ok=True)
