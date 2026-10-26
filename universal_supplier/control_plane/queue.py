@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 import threading
 from typing import Any
 from urllib.parse import urlparse
@@ -270,10 +271,23 @@ class PostgresJobQueue:
             cursor.execute("SELECT count(*) FROM crawl_jobs WHERE status='running'")
             if cursor.fetchone()[0] >= 2:
                 return None
+            # Frozen deadlines remain evidence. An exact approved extension must
+            # also govern queue expiry, before per-snapshot dispatch validation.
+            protected_batch = protected_until = None
+            from . import source_recovery as recovery
+            if os.environ.get(recovery.ENV + '_FILE'):
+                approved, _ = recovery.approval()
+                from .source_autonomy import require_active
+                require_active(approved)
+                protected_batch = approved['batch_id']
+                protected_until = recovery.execution_deadline(approved)
             cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),
                 error_message='BATCH_WINDOW_EXPIRED',updated_at=now()
                 WHERE status='queued' AND settings_snapshot ? 'source_batch'
-                  AND (settings_snapshot->'source_batch'->>'deadline')::timestamptz<=now()""")
+                  AND (settings_snapshot->'source_batch'->>'deadline')::timestamptz<=now()
+                  AND NOT coalesce(settings_snapshot->'source_batch'->>'id'=%s
+                                   AND %s::timestamptz>now(),false)""",
+                (protected_batch, protected_until))
             cursor.execute(
                 """SELECT j.id,j.supplier_id,s.code,s.adapter_name,s.base_url,j.trigger_type,
                           j.crawl_type,j.status,j.scheduled_for,j.settings_snapshot

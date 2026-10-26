@@ -1,5 +1,11 @@
 # LIVE11: один автономный запуск до 24 часов
 
+Актуально после разрешённой попытки 26.10.2026: LIVE STOP, одноразовый SHA
+`07cc7b9375bb98543651b99952c0113bb1cb2136153043835f94793bcc9714af` использован.
+Не повторять launcher и не удалять CLAIM. Полный фактический отчёт:
+workspace `reports/RC_LIVE11_AUTONOMOUS_24H_20261026/EXECUTION_1_STOP_REPORT.md`.
+Ниже сохранена история подготовки до подтверждения.
+
 Статус: REPOSITORY-VERIFIED подготовка. Новый LIVE, R12, HTTP, ingest и matching
 не разрешены самим этим документом. Нужны точные новый HEAD/SHA и подтверждение
 оператором предлагаемого допуска. Не запускать старые NEXT_7/RESUME_APPROVED.
@@ -161,3 +167,28 @@ Intermediate QA failures retained as evidence: historic fixtures initially hit t
 Final hourly guard also binds each SQL capture fingerprint to its original external identity; mismatches stop with HOURLY_SQL_RECEIPT_MISMATCH. Real readonly3009receipt/sample and added offline identity-drift case PASS.
 
 Autonomous admission additionally requires the active same-SHA Controller and bound one-use session before enqueue/admission/runtime, including alternate legacy recover paths. A manifest/context alone outside that controlled process cannot enqueue R12. Guard regression PASS before any SQL.
+
+## Фактический запуск 26.10.2026 и адресная правка очереди
+
+OPERATOR-CONFIRMED exact HEAD13540e7/SHA07cc7b93/R12/24h window.
+LIVE-VERIFIED: задача Windows стартовала, admission создал jobs128–136 attempt12,
+но первый claim_next отменил все9 до запуска по BATCH_WINDOW_EXPIRED.
+Исходный SQL bulk-expiry сравнивал frozen deadline без approved extension;
+RECOVERY_CANCELLED_NOT_APPROVED был последующим отказом повторной admission.
+Это дефект queue expiry, не Beka gate и не ошибка поставщика.
+
+APPLIED (код/offline): expiry учитывает exact-approved batch и effective window;
+автономное исключение требует ACTIVE Controller/claim. Per-snapshot HEAD/scope,
+native Beka/max2/different-host и остальные guards сохранены. Чужой batch не
+получает продление. Frozen snapshots/исходные даты не меняются.
+VERIFIED:107 offline PASS, включая7 новых queue-window negatives/positives
+и native2200/22phase replay. Read-only SQL:45 source hashes и2 checkpoints exact,
+1282 mappings/manual decisions exact;3009COMMITTED/2847unique/61pending/2cached;
+0new runs/HTTP/ingest/matching/captures/observations/history,0active/settings11restored.
+
+Текущий запуск завершён, exit1/FINAL и no automatic restart. R12 израсходована
+даже при0run: самостоятельная R13 не разрешена. Новый exact HEAD/SHA и отдельный
+допуск только для9 never-started cancelled jobs128–136 необходимы до повторного
+LIVE. Не менять статусы/attempt/CLAIM вручную. Ни R13, ни новый сеанс в этой
+правке не реализованы и не запущены. Ранее подтверждённый approval не утверждает
+новый HEAD исправления. Данные/ACL/схема/парсеры/serving не изменялись.

@@ -126,7 +126,9 @@ class Database:
                     self.rows=[(sum(j['status']=='running' for j in db.jobs),)]
                 elif 'BATCH_WINDOW_EXPIRED' in sql:
                     for j in db.jobs:
-                        if j['status']=='queued' and datetime.fromisoformat(j['settings_snapshot']['source_batch']['deadline'])<=datetime.now(timezone.utc):
+                        env=j['settings_snapshot']['source_batch'];now=datetime.now(timezone.utc)
+                        protected=bool(args and env['id']==args[0] and args[1] and args[1]>now)
+                        if j['status']=='queued' and datetime.fromisoformat(env['deadline'])<=now and not protected:
                             j.update(status='cancelled',error_message='BATCH_WINDOW_EXPIRED')
                 elif 'SELECT j.id,j.supplier_id' in sql:
                     active={normalized_domain(db.suppliers[j['settings_snapshot']['supplier_code']][3]) for j in db.jobs if j['status']=='running'}
