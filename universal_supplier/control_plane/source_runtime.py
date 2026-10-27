@@ -174,6 +174,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         from .automation_execution import stop_reason as automation_stop_reason
         automation_stop=automation_stop_reason()
         if automation_stop:return automation_stop
+        from .automation_execution import source_stop_reason
+        if source_stop_reason(code):return source_stop_reason(code)
         envelope = job.settings_snapshot.get('source_batch')
         if envelope and datetime.now(timezone.utc) >= (batch_execution_until or datetime.fromisoformat(envelope['deadline'])):
             return 'BATCH_WINDOW_EXPIRED'
@@ -258,7 +260,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         fetcher=BoundedHostFetcher(HOSTS[code],rate,client_factory or UrllibPublicHttpClient,
             validator=request_url,robots_allowed=allowed,robots_delay_seconds=0,
             lease_acquired=True,clock=clock,stop_requested=stopped,source=code,approval=settings.get('host_policy_approval'),defer_first_start=True,isolate_timeouts=isolate_timeouts,
-            prevent_unknown_retry=bool(job.settings_snapshot.get('automation')))
+            prevent_unknown_retry=bool(job.settings_snapshot.get('automation')),robots_url=robots_url)
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
         if dispatch_budget:fetcher.request_start_guard=dispatch_budget
         capture_archive_lock = threading.Lock()
@@ -291,13 +293,22 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 cap=capture_from_record(record)
                 cp.record_terminal([receipt_for(outcome.url,'HTTP_CAPTURED_NOT_COMMITTED',cap,code,owner,sha)])
         fetcher.receipt_sink=archive
+        def archive_error(outcome):
+            from .transport_diagnostics import safe_message
+            value={'at':datetime.now(timezone.utc).isoformat(),'job_id':job.id,'owner_job_id':owner,
+                'input_sha256':sha,'url':safe_message(outcome.url),'transport_started':outcome.transport_started,
+                'http_status':None if outcome.response is None else outcome.response.status_code,
+                'diagnostics':outcome.error_diagnostics}
+            key=hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()
+            frozen_json(run_folder/'transport-errors'/(key+'.json'),value)
+        fetcher.error_sink=archive_error
         budget=limit+pages+4
-        def fetch(urls):
+        def fetch(urls,request_scope='product'):
             nonlocal http_seconds
             remaining=deadline-clock.monotonic()
             if remaining<=0:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');return []
             began=clock.monotonic()
-            try:return list(fetcher.fetch(urls,limit=budget,seconds=min(remaining,3600)))
+            try:return list(fetcher.fetch(urls,limit=budget,seconds=min(remaining,3600),request_scope=request_scope))
             finally:http_seconds+=clock.monotonic()-began
         def finish_pending_matching():
             nonlocal identity,matching_seconds
@@ -319,14 +330,22 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
 
         def robots():
             nonlocal robot
-            outcomes=fetch([robots_url])
-            if len(outcomes)!=1 or outcomes[0].error or outcomes[0].response.status_code!=200:raise ValueError(fetcher.stop_reason or 'ROBOTS_NOT_PROVEN')
-            response=outcomes[0].response
-            if '<html' in response.body.decode('utf-8',errors='ignore').lower():raise ValueError('ROBOTS_NOT_TEXT')
-            robot=RobotFileParser();robot.parse(response.body.decode('utf-8').splitlines())
-            delay=robot.crawl_delay(AGENT);rr=robot.request_rate(AGENT)
-            minimum=max(delay or 0,rr.seconds/rr.requests if rr else 0)
-            if minimum>rate.min_request_interval_seconds:raise PermissionError('ROBOTS_REQUIRES_SLOWER_PROFILE')
+            try:
+                outcomes=fetch([robots_url],request_scope='robots')
+                if len(outcomes)!=1 or outcomes[0].error or outcomes[0].response is None or outcomes[0].response.status_code!=200:raise ValueError(fetcher.stop_reason or 'ROBOTS_NOT_PROVEN')
+                response=outcomes[0].response
+                if '<html' in response.body.decode('utf-8',errors='ignore').lower():raise ValueError('ROBOTS_NOT_TEXT')
+                robot=RobotFileParser();robot.parse(response.body.decode('utf-8').splitlines())
+                delay=robot.crawl_delay(AGENT);rr=robot.request_rate(AGENT)
+                minimum=max(delay or 0,rr.seconds/rr.requests if rr else 0)
+                if minimum>rate.min_request_interval_seconds:raise PermissionError('ROBOTS_REQUIRES_SLOWER_PROFILE')
+            except (ValueError,PermissionError) as error:
+                from . import automation_execution
+                from .source_failure import ROBOTS_LOCAL
+                if str(error) in ROBOTS_LOCAL and automation_execution.ACTIVE is not None:
+                    automation_execution.ACTIVE.pause_source(code,str(error))
+                    fetcher.stop(str(error))
+                raise
         entries=list(original['entries'])
         # DISCOVERY has its own durable node frontier. A node with lost response
         # receipt is uncertain; it never silently re-enters the HTTP queue.
@@ -570,6 +589,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             'effective_rate_policy':rate.snapshot(),'approved_total_cap':limit,'safety_gate_size':gate_size,'safety_gate_passed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values())>=min(gate_size,len(entries)) if entries else False,'termination_reason':termination,'resume_available':locals().get('resume_safe',False),
             'resume_uncertain':locals().get('plan',{}).get('uncertain',[]),'matching_applied':identity.get('matching_applied',False),
             'identity_post_processing':identity}
+        result['transport_errors']=[o.error_diagnostics for o in fetcher.outcomes if o.error_diagnostics] if fetcher else []
+        from .source_failure import failure_scope
+        from .automation_execution import stop_reason as global_stop_reason
+        result['stop_scope']=failure_scope(termination,{'resume_uncertain':result['resume_uncertain'],'resume_available':result['resume_available']}) if termination else None
+        result['global_stop_reason']=global_stop_reason()
+        if result['global_stop_reason']:result['stop_scope']='system'
         if canary:result['canary']={**canary,'product_requests':list(dispatch_budget.products) if dispatch_budget else [],'robots_requests':dispatch_budget.robots if dispatch_budget else 0}
         write_checkpoint(run_folder/'result.json',result,durable=True)
         if backend:

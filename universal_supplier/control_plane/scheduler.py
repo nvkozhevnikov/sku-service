@@ -131,6 +131,7 @@ class Scheduler:
         if is_refresh(self.automation.value):return tick(self,now)
         from .supplier_automation import settings_for,due_occurrence,digest
         from .automation_execution import require_active,require
+        from .source_failure import ROBOTS_LOCAL
         session=require_active(self.automation.sha)
         result=[];self.blocked={}
         with self._connect() as c,c.cursor() as q:
@@ -138,6 +139,8 @@ class Scheduler:
             rows=q.fetchall()
         for sid,code,enabled,rate,crawl in rows:
             if code not in session.value['suppliers']:continue
+            paused=session.source_reason(code) if hasattr(session,'source_reason') else None
+            if paused:self.blocked[code]=paused;continue
             cfg=settings_for({'code':code,'rate_settings':rate,'crawl_settings':crawl})
             if not enabled or not cfg['schedule_enabled']:continue
             approved=session.value['suppliers'][code]
@@ -160,7 +163,7 @@ class Scheduler:
                 if marker.get('approval_sha256')!=session.sha:
                     self.blocked[code]='PREVIOUS_EXECUTION_REQUIRES_OPERATOR';break
                 reason=rt.get('termination_reason') or error or 'UNPROVEN_PARENT'
-                if str(reason).startswith(('SOURCE_BLOCKED','SOURCE_CARD_ERROR_THRESHOLD','SOURCE_IDENTITY_MASS_FAILURE',
+                if reason in ROBOTS_LOCAL or str(reason).startswith(('SOURCE_ROBOTS_','SOURCE_BLOCKED','SOURCE_CARD_ERROR_THRESHOLD','SOURCE_IDENTITY_MASS_FAILURE',
                     'OPERATOR_STOP','SOURCE_HTTP_CIRCUIT_BREAKER','SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_RETRY_AFTER_HTTP_503')):
                     self.blocked[code]=reason;break
                 if rt.get('resume_uncertain') or rt.get('resume_failed') or (state in ('partial','failed','stale_failed') and not rt.get('resume_available')):
@@ -190,10 +193,10 @@ class Scheduler:
                         if run is not None:
                             if not rt.get('resume_available') or rt.get('resume_uncertain') or rt.get('resume_failed'):
                                 reason=rt.get('termination_reason') or error or 'UNPROVEN_PARENT'
-                                local=('SOURCE_BLOCKED_HTTP_403','SOURCE_BLOCKED_HTTP_429','SOURCE_CARD_ERROR_THRESHOLD',
+                                local=('SOURCE_ROBOTS_','SOURCE_BLOCKED_HTTP_403','SOURCE_BLOCKED_HTTP_429','SOURCE_CARD_ERROR_THRESHOLD',
                                        'SOURCE_IDENTITY_MASS_FAILURE','OPERATOR_STOP','SOURCE_HTTP_CIRCUIT_BREAKER',
                                        'SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_RETRY_AFTER_HTTP_503','SOURCE_BLOCKED_INTERSTITIAL')
-                                if not str(reason).startswith(local):
+                                if reason not in ROBOTS_LOCAL and not str(reason).startswith(local):
                                     session.fail('AUTOMATION_CRITICAL_JOB:'+str(reason)[:150]);session.check()
                                 self.blocked[code+':'+phase]=reason;continue
                             self.queue.source_resume_status(jid)  # SQL + durable native proof, no HTTP.

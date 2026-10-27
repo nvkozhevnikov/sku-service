@@ -10,6 +10,7 @@ import csv,hashlib,json,os,subprocess
 from pathlib import Path
 from .supplier_automation import digest,settings_for
 from .automation_execution import require
+from .source_failure import failure_scope
 
 PURPOSE='confirmed-commercial-refresh/v1'
 ROOT=Path(__file__).resolve().parents[2]
@@ -33,6 +34,13 @@ def validate(value):
         require(r['settings_after']['enabled']==bool(entries) or not entries,'COMMERCIAL_REFRESH_ENABLE_APPROVAL_REQUIRED')
     matrix=ROOT/'config/live11_approval_matrix.csv'
     require(hashlib.sha256(matrix.read_bytes()).hexdigest()==value['matrix_sha256'],'COMMERCIAL_REFRESH_MATRIX_CHANGED')
+    if value.get('continuation'):
+        p=value['continuation']
+        require(p.get('kind')=='commercial-not-requested-continuation/v1' and p.get('scope_count')==1270 and
+            p.get('committed')==p.get('product_dispatches')==p.get('product_inflight')==0 and
+            p.get('previous_scope_sha256')==value['scope_sha256'] and p.get('target')==value['target'] and
+            p.get('not_before')==value['not_before'] and p.get('execution_until')==value['execution_until'],
+            'CONTINUATION_SCOPE_OR_PROOF_CHANGED')
 
 
 def scope_rows(config,targets):
@@ -137,6 +145,8 @@ def settings(session,connection):
     from .source_recovery import normal
     from .source_canary import validate_connection
     validate_connection(connection);scope_rows(session.config,[e for r in session.value['suppliers'].values() for e in r['targets']])
+    from .commercial_continuation import validate_live
+    validate_live(session.config,session.value)
     def check_protected():
         old=session.value['protected_jobs']
         rows=connection.execute('SELECT id,md5(row_to_json(j)::text) FROM crawl_jobs j WHERE id=ANY(%s) ORDER BY id',([r[0] for r in old],)).fetchall()
@@ -182,6 +192,8 @@ def tick(scheduler,now):
     enqueued=[];done=0
     for code,r in session.value['suppliers'].items():
         if not r['targets']:done+=1;continue
+        paused=session.source_reason(code) if hasattr(session,'source_reason') else None
+        if paused:scheduler.blocked[code]=paused;continue
         with scheduler._connect() as c,c.cursor() as q:
             q.execute('''SELECT j.id,j.status,j.crawl_run_id,j.settings_snapshot,r.metadata,j.error_message
                 FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.supplier_id=%s
@@ -198,6 +210,12 @@ def tick(scheduler,now):
             rt=(metadata or {}).get('source_runtime') or {}
             # STOP and unknown outcomes never become an implicit retry.
             reason=rt.get('termination_reason') or error or 'UNPROVEN_PARENT'
+            if failure_scope(reason,rt)=='supplier':
+                if hasattr(session,'pause_source'):session.pause_source(code,reason)
+                scheduler.blocked[code]=reason;continue
+            explicit_stop_resume=explicit and str(reason).startswith('OPERATOR') and rt.get('resume_available') and not rt.get('resume_uncertain') and not rt.get('resume_failed')
+            if run is not None and failure_scope(reason,rt)=='system' and not explicit_stop_resume:
+                session.fail('AUTOMATION_CRITICAL_JOB:'+str(reason)[:180]);session.check()
             if run is None and explicit and status=='cancelled' and error in ('AUTOMATION_STOP','AUTOMATION_WINDOW_STOP'):
                 pass  # Never started: original frozen scope, same bounded occurrence.
             elif run is None or not rt.get('resume_available') or rt.get('resume_uncertain') or rt.get('resume_failed') or str(reason).startswith(('SOURCE_BLOCKED','SOURCE_CARD_ERROR_THRESHOLD','SOURCE_IDENTITY_MASS_FAILURE','SOURCE_HTTP_CIRCUIT','SOURCE_NETWORK')) or (str(reason).startswith('OPERATOR') and not explicit):

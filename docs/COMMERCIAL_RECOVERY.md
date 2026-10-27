@@ -86,8 +86,9 @@ RC_LIVE11_DML_ACL_20261023/REPORT.md:45); этот режим их не испо
 
 Отдельная плохая карточка изолируется существующим durable quarantine с capture/reason.
 Семантический конфликт допускает карантин только после доказанного SQL rollback/absence;
-mapping не изменяется. Permission/SQL/receipt/identity failure, breaker, 403/429,
-неизвестный HTTP outcome и истечение окна остаются STOP. Нельзя автоматически
+mapping не изменяется. Permission/SQL/receipt/identity failure, неизвестный товарный
+HTTP outcome и истечение окна остаются системным STOP. Breaker/403/429 отдельного
+источника приостанавливают его host; независимые источники продолжают работу. Нельзя автоматически
 повторять UNCERTAIN или скрывать массовые ошибки под quarantine.
 
 Команда STOP создаёт только запрос остановки. Дождаться FINAL, нулевых active jobs и
@@ -129,3 +130,46 @@ scope —1215 различных Product ID, не обещание1215 приг�
 блокируются Stage6 BLOCKED_IMPORT_CONTRACT_EVIDENCE. Production/Bitrix/cron/deploy/push
 не разрешены. Сквозная фактическая HTTP→SQL→matching→selection→XML приёмка остаётся
 pending до отдельного exact approval и реального выполнения.
+
+## Инцидент robots137/138 и изоляция источников — 27.10.2026
+
+REPOSITORY-VERIFIED: прежний `prevent_unknown_retry` одинаково вызывал глобальный
+`ACTIVE.fail(AUTOMATION_UNKNOWN_HTTP_OUTCOME)` для robots и карточки. Сохранялся
+только тип URLError; `.reason`, cause, errno терялись. Это доказанная причина
+общей остановки, но не доказательство причины сетевого отказа Intervesp.
+Исторический DNS/TLS/server failure остаётся UNKNOWN; повторного HTTP для диагностики нет.
+
+Теперь явно помеченный запрос точного robots URL при URLError/сетевом OSError/TLS/timeout
+останавливает только этот источник и другие источники того же host. Товарные запросы
+к нему запрещены. Остальные host работают в прежней очереди. Неуспешный HTTP, HTML
+вместо robots или несовместимый crawl-delay также не дают разрешения на товары.
+Автоматического повторного robots после блокировки в этой сессии нет.
+
+Отдельно сохраняется bounded secret-safe `transport-exception/v1`: тип/модуль,
+исходное исключение, `.reason`, cause/context, errno/winerror, SSL verify code/message,
+request_scope, wire_outcome. URL userinfo/query, credentials и auth/cookie headers
+редактируются. Durable JSON: `reports/source-runner-evidence/<source>/job-<id>/transport-errors/`;
+сводка также находится в result/SQL runtime metadata. Ошибка записи этого evidence,
+общий Permission/resource failure, SQL/receipt/mapping/HEAD/SHA/window/disk/lease failure
+и UNKNOWN товарного запроса остаются системным STOP. TLS validation, robots,
+rate/host limits, CHECK/FK, F01/F03 и confirmed ID guards не отключаются.
+
+Продолжение первой попытки — узкий доказательный контракт `commercial-not-requested-continuation/v1`:
+новый точный HEAD/engine/SHA, прежние1270 URL/1215 ID, окно/лимиты/host policies.
+`prepare --continue-approval <old> --previous-sha256 <old SHA>` сверяет jobs137–144,
+input/checkpoint/result hashes, пустые terminal/inflight, весь NOT_REQUESTED frontier,
+product_dispatch=0, SQL_COMMITTED=0, captures_since_start=0 и1282 точные связи.
+Восемь исходных jobs остаются partial/cancelled как evidence. Новый допуск создаёт
+обычные frozen REFRESH inputs только для доказанно не запрошенных товаров. Старый
+RESUME с другим engine не используется; SOURCE_ENGINE_CHANGED не обходится.
+COMMITTED/cached/UNCERTAIN/незавершённый dispatch отвергают этот узкий способ.
+Та же проверка выполняется непосредственно перед временным включением настроек.
+
+Для нового допуска запускать непосредственно `scripts/supplier_system.py run`:
+прежний workspace `COMMERCIAL_RECOVERY_20261027/execute_approved.py` содержит старый
+дублирующий global critical_watch и для продолжения не используется. Нового scheduler,
+Windows Task или cron нет. Существующие keep_awake, hourly JSON/CSV, durable checkpoints,
+лимит max2 разных host, drain и CAS SELECT-restore сохранены. Закрытие чата не является
+STOP самостоятельному pythonw-процессу; выключение ПК прерывает его, autorestart отсутствует.
+Точная новая команда и SHA: workspace `reports/COMMERCIAL_SOURCE_ISOLATION_20261027/`.
+До отдельного подтверждения этого допуска новый LIVE запрещён.

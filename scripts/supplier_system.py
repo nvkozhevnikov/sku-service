@@ -13,6 +13,7 @@ def main(argv=None):
     p.add_argument('--approval',type=Path);p.add_argument('--sha256');p.add_argument('--confirm')
     p.add_argument('--limits',type=Path);p.add_argument('--not-before');p.add_argument('--execution-until')
     p.add_argument('--confirmed-commercial-targets',type=Path)
+    p.add_argument('--continue-approval',type=Path);p.add_argument('--previous-sha256')
     p.add_argument('--output',type=Path);p.add_argument('--session',type=Path)
     p.add_argument('--resume-safe',action='store_true',help='explicit native safe resume within the SAME approved window; never UNKNOWN')
     args=p.parse_args(argv)
@@ -23,6 +24,10 @@ def main(argv=None):
         if args.confirmed_commercial_targets:
             from universal_supplier.control_plane.commercial_refresh import prepare
             value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until)
+            if args.continue_approval:
+                if not args.previous_sha256:p.error('continuation requires exact previous-sha256')
+                from universal_supplier.control_plane.commercial_continuation import attach
+                value=attach(cfg,value,args.continue_approval,args.previous_sha256)
         else:value=execution.prepare(cfg,json.loads(args.limits.read_text(encoding='utf-8')),args.not_before,args.execution_until)
         args.output.parent.mkdir(parents=True,exist_ok=True)
         args.output.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -43,6 +48,8 @@ def main(argv=None):
                     ORDER BY supplier_id,settings_snapshot->'source_batch'->>'phase',id DESC''',(value['protected_live11_batch_id'],)).fetchall()
             from universal_supplier.control_plane.commercial_refresh import is_refresh,scope_rows
             if is_refresh(value):scope_rows(cfg,[e for r in value['suppliers'].values() for e in r['targets']])
+            from universal_supplier.control_plane.commercial_continuation import validate_live
+            validate_live(cfg,value)
             print(json.dumps({'head':value['head'],'sources':len(value['suppliers']),'active_jobs':active,
                 'window_end':value['execution_until'],'live_blocked':None if len(phases)==22 and all(r[0]=='succeeded' for r in phases)
                     or is_refresh(value) else 'AUTOMATION_LIVE11_UNFINISHED_REQUIRES_SEPARATE_RECOVERY','HTTP':0,'enqueue':0,'matching':0,

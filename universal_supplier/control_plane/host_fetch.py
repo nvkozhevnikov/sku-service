@@ -58,6 +58,7 @@ class FetchOutcome:
     scope_refusal:dict|None=None
     dispatch_refusal:dict|None=None
     timeout_refusal:dict|None=None
+    error_diagnostics:dict|None=None
 
 class FrozenScopeRefusal(RequestAborted):
     """Signed-policy refusal; the rejected target is NEVER dispatched."""
@@ -84,7 +85,7 @@ class ReadTimeoutRefusal(RequestAborted):
 
 class BoundedHostFetcher:
     def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
-                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False,isolate_timeouts=False,prevent_unknown_retry=False):
+                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False,isolate_timeouts=False,prevent_unknown_retry=False,robots_url=None,error_sink=None):
         if not source:raise ValueError('SOURCE_REQUIRED')
         rate=compile_policy(source,'https://'+host,rate.snapshot(),approval=approval)
         if not lease_acquired:raise PermissionError('HOST_LEASE_REQUIRED')
@@ -111,6 +112,7 @@ class BoundedHostFetcher:
         self.request_start_guard=None
         self.isolate_timeouts=isolate_timeouts
         self.prevent_unknown_retry=prevent_unknown_retry
+        self.source=source;self.robots_url=robots_url;self.error_sink=error_sink
     def stop(self,reason='OPERATOR_STOP'):
         with self._lock:
             first=self.stop_reason is None
@@ -125,8 +127,8 @@ class BoundedHostFetcher:
         self.validator(url)
         if host_key(url)!=self.host:raise ValueError('CROSS_HOST_REDIRECT_FORBIDDEN')
         if not self.robots_allowed(url):raise PermissionError('ROBOTS_DISALLOW')
-    def _fetch(self,url,deadline):
-        started=self.clock.monotonic();client=None;response=None;attempts=0;observed=None;transport_started=False
+    def _fetch(self,url,deadline,request_scope='product'):
+        started=self.clock.monotonic();client=None;response=None;attempts=0;observed=None;transport_started=False;diagnostics=None
         stop_statuses={403,429}
         try:
             self._validate(url);client=self.client_factory();callback=getattr(client,'before_request',None)
@@ -151,7 +153,7 @@ class BoundedHostFetcher:
             # The existing public client calls this for each redirect too.
             client.before_request=before_request
             def send():
-                nonlocal transport_started
+                nonlocal transport_started,diagnostics
                 initial[0]=True
                 # Once the transport is entered, absence of a response is
                 # uncertain. A limiter deadline BEFORE send proves no GET.
@@ -160,6 +162,9 @@ class BoundedHostFetcher:
                 try:
                     response=client.get_validated(url,validator=self._validate,timeout_seconds=min(self.rate.request_timeout_seconds,max(.001,deadline-self.clock.monotonic())))
                 except Exception as error:
+                    from .transport_diagnostics import exception_evidence,local_transport_error
+                    diagnostics={**exception_evidence(error),'source':self.source,'host':self.host,
+                        'request_scope':request_scope,'response_available':False,'wire_outcome':'UNKNOWN'}
                     if self.prevent_unknown_retry and not isinstance(error,RequestAborted):
                         # In ordinary approved automation an entered transport
                         # without a response is UNKNOWN, never a retry candidate.
@@ -167,6 +172,13 @@ class BoundedHostFetcher:
                             self.metrics.record_network_error(self.clock.monotonic()-request_started,type(error).__name__)
                             self.breaker.failure(type(error).__name__)
                         from . import automation_execution
+                        if request_scope=='robots' and url==self.robots_url and local_transport_error(error):
+                            diagnostics['stop_scope']='supplier'
+                            if automation_execution.ACTIVE is not None:
+                                automation_execution.ACTIVE.pause_source(self.source,'SOURCE_ROBOTS_UNAVAILABLE',diagnostics)
+                            self.stop('SOURCE_ROBOTS_UNAVAILABLE')
+                            raise RequestAborted('SOURCE_ROBOTS_UNAVAILABLE') from error
+                        diagnostics['stop_scope']='system'
                         if automation_execution.ACTIVE is not None:
                             automation_execution.ACTIVE.fail('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
                         self.stop('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
@@ -202,15 +214,30 @@ class BoundedHostFetcher:
                     self.stop('CAPTURE_ARCHIVE_FAILED');raise
             return outcome
         except Exception as e:
+            from .transport_diagnostics import safe_message,exception_evidence
+            if diagnostics is None:
+                diagnostics={**exception_evidence(e),'source':self.source,'host':self.host,
+                    'request_scope':request_scope,'response_available':response is not None,
+                    'wire_outcome':'UNKNOWN' if transport_started and response is None else 'NOT_DISPATCHED' if not transport_started else 'RESPONSE_AVAILABLE'}
             if self.prevent_unknown_retry and isinstance(e,CircuitOpen):self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
-            return FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}',transport_started=transport_started,
+            outcome=FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{safe_message(e)}',transport_started=transport_started,
                 scope_refusal=e.details if isinstance(e,FrozenScopeRefusal) else None,
                 dispatch_refusal=e.details if isinstance(e,RepeatedDispatchRefusal) else None,
-                timeout_refusal=e.details if isinstance(e,ReadTimeoutRefusal) else None)
+                timeout_refusal=e.details if isinstance(e,ReadTimeoutRefusal) else None,error_diagnostics=diagnostics)
+            if diagnostics is not None and self.error_sink:
+                try:self.error_sink(outcome)
+                except Exception:
+                    self.stop('TRANSPORT_EVIDENCE_FAILED')
+                    from . import automation_execution
+                    if automation_execution.ACTIVE is not None:automation_execution.ACTIVE.fail('AUTOMATION_TRANSPORT_EVIDENCE_FAILED')
+                    raise
+            return outcome
         finally:
             if client and getattr(client,'session',None):client.session.close()
-    def fetch(self,urls,*,limit,seconds):
+    def fetch(self,urls,*,limit,seconds,request_scope='product'):
         urls=list(urls)
+        if request_scope not in ('product','robots','discovery'):raise ValueError('REQUEST_SCOPE_REQUIRED')
+        if request_scope=='robots' and (not self.robots_url or urls!=[self.robots_url]):raise ValueError('ROBOTS_SCOPE_MISMATCH')
         if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=200004 or len(urls)>limit:raise ValueError('HARD_URL_BUDGET')
         if len(urls)!=len(set(urls)):raise ValueError('DUPLICATE_URL')
         if isinstance(seconds,bool) or not isinstance(seconds,(int,float)) or not math.isfinite(seconds) or not 0<seconds<=3600:raise ValueError('TIME_BUDGET')
@@ -223,7 +250,7 @@ class BoundedHostFetcher:
                 try:
                     while pending or cursor<len(urls):
                         while cursor<len(urls) and len(pending)<self.rate.max_concurrency and not self.aborted() and self.clock.monotonic()<deadline:
-                            url=urls[cursor];cursor+=1;pending[pool.submit(self._fetch,url,deadline)]=url
+                            url=urls[cursor];cursor+=1;pending[pool.submit(self._fetch,url,deadline,request_scope)]=url
                         if not pending:break
                         done,_=wait(pending,return_when=FIRST_COMPLETED)
                         for future in done:

@@ -65,6 +65,10 @@ def stop_reason():
     return ACTIVE.reason() if ACTIVE else None
 
 
+def source_stop_reason(code):
+    return ACTIVE.source_reason(code) if ACTIVE and hasattr(ACTIVE,'source_reason') else None
+
+
 def validate_job(snapshot):
     marker=snapshot.get('automation')
     if not marker:return
@@ -136,6 +140,17 @@ class Session:
         self.started_mono=time.monotonic();self.seconds=(self.end-self.started).total_seconds()
         self.failure=None;self.lock=None
         self.limiters={};self.limiter_lock=threading.RLock()
+        self.paused_sources={}
+
+    def pause_source(self,code,reason,diagnostics=None):
+        # A shared host is not independent. The global session remains live.
+        host=self.value['suppliers'][code]['host']
+        with self.limiter_lock:
+            for source,rule in self.value['suppliers'].items():
+                if rule['host']==host:self.paused_sources.setdefault(source,{'reason':reason,'diagnostics':diagnostics})
+
+    def source_reason(self,code):
+        with self.limiter_lock:return self.paused_sources.get(code,{}).get('reason')
 
     def host_limiter(self,host,rate,clock):
         from dataclasses import replace

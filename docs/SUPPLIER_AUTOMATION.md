@@ -6,6 +6,12 @@ workspace `reports/UNIVERSAL_SUPPLIER_AUTONOMOUS_SYSTEM_20261026/COMPLETION_2026
 DomainRateLimiter, SourceCheckpoint, SourceBackend, matching и offer_selection.
 Это не новая панель, очередь, scheduler или matching engine.
 
+Адресное исправление source-local robots failures и доказательное продолжение
+1270 коммерческих URL: [COMMERCIAL_RECOVERY.md](COMMERCIAL_RECOVERY.md), раздел
+«Инцидент robots137/138». Один недоступный robots приостанавливает свой host;
+SQL/identity/receipt/HEAD/SHA/window и UNKNOWN товарного HTTP сохраняют общий STOP.
+Новый точный допуск нужен до LIVE; старый workspace critical_watch не переиспользуется.
+
 ## Что применено и что ещё не применено
 
 Новая feature: `feature/sterbrust-autonomous-system-20261026`.
