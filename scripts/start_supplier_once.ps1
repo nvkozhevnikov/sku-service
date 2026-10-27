@@ -35,7 +35,8 @@ $settings.RestartCount=0
 $task=New-ScheduledTask -Action $action -Principal $principal -Settings $settings -Description 'STERBRUST bounded supplier execution; exact approval; no automatic restart'
 $planPath=Join-Path $repoPath ('reports\automation-task-plans\'+$Sha256+'.xml')
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $planPath) | Out-Null
-$task | Export-ScheduledTask | Set-Content -LiteralPath $planPath -Encoding UTF8
+# Export-ScheduledTask declares UTF-16; keep the file bytes consistent with it.
+$task | Export-ScheduledTask | Set-Content -LiteralPath $planPath -Encoding Unicode
 if (-not $Start) { Write-Output ('PREVIEW ONLY; no registered task. '+$planPath); Write-Output $inspection; return }
 if ($ConfirmSha -cne $Sha256) { throw 'AUTOMATION_EXACT_OPERATOR_CONFIRMATION_REQUIRED' }
 if ($state.live_blocked) { throw $state.live_blocked }
