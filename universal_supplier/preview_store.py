@@ -5,6 +5,17 @@ from universal_supplier.effective_identity import effective_identity_mapping_sql
 from .offer_selection import PostgresOfferSelectionStore
 
 
+def matching_validation_is_current(row):
+    """Validation time proves rechecking; no-op identity materialization has no new audit date."""
+    from .commercial_freshness import timestamp
+    expected={'NEW_CANDIDATE':'SAFE_NEW_PRODUCT_CANDIDATE','EXACT_MATCH':'EXACT_EXISTING',
+        'HIGH_CONFIDENCE_MATCH':'HIGH_CONFIDENCE_EXISTING','REVIEW':'REVIEW_EXISTING','CONFLICT':'CONFLICT'}
+    validated=timestamp(row.get('match_last_validated_at')) or timestamp(row.get('match_created_at'))
+    observed=timestamp(row.get('source_last_success_at'))
+    return bool(validated and observed and validated>=observed
+        and row.get('match_status') in expected and expected[row['match_status']]==row.get('decision'))
+
+
 def mark_quarantine(records,runs):
     """A newer rejected source observation must not revive an older offer in a feed."""
     from .commercial_freshness import timestamp
@@ -37,30 +48,46 @@ def load(config,*,connection_factory=None):
             sp.catalog_product_id,sp.external_id,sp.external_id_is_stable,sp.sku,sp.name,sp.brand_raw,
             sp.manufacturer_raw,sp.description_text,sp.description_html,sp.source_url,sp.canonical_url,
             sp.last_success_at AS source_last_success_at,sp.last_success_at,sp.last_changed_at,sp.active,
+            coalesce(nullif(sp.raw_data->'source_content'->>'source_category',''),cat.category_path) AS category,
             o.id AS offer_id,o.price,o.currency,o.quantity,o.availability_normalized,o.availability_raw,
             o.price_raw,o.price_source,o.price_type,
-            obs.capture_id,obs.observed_at,obs.price_state,obs.price AS observed_price,
+            obs.id AS observation_id,obs.capture_id,obs.observed_at,obs.price_state,obs.price AS observed_price,
             obs.currency AS observed_currency,obs.availability_normalized AS observed_availability,
             obs.availability_raw AS observed_availability_raw,
-            cap.capture_fingerprint,cap.http_status,cap.requested_url AS capture_requested_url,cap.diagnostics AS capture_diagnostics,obs.extraction_evidence,
+            obs.price_source AS observed_price_source,obs.price_type AS observed_price_type,
+            cap.capture_fingerprint,cap.http_status,cap.requested_url AS capture_requested_url,
+            cap.response_sha256,cap.evidence_ref,cap.diagnostics AS capture_diagnostics,obs.extraction_evidence,
             (cap.source_product_id=sp.id AND cap.supplier_id=s.id AND obs.supplier_id=s.id
                 AND obs.source_product_id=sp.id AND obs.offer_id=o.id
                 AND cap.observed_at=obs.observed_at) AS receipt_identity_valid,
             pid.decision,pid.own_model,pid.reference_model,pid.product_kind,pid.conflicts,
             pid.identity_characteristics,pid.decision_reason,pid.rule_version,pid.audited_at,
-            pm.status AS match_status,pm.conflicts AS match_conflicts,
-            (coalesce(pm.last_validated_at,pm.created_at)>=sp.last_success_at
-                AND pid.audited_at>=sp.last_success_at) AS matching_current_for_capture,
+            pm.id AS match_id,pm.status AS match_status,pm.conflicts AS match_conflicts,
+            pm.last_validated_at AS match_last_validated_at,pm.created_at AS match_created_at,
             {effective_identity_mapping_sql('sp.id','sp.catalog_product_id')} AS identity_confirmed,
             (SELECT min(sb.sterbrust_product_id) FROM sterbrust_products sb
                 WHERE sb.catalog_product_id=sp.catalog_product_id) AS confirmed_sterbrust_id,
             (SELECT count(*) FROM sterbrust_products sb WHERE sb.catalog_product_id=sp.catalog_product_id) AS canonical_id_count,
             EXISTS(SELECT 1 FROM review_cases rc WHERE rc.source_product_id=sp.id
-                AND rc.lifecycle_status IN ('OPEN','ASSIGNED','REOPENED_SOURCE_CHANGED')) AS blocking_review
+                AND rc.lifecycle_status IN ('OPEN','ASSIGNED','REOPENED_SOURCE_CHANGED')) AS blocking_review,
+            rc.lifecycle_status AS review_lifecycle,rc.automatic_decision AS review_automatic_decision,
+            rc.source_identity_fingerprint AS review_identity_fingerprint,
+            rc.source_identity_snapshot AS review_identity_snapshot,
+            (SELECT rd.decision_class FROM review_decisions rd WHERE rd.source_product_id=sp.id
+                AND rd.decision_class<>'POSTPONED' ORDER BY rd.created_at DESC,rd.id DESC LIMIT 1)
+                AS latest_manual_decision,
+            sel.selected_offer_id AS persisted_selected_offer_id,sel.selection_status AS persisted_selection_status,
+            sel.evaluated_at AS last_selection_at
             FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
             LEFT JOIN offers o ON o.source_product_id=sp.id AND o.supplier_id=s.id
             LEFT JOIN product_identity_decisions pid ON pid.source_product_id=sp.id
             LEFT JOIN product_matches pm ON pm.source_product_id=sp.id AND pm.is_current
+            LEFT JOIN review_cases rc ON rc.source_product_id=sp.id
+            LEFT JOIN catalog_offer_selection sel ON sel.catalog_product_id=sp.catalog_product_id
+            LEFT JOIN LATERAL (SELECT string_agg(node.raw_name,' / ' ORDER BY node.position) AS category_path
+                FROM product_category_paths path JOIN product_category_path_nodes node
+                  ON node.path_id=path.id AND node.supplier_id=path.supplier_id
+                WHERE path.source_product_id=sp.id AND path.supplier_id=sp.supplier_id AND path.is_current) cat ON true
             LEFT JOIN LATERAL (SELECT * FROM offer_commercial_observations co
                 WHERE co.source_product_id=sp.id AND co.offer_id=o.id
                   AND COALESCE(co.region_code,'')=COALESCE(sp.raw_data->>'_commercial_projection_region','')
@@ -78,6 +105,7 @@ def load(config,*,connection_factory=None):
         mark_quarantine(records,quarantines)
         for row in records:
             if row['canonical_id_count']!=1:row['confirmed_sterbrust_id']=None
+            row['matching_current_for_capture']=matching_validation_is_current(row)
         class Tuples:
             def cursor(self):return c.cursor(row_factory=tuple_row)
         candidates=PostgresOfferSelectionStore(Tuples()).load()

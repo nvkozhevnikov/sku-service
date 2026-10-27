@@ -18,10 +18,13 @@ def timestamp(value):
 
 def field_state(at, ttl, now):
     at=timestamp(at)
-    if at is None:return {'state':'unknown','verified_at':None,'age_seconds':None}
+    if at is None:return {'state':'unknown','verified_at':None,'age_seconds':None,'ttl_seconds':ttl,
+                          'classification':'unknown'}
     age=(now-at).total_seconds()
-    return {'state':'fresh' if 0<=age<=ttl else 'unknown' if age<0 else 'stale',
-            'verified_at':at.isoformat(),'age_seconds':max(0,age)}
+    state='fresh' if 0<=age<=ttl else 'unknown' if age<0 else 'stale'
+    return {'state':state,'verified_at':at.isoformat(),'age_seconds':max(0,age),'ttl_seconds':ttl,
+            'classification':'trusted_current_observation' if state=='fresh' else
+                'last_known_historical_for_diagnostics' if state=='stale' else 'unknown'}
 
 
 def assess(row, policy, now=None):

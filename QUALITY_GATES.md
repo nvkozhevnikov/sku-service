@@ -2,6 +2,12 @@
 
 OPERATOR-CONFIRMED 2026-10-08. Scoped supplement to workspace qa/QUALITY_GATES.md.
 
+XML coverage supplement2026-10-27: empty well-formed XML is NOT business acceptance.
+Independent field TTL/omission, durable identity, native receipt-backed selection,
+NEW-staging vs REVIEW and per-record reconciliation are mandatory. Positive→zero needs
+explanation of every previous record. Empty streams remain NOT_READY. No TTL extension,
+fake0/source activation/import. See docs/XML_COVERAGE_RECOVERY.md (actual206NEW/0updates).
+
 - Exact full model/execution + compatible brand/manufacturer + compatible sold
   product kind may prove Existing without a mandatory characteristic quota.
 - Characteristics corroborate/disambiguate and block when same semantic property,

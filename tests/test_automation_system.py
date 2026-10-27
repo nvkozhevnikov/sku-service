@@ -93,8 +93,7 @@ def test_two_previews_commercial_whitelist_and_determinism(tmp_path):
     publish(tmp_path,raw,manifest);assert latest(tmp_path,'updates')==raw['updates']
 
 
-@pytest.mark.parametrize('field,value',[('observed_price',None),('observed_price',0),
-    ('observed_availability','unknown'),('receipt_identity_valid',False),('http_status',503),
+@pytest.mark.parametrize('field,value',[('receipt_identity_valid',False),('http_status',503),
     ('identity_confirmed',False),('blocking_review',True)])
 def test_unproven_commercial_or_identity_never_leaks_into_updates(field,value):
     data=snapshot();data['records'][0][field]=value
@@ -106,8 +105,8 @@ def test_field_ttls_preserve_history_and_omit_unknown_commercial():
     data=snapshot();row=data['records'][1];row['observed_at']=NOW-timedelta(hours=7)
     before=deepcopy(row);raw,m=build(data)
     product=ET.fromstring(raw['new_products']).find('product')
-    assert product.find('commercial/price').text is None
-    assert product.find('commercial/availability_normalized').text is None
+    assert product.find('commercial/price') is None
+    assert product.find('commercial/availability_normalized') is None
     assert row==before and assess(row,settings_for(data['suppliers'][0]),NOW)['price']['state']=='stale'
 
 
@@ -170,8 +169,11 @@ def test_synthetic_capture_never_becomes_fresh_live_data_or_feed_candidate():
     assert m['counts']=={'updates':0,'new_products':0}
     assert not assess(value['records'][0],settings_for(value['suppliers'][0]),NOW)['receipt_valid']
 
-def test_pending_matching_never_updates_confirmed_product_commercial_fields():
+def test_accepted_identity_is_not_revoked_by_an_older_materialization_timestamp():
     value=snapshot();value['records'][0]['matching_current_for_capture']=False
+    assert build(value)[1]['counts']['updates']==1
+    assert value['records'][0]['confirmed_sterbrust_id']=='10001'
+    value['records'][0]['match_status']='CONFLICT'
     assert build(value)[1]['counts']['updates']==0
 
 def test_source_quarantine_blocks_both_feeds_until_a_later_verified_capture():

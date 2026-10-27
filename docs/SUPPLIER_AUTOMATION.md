@@ -196,13 +196,17 @@ evidence никогда не превращается в fresh LIVE. Будущ�
 
 Более новый неразрешённый source quarantine исключает карточку из обоих фидов;
 старое валидное предложение не возрождается поверх отказа до следующего подтверждённого capture.
-Updates preview — только существующий подтверждённый Sterbrust ID, текущий matching,
-fresh price/currency/availability, native deterministic offer selection. Только три
+Updates preview — только существующий подтверждённый Sterbrust ID без текущего semantic conflict,
+хотя бы одно fresh commercial поле и native deterministic offer selection. Старый audit timestamp
+не отзывает accepted/manual identity. Stale/unknown поле опускается независимо от другого. Только три
 commercial поля. Name/brand/description/properties/images/quantity не обновляются.
 Нельзя повторно fuzzy-rebind подтверждённый Product ID.
 
 New-products preview — только свежий SAFE_NEW/NEW_CANDIDATE, без физической/подтверждённой
-связи, REVIEW/CONFLICT/registry collision, с проверенными brand/full model/kind/execution.
+связи, REVIEW_EXISTING/CONFLICT/registry collision, с проверенными brand/full model/kind/execution.
+OPEN NEW-staging case не равен REVIEW_EXISTING: fingerprint/validation/manual guards проверяются,
+case не закрывается. Disabled collector не активируется; его сохранённый кандидат может быть
+показан только в read-only preview с collection_enabled=false/needs_enrichment.
 Cross-source dedup сохраняет supplier aliases; технический конфликт блокирует группу.
 Различающиеся наборы характеристик, включая неполные, исключаются с причиной
 `CROSS_SOURCE_PROPERTIES_REQUIRE_REVIEW`: отсутствие свойства не объявляется
@@ -233,3 +237,6 @@ Browser verification incomplete: IAB Origin rejected; Windows browser tooling st
 with unsupported URL-policy enforcement. Нельзя выдавать TestClient за визуальную
 приёмку или отключать Origin ради зелёного browser check. Serving обновление NOT_APPLIED.
 24часовая LIVE работа новой версии не выполнялась и не доказана offline тестами.
+
+Дополнение по покрытию: docs/XML_COVERAGE_RECOVERY.md. Корректный пустой XML — не бизнес-PASS.
+Проверенный текущий результат206NEW/0updates; updatesNOT_READY до разрешённого REFRESH.

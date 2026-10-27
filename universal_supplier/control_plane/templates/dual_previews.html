@@ -4,8 +4,10 @@
 {% if error %}<p role="alert">{{error}}</p>{% endif %}
 {% if current_user.role in ['ADMIN','OPERATOR'] %}<form method="post" action="/exports/previews/generate"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button>Сформировать оба локальных XML</button></form>{% endif %}
 {% if preview %}<p>Версия {{preview.version}} · {{preview.generated_at}}</p>
+{% if preview.quality_gate %}<p class="notice warning">Статус: {{preview.quality_gate.status}}. Пустой XML — не бизнес-приёмка. Новые кандидаты могут требовать обогащения; импорт не разрешён.</p>{% endif %}
 <section class="grid2">{% for kind,label in [('updates','Обновления подтверждённых Product ID'),('new_products','Новые кандидаты без REVIEW/CONFLICT')] %}
 <article class="panel"><h3>{{label}}</h3><p>Записей: {{preview.counts[kind]}}</p><a class="button" href="/exports/previews/{{kind}}/download">Скачать {{kind}}.preview.xml</a><p>SHA256: {{preview.checksums[kind]}}</p><h4>Причины исключения</h4><dl>{% for reason,count in preview.exclusion_counts[kind].items() %}<dt>{{reason}}</dt><dd>{{count}}</dd>{% else %}<dt>Исключений нет</dt>{% endfor %}</dl></article>{% endfor %}</section>
+{% if preview.funnels_by_supplier %}<details><summary>Воронки по 11 поставщикам</summary><pre>{{preview.funnels_by_supplier}}</pre></details>{% endif %}
 <details><summary>Покрытие и причины исключения</summary><pre>{{preview.coverage}}</pre><pre>{{preview.excluded}}</pre></details>
 {% else %}<p>Предпросмотры ещё не сформированы. Это не означает отсутствия сохранённых товаров.</p>{% endif %}
 {% endblock %}
