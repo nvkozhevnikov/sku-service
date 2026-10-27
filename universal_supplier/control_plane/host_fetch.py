@@ -9,7 +9,7 @@ from datetime import datetime,timezone
 from urllib.parse import urlsplit
 import hashlib,json,math,os,threading
 from .rate_control import (DomainRatePolicy,DomainRateLimiter,RequestMetrics,
-    CircuitBreaker,SystemClock,RequestAborted,request_with_resilience,retry_after_seconds)
+    CircuitBreaker,CircuitOpen,SystemClock,RequestAborted,request_with_resilience,retry_after_seconds)
 from universal_supplier.http_capture import has_blocking_interstitial
 
 
@@ -40,7 +40,9 @@ def compile_policy(source,url,settings=None,*,approval=None,approved_digests=Non
         approval=approval or {}
         if approval.get('host')!=host or not approval.get('reference'):raise PermissionError('HOST_PROFILE_NOT_APPROVED')
         approved_digests=approved_digests if approved_digests is not None else json.loads(os.environ.get('STERBRUST_APPROVED_HOST_POLICIES','{}'))
-        if approved_digests.get(host)!=policy_digest(source,host,rate,approval['reference']):raise PermissionError('HOST_PROFILE_DIGEST_NOT_APPROVED')
+        approved=approved_digests.get(host)
+        if isinstance(approved,dict):approved=approved.get(source)
+        if approved!=policy_digest(source,host,rate,approval['reference']):raise PermissionError('HOST_PROFILE_DIGEST_NOT_APPROVED')
     return rate
 
 @dataclass(frozen=True)
@@ -82,7 +84,7 @@ class ReadTimeoutRefusal(RequestAborted):
 
 class BoundedHostFetcher:
     def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
-                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False,isolate_timeouts=False):
+                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False,isolate_timeouts=False,prevent_unknown_retry=False):
         if not source:raise ValueError('SOURCE_REQUIRED')
         rate=compile_policy(source,'https://'+host,rate.snapshot(),approval=approval)
         if not lease_acquired:raise PermissionError('HOST_LEASE_REQUIRED')
@@ -94,15 +96,21 @@ class BoundedHostFetcher:
         self.validator=validator;self.robots_allowed=robots_allowed;self.clock=clock or SystemClock()
         self.stop_requested=stop_requested or (lambda:False);self.stopped=threading.Event()
         self.metrics=RequestMetrics();self.limiter=DomainRateLimiter(rate,clock=self.clock)
+        from . import automation_execution
+        if automation_execution.ACTIVE is not None:
+            self.limiter=automation_execution.ACTIVE.host_limiter(self.host,rate,self.clock)
         if defer_first_start:
             # A newly acquired session lease cannot know the previous job's
             # last start. Use the SAME gate with a conservative initial delay.
-            self.limiter._next_start=self.clock.monotonic()+rate.min_request_interval_seconds
+            with self.limiter._lock:
+                self.limiter._next_start=max(self.limiter._next_start,
+                    self.clock.monotonic()+self.limiter.policy.min_request_interval_seconds)
         self.breaker=CircuitBreaker(rate,clock=self.clock,metrics=self.metrics);self.stop_reason=None
         self._lock=threading.Lock();self.outcomes=[];self.receipt_sink=receipt_sink
         self.stop_sink=None
         self.request_start_guard=None
         self.isolate_timeouts=isolate_timeouts
+        self.prevent_unknown_retry=prevent_unknown_retry
     def stop(self,reason='OPERATOR_STOP'):
         with self._lock:
             first=self.stop_reason is None
@@ -151,8 +159,19 @@ class BoundedHostFetcher:
                 request_started=self.clock.monotonic()
                 try:
                     response=client.get_validated(url,validator=self._validate,timeout_seconds=min(self.rate.request_timeout_seconds,max(.001,deadline-self.clock.monotonic())))
-                except TimeoutError:
-                    if not self.isolate_timeouts:raise
+                except Exception as error:
+                    if self.prevent_unknown_retry and not isinstance(error,RequestAborted):
+                        # In ordinary approved automation an entered transport
+                        # without a response is UNKNOWN, never a retry candidate.
+                        with self._lock:
+                            self.metrics.record_network_error(self.clock.monotonic()-request_started,type(error).__name__)
+                            self.breaker.failure(type(error).__name__)
+                        from . import automation_execution
+                        if automation_execution.ACTIVE is not None:
+                            automation_execution.ACTIVE.fail('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
+                        self.stop('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
+                        raise RequestAborted('AUTOMATION_UNKNOWN_HTTP_OUTCOME') from error
+                    if not isinstance(error,TimeoutError) or not self.isolate_timeouts:raise
                     # Keep the real network failure and native breaker. The typed
                     # abort only prevents retrying an UNKNOWN transport result.
                     with self._lock:
@@ -171,6 +190,8 @@ class BoundedHostFetcher:
                 elif has_blocking_interstitial(response.body):self.stop('SOURCE_BLOCKED_INTERSTITIAL')
                 return response
             response,attempts=request_with_resilience(send,self.rate,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=stop_statuses,abort_requested=self.aborted)
+            if self.prevent_unknown_retry and self.metrics.circuit_breaker_trips:
+                self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
             observed=datetime.now(timezone.utc)
             outcome=FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,
                 self.stop_reason if response.status_code in stop_statuses or has_blocking_interstitial(response.body) else None,
@@ -181,6 +202,7 @@ class BoundedHostFetcher:
                     self.stop('CAPTURE_ARCHIVE_FAILED');raise
             return outcome
         except Exception as e:
+            if self.prevent_unknown_retry and isinstance(e,CircuitOpen):self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
             return FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{e}',transport_started=transport_started,
                 scope_refusal=e.details if isinstance(e,FrozenScopeRefusal) else None,
                 dispatch_refusal=e.details if isinstance(e,RepeatedDispatchRefusal) else None,

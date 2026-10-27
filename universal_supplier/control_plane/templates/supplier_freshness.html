@@ -1,0 +1,7 @@
+{% extends 'base.html' %}{% block content %}
+<a href="/suppliers/{{item.id}}">← {{item.name}}</a><h2>Свежесть коммерческих данных</h2>
+<p>Проверено SELECT на {{as_of}}. Исторические значения сохраняются. Неизвестное наличие не означает «нет в наличии», неизвестная цена не заменяется нулём.</p>
+<a href="/suppliers/{{item.id}}/parsing">Настроить TTL</a>
+<table><thead><tr><th>Товар</th><th>Цена</th><th>Наличие</th><th>Описание</th><th>Подтверждённый capture</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{row.product.name}} · {{row.product.external_id}}</td>{% for key in ['price','availability','content'] %}<td>{{row.freshness[key].state}}<br>{{row.freshness[key].verified_at or 'нет подтверждения'}}</td>{% endfor %}<td>{{row.freshness.capture_id or 'нет receipt'}}</td></tr>{% else %}<tr><td colspan="5">Сохранённых товаров нет</td></tr>{% endfor %}
+</tbody></table>{% endblock %}

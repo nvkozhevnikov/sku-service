@@ -147,7 +147,11 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     gate_passed=False
     if settings.get('source_canary') or canary:
         if not canary:raise ValueError('CANARY_SNAPSHOT_MISSING')
-        if job.trigger_type!='manual' or job.crawl_type!='full':raise ValueError('CANARY_MANUAL_JOB_REQUIRED')
+        if job.settings_snapshot.get('automation'):
+            from .automation_execution import validate_job
+            validate_job(job.settings_snapshot)
+            if job.trigger_type!='schedule':raise ValueError('AUTOMATION_SCHEDULE_ONLY')
+        elif job.trigger_type!='manual' or job.crawl_type!='full':raise ValueError('CANARY_MANUAL_JOB_REQUIRED')
         from .source_canary import validate_input,validate_config
         validate_config(config);validate_input(original,settings,config)
         if not canary['supplier_enabled'] or canary['supplier_id']!=job.supplier_id:raise PermissionError('CANARY_SUPPLIER_DISABLED_OR_CHANGED')
@@ -167,6 +171,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         from .source_autonomy import stop_reason
         autonomous_stop=stop_reason()
         if autonomous_stop:return autonomous_stop
+        from .automation_execution import stop_reason as automation_stop_reason
+        automation_stop=automation_stop_reason()
+        if automation_stop:return automation_stop
         envelope = job.settings_snapshot.get('source_batch')
         if envelope and datetime.now(timezone.utc) >= (batch_execution_until or datetime.fromisoformat(envelope['deadline'])):
             return 'BATCH_WINDOW_EXPIRED'
@@ -250,7 +257,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             timeout_authorization(approved);isolate_timeouts=True
         fetcher=BoundedHostFetcher(HOSTS[code],rate,client_factory or UrllibPublicHttpClient,
             validator=request_url,robots_allowed=allowed,robots_delay_seconds=0,
-            lease_acquired=True,clock=clock,stop_requested=stopped,source=code,approval=settings.get('host_policy_approval'),defer_first_start=True,isolate_timeouts=isolate_timeouts)
+            lease_acquired=True,clock=clock,stop_requested=stopped,source=code,approval=settings.get('host_policy_approval'),defer_first_start=True,isolate_timeouts=isolate_timeouts,
+            prevent_unknown_retry=bool(job.settings_snapshot.get('automation')))
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
         if dispatch_budget:fetcher.request_start_guard=dispatch_budget
         capture_archive_lock = threading.Lock()
@@ -465,7 +473,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     process(item['entry'],receipt=item['receipt']);consecutive_card_errors=0
                 except CardExtractionError as error:isolate(item['entry'],error,receipt=item['receipt'])
                 if fetcher.aborted():break
-            if matching_pending and approved and approved.get('continuation',{}).get('autonomous') and not termination and not fetcher.stop_reason:
+            if matching_pending and ((approved and approved.get('continuation',{}).get('autonomous')) or job.settings_snapshot.get('automation')) and not termination and not fetcher.stop_reason:
                 finish_pending_matching()
             if cp.state['frontier'] and not termination:
                 if robot is None:robots()
@@ -518,7 +526,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             resume_safe=plan['automatic_resume_allowed'] and bool(cp.state['frontier'] or plan['offline_pending'])
         else:
             plan={'uncertain':[],'failed_requires_decision':[]};resume_safe=bool(termination=='DISCOVERY_PAGE_BUDGET' and not discovery.state['inflight'])
-        if matching_pending and not (termination and termination.startswith(('SOURCE_BLOCKED','OPERATOR','SQL_','UNCERTAIN','HOST_LEASE','AUTONOMOUS'))):
+        if matching_pending and not (termination and termination.startswith(('SOURCE_BLOCKED','OPERATOR','SQL_','UNCERTAIN','HOST_LEASE','AUTONOMOUS','AUTOMATION'))):
             finish_pending_matching()
     except Exception as e:
         termination=(fetcher.stop_reason if fetcher else None) or str(e) or type(e).__name__

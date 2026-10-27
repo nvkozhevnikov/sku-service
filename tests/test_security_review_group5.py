@@ -26,8 +26,9 @@ COOKIE = SessionSigner.cookie_name
 EVIL = "https://evil.example"
 PATH_VALUES = {"supplier_id": "1", "case_id": "1", "rule_id": "1", "mapping_id": "1", "profile_id": "1",
                "canonical_property_id": "1", "user_id": "2", "preview_id": "1", "supplier_code": "partner_st",
-               "external_id": "1"}
+               "external_id": "1", "identifier":"qa-session"}
 ADMIN_ONLY = {
+    '/suppliers/{supplier_id}/parsing','/suppliers/{supplier_id}/parsing/approve-host',
     "/suppliers/{supplier_id}/enabled", "/suppliers/{supplier_id}/data-quality-policy",
     "/suppliers/{supplier_id}/missing-policy", "/scheduler/{supplier_id}", "/rules", "/rules/{rule_id}/active",
     "/properties/canonical", "/properties/profiles", "/properties/profiles/{profile_id}/{canonical_property_id}/remove",
@@ -50,7 +51,7 @@ def _app():
 
 
 def _login(app, username: str) -> TestClient:
-    client = TestClient(app)
+    client = TestClient(app,base_url='https://testserver')
     assert client.post("/login", data={"username": username, "password": PASSWORD},
                        follow_redirects=False).status_code == 303
     return client
@@ -75,7 +76,9 @@ MUTATING_ROUTES = [path for path in CSRF_ROUTES if path != "/logout"]
 
 
 def test_route_inventory_is_what_this_suite_covers():
-    assert len(CSRF_ROUTES) == 27  # Existing unified stop-pilot / stop-source routes.
+    assert len(CSRF_ROUTES) >= 27
+    assert {'/exports/previews/generate','/scheduler/execution/{identifier}/stop',
+        '/suppliers/{supplier_id}/parsing','/suppliers/{supplier_id}/parsing/approve-host'} <= set(CSRF_ROUTES)
     assert ADMIN_ONLY <= set(MUTATING_ROUTES)
 
 

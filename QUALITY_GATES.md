@@ -22,6 +22,23 @@ Live / repository / packaged / operator evidence are distinct. Codex QA is not
 independent human ground truth. Semantic replay may have audit timestamp writes.
 Stage6 remains BLOCKED_IMPORT_CONTRACT_EVIDENCE; this checkpoint does not lift it.
 
+## Bounded supplier automation / local previews —2026-10-27
+
+Scope: isolated new feature; existing LIVE11 recovery remains a separate frozen approval.
+See docs/SUPPLIER_AUTOMATION.md. No new source HTTP/ingest/matching authorized by code QA.
+Runtime exact55461/rc_verify_vi_20261019/system7698346631476390904/rc_runtime NOSUPER/NOBYPASS.
+Grant pins HEAD/engine/config/rate/source IDs/caps/window≤24h/1282/max2 different hosts.
+Unfinished protected LIVE11 blocks ordinary scheduling. Native RESUME/receipts/UNCERTAIN
+and attempts remain authoritative; no old CLAIM replay or implicit deadline extension.
+Local card quarantine retains evidence before ingest; source refusal/threshold blocks source;
+unknown transport, SQL/identity/checkpoint/HEAD/window/disk/robots violations stop execution.
+The existing original LIVE11 safety policy is not relaxed by this ordinary-mode supplement.
+Migration018 retains login failures via cleared_at; test only in separate QA DB until approval.
+No DELETE/GRANT/role workaround. Historical or synthetic capture cannot pass freshness.
+Preview updates have confirmed IDs + fresh verified commercial fields/current matching only;
+new feed excludes mappings/registry/review/conflict/reference-only and deduplicates full identity.
+Both import_allowed=false; no ESOL/production contract claim. Atomic local version+hash download.
+
 
 ## Per-URL isolation and bounded continuation (2026-10-23)
 

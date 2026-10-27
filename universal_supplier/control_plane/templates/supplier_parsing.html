@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block content %}
+{% set cfg=parsing.settings %}
+<a href="/suppliers/{{item.id}}">← {{item.name}}</a>
+<div class="pagehead"><h2>Настройки парсинга · {{item.name}}</h2><span>Ревизия {{cfg.revision}}</span></div>
+{% if saved %}<p class="notice">Настройки сохранены. Активные задания сохраняют прежний snapshot.</p>{% endif %}
+<p class="notice warning">Запуск LIVE требует отдельного допуска. Текущая причина блокировки: {{parsing.live_blocked_reason}}. Сохранение настроек не включает поставщика и не запускает задания.</p>
+<p>{{parsing.rate_semantics}}</p>
+<form class="panel" method="post" action="/suppliers/{{item.id}}/parsing">
+<input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="revision" value="{{cfg.revision}}">
+<section class="grid2">
+<article><h3>Нагрузка и повторы</h3>
+{% for key,label,step in [('delay_min_seconds','Минимальная задержка, сек.','0.001'),('delay_max_seconds','Максимальная задержка, сек.','0.001'),('max_concurrency','Параллельных запросов','1'),('request_timeout','Тайм-аут HTTP, сек.','0.01'),('retry_limit','Всего попыток HTTP (включая первую)','1'),('backoff','Начальный backoff, сек.','0.01'),('backoff_max','Максимальный backoff, сек.','0.01'),('priority','Приоритет предложения (выше — предпочтительнее)','1')] %}
+<label>{{label}}<input type="number" name="{{key}}" value="{{cfg[key]}}" step="{{step}}" min="0" required></label>{% endfor %}
+<p>Robots, Retry-After, лимиты host и системные STOP обязательны. Новый профиль нагрузки требует утверждения.</p></article>
+<article><h3>REFRESH / DISCOVERY</h3>
+{% for key,label in [('schedule_enabled','Расписание подготовлено'),('refresh_enabled','REFRESH — существующие URL'),('discovery_enabled','DISCOVERY — поиск новых товаров'),('export_updates','Локальный XML обновлений после успешного REFRESH'),('export_new_products','Локальный XML кандидатов после DISCOVERY и matching')] %}
+<label><input type="checkbox" name="{{key}}" value="true" {% if cfg[key] %}checked{% endif %}> {{label}}</label>{% endfor %}
+<label>REFRESH каждые, сек.<input type="number" min="60" name="refresh_interval" value="{{cfg.refresh_interval}}" required></label>
+<label>DISCOVERY каждые, сек.<input type="number" min="60" name="discovery_interval" value="{{cfg.discovery_interval}}" required></label>
+<label>Предпочтительное время<input type="time" name="start_time" value="{{cfg.start_time}}" required></label>
+<label>Часовой пояс<input name="timezone" value="{{cfg.timezone}}" required></label>
+<p>Следующая допустимая REFRESH: {{parsing.next.REFRESH or 'расписание выключено'}}<br>DISCOVERY: {{parsing.next.DISCOVERY or 'расписание выключено'}}. Время не означает выданное разрешение на LIVE.</p>
+</article></section>
+<h3>Свежесть: допустимый возраст подтверждённых данных</h3>
+{% for key,label in [('price_ttl','Цена, сек.'),('availability_ttl','Наличие, сек.'),('content_ttl','Описание и характеристики, сек.')] %}
+<label>{{label}}<input type="number" min="1" name="{{key}}" value="{{cfg[key]}}" required></label>{% endfor %}
+{% if current_user.role=='ADMIN' and not control_plane_read_only %}<button>Сохранить ревизию</button>{% else %}<p>Сохранение доступно администратору с writable подключением.</p>{% endif %}
+</form>
+{% if current_user.role=='ADMIN' and not control_plane_read_only and parsing.host_policy_sha256 %}
+<article class="panel"><h3>Отдельное утверждение профиля host</h3><p>Профиль: {{parsing.host_reference}} · SHA {{parsing.host_policy_sha256}}. Подтверждение не включает источник и не запускает LIVE; исполнитель дополнительно требует точный допуск окна.</p>
+<form method="post" action="/suppliers/{{item.id}}/parsing/approve-host"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="revision" value="{{cfg.revision}}"><input type="hidden" name="policy_sha256" value="{{parsing.host_policy_sha256}}"><button>Утвердить этот профиль host</button></form></article>
+{% endif %}
+<article class="panel"><h3>Последние задания</h3>
+<table><thead><tr><th>Фаза</th><th>Job</th><th>Статус</th><th>COMMITTED</th><th>HTTP</th><th>Причина</th></tr></thead><tbody>
+{% for p in parsing.phases %}<tr><td>{{p.phase or 'legacy'}}</td><td>{{p.id}}</td><td>{{p.status|ru}}</td><td>{{p.runtime.get('sql_committed','нет подтверждения')}}</td><td>{{p.runtime.get('request_metrics',{}).get('requests_total','нет данных')}}</td><td>{{p.error_message or p.runtime.get('termination_reason') or '—'}}</td></tr>{% else %}<tr><td colspan="6">Заданий нет</td></tr>{% endfor %}
+</tbody></table></article>
+<article class="panel"><h3>История настроек</h3>{% for h in parsing.history %}<details><summary>{{h.created_at}} · {{h.action}}</summary><pre>{{h.before_state}}</pre><pre>{{h.after_state}}</pre></details>{% else %}<p>Изменений настроек ещё нет.</p>{% endfor %}</article>
+{% endblock %}

@@ -126,12 +126,13 @@ def identity_snapshot(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class PostgresAdminStore:
-    def __init__(self, config: PostgresConfig) -> None:
+    def __init__(self, config: PostgresConfig, *, connection_factory=None) -> None:
         self.config = config
+        self.connection_factory=connection_factory
 
     def _connect(self):
         import psycopg
-        return connect_postgres(self.config, autocommit=True, row_factory=psycopg.rows.dict_row)
+        return (getattr(self,'connection_factory',None) or connect_postgres)(self.config, autocommit=True, row_factory=psycopg.rows.dict_row)
 
     @staticmethod
     def _user(row: dict | None) -> AuthUser | None:

@@ -220,3 +220,8 @@ docs/ltt_uss_source_ingestion_checkpoint_2026-10-16/** -text
 
 # LIVE11 approval SHA pins the canonical CSV bytes across checkout platforms.
 /config/live11_approval_matrix.csv -text whitespace=cr-at-eol
+
+# Grok UX source checksums must survive Windows checkout unchanged.
+/docs/CABINET_UX_20261022.md text eol=lf
+/docs/CABINET_UX_SPEC_20261022.md text eol=lf
+/docs/cabinet-ux-prototype/index.html text eol=lf

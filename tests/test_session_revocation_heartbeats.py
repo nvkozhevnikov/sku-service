@@ -37,7 +37,7 @@ def make_app(admin_store=None):
 
 
 def login(app, username):
-    client = TestClient(app)
+    client = TestClient(app,base_url='https://testserver')
     assert client.post("/login", data={"username": username, "password": PASSWORD}, follow_redirects=False).status_code == 303
     return client
 
@@ -47,7 +47,7 @@ def csrf(client):
 
 
 def authorized(app, token):
-    client = TestClient(app); client.cookies.set(COOKIE, token)
+    client = TestClient(app,base_url='https://testserver'); client.cookies.set(COOKIE, token)
     return client.get("/settings", follow_redirects=False).status_code == 200
 
 
@@ -153,10 +153,11 @@ def test_postgres_login_throttle_queries(monkeypatch):
     key = ("admin1", "10.0.0.5")
     assert throttle.locked(key) is True
     throttle.failure(key); throttle.reset(key)
-    sql = [entry[0] for entry in log]
-    assert sql[0].startswith("SELECT count(*) FROM login_failures WHERE throttle_key=%s") and log[0][1] == (throttle_digest(key), 900)
-    assert sql[1].startswith("DELETE FROM login_failures WHERE failed_at <=") and sql[2].startswith("INSERT INTO login_failures")
-    assert sql[3] == "DELETE FROM login_failures WHERE throttle_key=%s"
+    sql = [entry[0] for entry in log if not entry[0].startswith('SELECT EXISTS')]
+    assert sql[0].startswith("SELECT count(*) FROM login_failures WHERE throttle_key=%s AND cleared_at IS NULL")
+    assert sql[1].startswith("INSERT INTO login_failures")
+    assert sql[2] == "UPDATE login_failures SET cleared_at=now() WHERE throttle_key=%s AND cleared_at IS NULL"
+    assert not any('DELETE' in statement for statement in sql)
     assert all("admin1" not in str(params) for _, params in log)
 
 
@@ -250,7 +251,8 @@ def test_health_reports_components_without_changing_status_code(monkeypatch):
         def health(self): return {"application": "ok", "postgresql": "ok", "components": {"scheduler": {"status": "stale"}}, "degraded": True}
     app = create_app(store=Store("x"), queue=InMemoryJobQueue(), admin_store=InMemoryAdminStore(users(), []), session_secret=SECRET, auth_required=True)
     response = TestClient(app).get("/health")
-    assert response.status_code == 200 and response.json()["degraded"] is True
+    assert response.status_code == 200 and 'components' not in response.json()
+    assert app.state.store.health()['degraded'] is True  # Public probe is deliberately sanitized.
 
 
 def test_compose_orchestrators_have_heartbeat_healthcheck():

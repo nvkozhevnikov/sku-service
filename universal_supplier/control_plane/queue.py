@@ -68,13 +68,14 @@ class EnqueueResult:
 
 
 class PostgresJobQueue:
-    def __init__(self, config: PostgresConfig, *, lease_seconds: int = 300) -> None:
+    def __init__(self, config: PostgresConfig, *, lease_seconds: int = 300,connection_factory=None) -> None:
         self.config = config
         self.lease_seconds = lease_seconds
+        self.connection_factory=connection_factory
 
     def _connect(self):
         import psycopg
-        return connect_postgres(self.config, autocommit=True)
+        return (getattr(self,'connection_factory',None) or connect_postgres)(self.config, autocommit=True)
 
     def preview_source_batch(self):
         from .source_batch import preview
@@ -105,6 +106,18 @@ class PostgresJobQueue:
                 WHERE settings_snapshot->'source_batch'->>'id'=%s AND status='running'""", (batch_id,))
             for supplier_id, job_id in running:
                 self.stop_source(supplier_id, job_id)
+
+    def stop_automation(self,sha):
+        """STOP this execution, including after its deadline; never touches LIVE11 jobs."""
+        from .automation_execution import ACTIVE,require
+        require(ACTIVE is not None and ACTIVE.sha==sha,'AUTOMATION_STOP_SESSION_MISMATCH')
+        with self._connect() as c,c.transaction(),c.cursor() as q:
+            q.execute("""SELECT supplier_id,id FROM crawl_jobs WHERE status='running'
+                AND settings_snapshot->'automation'->>'approval_sha256'=%s""",(sha,))
+            running=q.fetchall()
+            q.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),updated_at=now(),error_message='AUTOMATION_STOP'
+                WHERE status='queued' AND settings_snapshot->'automation'->>'approval_sha256'=%s""",(sha,))
+        for supplier_id,job_id in running:self.stop_source(supplier_id,job_id)
 
     def _canary_preview(self,connection,cursor,supplier_id,supplier,limit,mode='REFRESH'):
         from .source_canary import limit_value,validate_config,validate_connection,build_preview
@@ -158,13 +171,17 @@ class PostgresJobQueue:
         return True
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
-                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None, recovery_sha256: str | None = None) -> EnqueueResult:
+                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None, recovery_sha256: str | None = None, automation_sha256: str | None = None) -> EnqueueResult:
+        if automation_sha256 is not None:
+            from .automation_execution import require_active
+            session=require_active(automation_sha256)
+            if trigger_type!='schedule' or recovery_sha256 is not None:raise PermissionError('AUTOMATION_SCHEDULE_ONLY')
         if recovery_sha256 is not None and (source_mode != 'RESUME' or type(resume_job_id) is not int or resume_job_id < 1):
             raise PermissionError('RECOVERY_REQUIRES_APPROVED_PARENT_RESUME')
         if source_limit is not None:
             from .source_canary import limit_value,validate_config
             limit_value(source_limit);validate_config(self.config)
-            if source_mode not in ('REFRESH','DISCOVERY') or trigger_type!='manual' or crawl_type!='full' or pilot_limit is not None or resume_job_id is not None:
+            if source_mode not in ('REFRESH','DISCOVERY') or (trigger_type!='manual' and automation_sha256 is None) or crawl_type!='full' or pilot_limit is not None or resume_job_id is not None:
                 raise ValueError('CANARY_MANUAL_REFRESH_ONLY')
             if not isinstance(source_preview_sha256,str) or len(source_preview_sha256)!=64:raise ValueError('Сначала просмотрите и подтвердите выбранную партию canary')
         elif source_preview_sha256 is not None:raise ValueError('CANARY_LIMIT_REQUIRED')
@@ -176,6 +193,8 @@ class PostgresJobQueue:
             rate_profile(pilot_profile)
         if enabled() and pilot_limit is None:raise PermissionError('PILOT_FULL_CRAWL_DISABLED')
         scheduled_for = scheduled_for or utcnow()
+        if automation_sha256 is not None and scheduled_for.tzinfo is None:
+            raise ValueError('AUTOMATION_SCHEDULE_REQUIRES_TIMEZONE')
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
             cursor.execute(
                 """SELECT code, adapter_name, base_url, enabled, crawl_settings, rate_settings
@@ -206,8 +225,10 @@ class PostgresJobQueue:
                 if preview['confirmation_sha256']!=source_preview_sha256:
                     raise ValueError('Партия, количество, политика или target изменились; заново откройте preview canary')
                 snapshot=preview['snapshot']
+                if automation_sha256 is not None and source_mode=='REFRESH' and snapshot['source_input']['canary']['total_known']>source_limit:
+                    raise PermissionError('AUTOMATION_SCOPE_GROWTH_REQUIRES_APPROVAL')
             elif source_mode is not None:
-                if trigger_type!='manual' or pilot_limit is not None:raise ValueError('SOURCE_MANUAL_ONLY')
+                if (trigger_type!='manual' and automation_sha256 is None) or pilot_limit is not None:raise ValueError('SOURCE_MANUAL_ONLY')
                 from .source_controls import prepare_snapshot
                 known=[];parent=None
                 if source_mode=='REFRESH':
@@ -220,6 +241,7 @@ class PostgresJobQueue:
                     previous=cursor.fetchone()
                     if not previous or previous[1]!=supplier_id:raise ValueError('RESUME_PARENT_NAMESPACE')
                     if previous[2].get('source_batch'):
+                        if automation_sha256 is not None:raise PermissionError('AUTOMATION_CANNOT_RECOVER_LIVE11')
                         rt = (previous[3] or {}).get('source_runtime') or {}
                         from .source_batch import resume_is_safe
                         recovery_proof = None
@@ -233,12 +255,32 @@ class PostgresJobQueue:
                             raise PermissionError('BATCH_RESUME_REQUIRES_OPERATOR_DECISION')
                         snapshot = deepcopy(previous[2])
                     parent={'status':previous[0],'supplier_code':code,'settings':previous[2],'result':(previous[3] or {}).get('source_runtime',{})}
+                    if automation_sha256 is not None:
+                        prior_marker=previous[2].get('automation') or {}
+                        if prior_marker.get('approval_sha256')!=automation_sha256:raise PermissionError('AUTOMATION_RESUME_APPROVAL_CHANGED')
+                        snapshot=deepcopy(previous[2])
                 snapshot=prepare_snapshot(snapshot,source_mode,known_rows=known,resume=parent,config=self.config)
                 if source_mode=='RESUME' and previous[2].get('source_batch'):
                     from .source_batch import resume_envelope
                     snapshot = resume_envelope(cursor, previous[2], snapshot, recovery_proof)
                     if recovery_proof is not None:
                         snapshot['source_batch']['recovery'] = {k: recovery_proof[k] for k in ('kind','parent_job_id','run_id','approval_sha256')}
+            if automation_sha256 is not None:
+                from .supplier_automation import settings_for,digest
+                from .automation_execution import validate_job
+                phase=snapshot['source_input']['mode']
+                snapshot['automation']={'approval_sha256':automation_sha256,'phase':phase,
+                    'revision':settings_for({'rate_settings':rate_settings,'crawl_settings':crawl_settings})['revision'],
+                    'rate_sha256':digest(snapshot['rate_settings']),'scheduled_for':scheduled_for.astimezone(timezone.utc).isoformat(),
+                    'priority':settings_for({'rate_settings':rate_settings,'crawl_settings':crawl_settings})['priority']}
+                validate_job(snapshot)
+                rule=session.value['suppliers'][code]
+                cursor.execute('''SELECT count(*) FROM crawl_jobs WHERE supplier_id=%s
+                    AND settings_snapshot->'automation'->>'approval_sha256'=%s
+                    AND settings_snapshot->'automation'->>'phase'=%s
+                    AND scheduled_for=%s''',
+                    (supplier_id,automation_sha256,phase,scheduled_for))
+                if cursor.fetchone()[0]>=rule['max_queue_attempts']:raise PermissionError('AUTOMATION_QUEUE_ATTEMPTS_EXHAUSTED')
             if pilot_limit is not None:
                 if code!='partner_st' or adapter_name!='partner_st' or trigger_type!='manual':raise ValueError('PILOT_PARTNER_MANUAL_ONLY')
                 cursor.execute("SELECT sp.id,sp.external_id,coalesce(sp.canonical_url,sp.source_url) FROM source_products sp WHERE sp.supplier_id=%s AND sp.active AND sp.external_id_is_stable ORDER BY sp.id LIMIT %s",(supplier_id,pilot_limit))
@@ -304,12 +346,18 @@ class PostgresJobQueue:
                            AND gate.settings_snapshot->'source_batch'->>'phase'='DISCOVERY'
                            AND EXISTS (SELECT 1 FROM audit_events a WHERE a.action='SOURCE_BATCH_BEKA_ISOLATION_CONFIRMED'
                                AND a.entity_type='source_batch' AND a.entity_id=j.settings_snapshot->'source_batch'->>'id')))
-                   ORDER BY j.scheduled_for,j.requested_at,j.id
+                   ORDER BY coalesce((j.settings_snapshot->'automation'->>'priority')::integer,100),j.scheduled_for,j.requested_at,j.id
                    FOR UPDATE OF j SKIP LOCKED LIMIT 1"""
             )
             row = cursor.fetchone()
             if row is None:
                 return None
+            from . import automation_execution
+            if automation_execution.ACTIVE is not None and not row[9].get('automation'):
+                raise PermissionError('AUTOMATION_FOREIGN_ACTIVE_JOB')
+            if row[9].get('automation'):
+                from .automation_execution import validate_job
+                validate_job(row[9])
             if row[9].get('source_batch'):
                 from .source_batch import validate_snapshot
                 try:
@@ -364,6 +412,13 @@ class PostgresJobQueue:
     def recover_stale(self) -> int:
         """Fail uncertain jobs; never rerun them blindly after a crash."""
         with self._connect() as connection, connection.cursor() as cursor:
+            from . import automation_execution
+            if automation_execution.ACTIVE is not None:
+                cursor.execute("""UPDATE crawl_jobs SET status='stale_failed',finished_at=now(),
+                    error_message='ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT',updated_at=now()
+                    WHERE status='running' AND lease_expires_at<now()
+                    AND settings_snapshot->'automation'->>'approval_sha256'=%s""",(automation_execution.ACTIVE.sha,))
+                return cursor.rowcount
             cursor.execute(
                 """UPDATE crawl_jobs SET status='stale_failed',finished_at=now(),
                           error_message='ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT',updated_at=now()

@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="pagehead"><h2>Автономные сеансы</h2><a href="/suppliers">11 поставщиков и настройки</a></div>
+<p class="notice">Исполнитель использует существующую очередь PostgreSQL. Здесь нет нового запуска LIVE. Для старта нужен точный допуск HEAD/SHA и окна; незавершённый LIVE11 продолжается только своим recovery.</p>
+{% for s in sessions %}<article class="panel"><h3>{{s.id}} · {{s.worker}}</h3>
+{% if s.session is defined %}<p>Работа до {{s.session.work_until}}, предельное завершение {{s.session.execution_until}}. Свежий heartbeat подтверждает связь с процессом, но не сохранение товаров.</p>{% endif %}
+{% if s.latest %}<p>SQL отчёт {{s.latest.at}} · PostgreSQL {{s.latest.postgres}} · 1282 исходных связей: {{s.latest.original1282_exact}}</p>
+<table><tr><th>Источник</th><th>COMMITTED / уникальных</th><th>AUTO / REVIEW / CONFLICT / NEW</th><th>Карантин / ошибки</th><th>Осталось</th><th>URL/час</th></tr>
+{% for r in s.latest.sources %}<tr><td>{{r.source}}</td><td>{{r.committed}} / {{r.unique_products}}</td><td>{{r.AUTO}} / {{r.REVIEW}} / {{r.CONFLICT}} / {{r.NEW}}</td><td>{{r.quarantine}} / {{r.errors}}</td><td>{{r.remaining_urls}}</td><td>{{r.urls_per_hour if r.urls_per_hour is not none else 'пока неизвестно'}}</td></tr>{% endfor %}</table>{% endif %}
+{% if s.final %}<pre>{{s.final}}</pre>{% elif current_user.role in ['ADMIN','OPERATOR'] %}<form method="post" action="/scheduler/execution/{{s.id}}/stop"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><button>Безопасно остановить сеанс</button></form><p>Дождитесь FINAL и проверки отсутствия активных jobs. STOP-файл сам по себе ещё не подтверждает остановку.</p>{% endif %}
+</article>{% else %}<p class="empty">Автономных сеансов ещё нет. Пустой список не означает успешный сбор.</p>{% endfor %}
+{% endblock %}

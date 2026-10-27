@@ -62,6 +62,30 @@ def test_5xx_retry_is_bounded_by_existing_resilience_policy():
     assert len(calls)==2 and rows[0].attempts==2 and f.metrics.retry_count==1
     assert calls[1][1]-calls[0][1]>=20
 
+@pytest.mark.parametrize('error',[TimeoutError,ConnectionResetError])
+def test_ordinary_automation_unknown_transport_stops_without_retry(error):
+    r=approved_policy('vekprom','https://vekprom.ru/',{'max_attempts':3,'jitter_max_seconds':0})
+    f,calls=fetcher(rate=r);f.prevent_unknown_retry=True
+    class Client:
+        def get_validated(self,url,**kw):
+            self.before_request(url);calls.append(url);raise error('unknown outcome')
+    f.client_factory=Client
+    outcome=list(f.fetch(['https://vekprom.ru/1'],limit=1,seconds=300))[0]
+    assert outcome.response is None and outcome.transport_started is True
+    assert len(calls)==1 and f.metrics.retry_count==0 and f.metrics.network_errors==1
+    assert f.stop_reason=='AUTOMATION_UNKNOWN_HTTP_OUTCOME'
+
+def test_ordinary_automation_known_500_can_retry_and_mass_failures_stop_source():
+    r=approved_policy('vekprom','https://vekprom.ru/',{'max_attempts':2,'jitter_max_seconds':0})
+    f,calls=fetcher((500,200),rate=r);f.prevent_unknown_retry=True
+    assert list(f.fetch(['https://vekprom.ru/1'],limit=1,seconds=300))[0].response.status_code==200
+    assert len(calls)==2 and f.metrics.retry_count==1
+    r=approved_policy('vekprom','https://vekprom.ru/',{'max_attempts':3,'jitter_max_seconds':0,'consecutive_error_threshold':3})
+    f,calls=fetcher((500,500,500),rate=r);f.prevent_unknown_retry=True
+    outcome=list(f.fetch(['https://vekprom.ru/1','https://vekprom.ru/2'],limit=2,seconds=300))
+    assert len(calls)==3 and outcome[0].response.status_code==500
+    assert f.stop_reason=='SOURCE_NETWORK_CIRCUIT_OPEN' and outcome[1].transport_started is False
+
 
 def test_robots_and_url_limits_fail_before_client():
     f,calls=fetcher()

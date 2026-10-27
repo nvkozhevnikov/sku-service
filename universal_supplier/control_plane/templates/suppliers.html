@@ -12,6 +12,18 @@
   <dt>Следующий запуск</dt><dd>{{s.next_runs[0] if s.next_runs else 'Только вручную'}}</dd>
   <dt>Очередь</dt><dd>{{s.job_status|ru if s.job_status else 'Свободна'}}</dd>
 </dl>
+<p><a href="/suppliers/{{s.id}}/parsing">Настройки REFRESH / DISCOVERY</a> · <a href="/suppliers/{{s.id}}/freshness">Свежесть полей</a></p>
+{% if cabinet_available %}<p><a href="/cabinet/sources/{{s.code}}">Исходные задания: REFRESH / DISCOVERY / RESUME</a> · <a href="/live11#{{s.code}}">Пакет LIVE11</a></p>{% endif %}
+{% if automation is defined and automation.get(s.id) %}{% set a=automation[s.id] %}
+<p class="notice">Допуск: {{a.live_blocked_reason}}. Расписание само по себе не даёт разрешения.</p>
+<dl><dt>Цена — fresh / stale / unknown</dt><dd>{{a.freshness.price.get('fresh',0)}} / {{a.freshness.price.get('stale',0)}} / {{a.freshness.price.get('unknown',0)}}</dd>
+<dt>Наличие — fresh / stale / unknown</dt><dd>{{a.freshness.availability.get('fresh',0)}} / {{a.freshness.availability.get('stale',0)}} / {{a.freshness.availability.get('unknown',0)}}</dd>
+<dt>Текущие SQL matching решения</dt><dd>AUTO {{a.matching.get('AUTO',0)}} · REVIEW {{a.matching.get('REVIEW',0)}} · CONFLICT {{a.matching.get('CONFLICT',0)}} · NEW {{a.matching.get('NEW',0)}}. Не счётчик нового LIVE.</dd></dl>
+<dl>{% for phase in ['REFRESH','DISCOVERY'] %}{% set p=a.phases.get(phase) %}
+<dt>{{phase}} — последний подтверждённый</dt><dd>{{p.last_success if p and p.last_success else 'нет подтверждения'}}</dd>
+<dt>{{phase}} — следующая очередь</dt><dd>{{a.next[phase] or 'выключено'}}</dd>
+{% if p %}<dt>{{phase}} — job {{p.id}}</dt><dd>{{p.status|ru}} · HTTP {{p.runtime.get('request_metrics',{}).get('requests_total','нет данных')}} · SQL {{p.runtime.get('sql_committed','нет доказательства')}}<br>Карантин {{p.runtime.get('quarantined',[])|default([],true)|length}} · ошибок {{p.runtime.get('errors','нет данных')}} · HTTP карточек/мин {{p.runtime.get('http_cards_per_minute','неизвестно')}}<br>{{p.error_message or p.runtime.get('termination_reason') or ''}}</dd>{% endif %}
+{% endfor %}</dl>{% endif %}
 {% if current_user.role=='ADMIN' and not control_plane_read_only and not partner_pilot_enabled %}
 <form method="post" action="/suppliers/{{s.id}}/enabled"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="enabled" value="{{'false' if s.enabled else 'true'}}"><button class="{{'secondary' if s.enabled}}">{{'Отключить сбор' if s.enabled else 'Включить сбор'}}</button></form>
 {% elif control_plane_read_only and commercial_qa_available and s.code in ['intervesp','beka_mak','beka_mak_tr'] %}

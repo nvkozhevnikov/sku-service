@@ -38,7 +38,7 @@ def isolation(monkeypatch,tmp_path):
     monkeypatch.setattr(socket.socket,'connect',deny);monkeypatch.setattr(socket,'getaddrinfo',deny)
     monkeypatch.setattr('psycopg.connect',deny)
 
-def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',backend=None):
+def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',backend=None,config=None):
     if code=='partner_st':
         from test_partner_pilot import html
         body,url,charset,_=html(1).encode(),'https://partner-st.ru/item-1/','utf-8',None
@@ -67,8 +67,8 @@ def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',ba
     def run(j=job):
         token=LEASED_HOST.set(j.domain)
         try:
-            if code in ('partner_st','optimum'):return run_source(j,None,client_factory=Client,backend_factory=lambda cfg,source:backend,clock=clock)
-            return make_source_runner(code,transport_factory=Client,runtime_backend_factory=lambda cfg,source:backend,runtime_clock=clock)(j,None)
+            if code in ('partner_st','optimum'):return run_source(j,config,client_factory=Client,backend_factory=lambda cfg,source:backend,clock=clock)
+            return make_source_runner(code,transport_factory=Client,runtime_backend_factory=lambda cfg,source:backend,runtime_clock=clock)(j,config)
         finally:LEASED_HOST.reset(token)
     return run,job,backend,calls,url
 

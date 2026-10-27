@@ -1,5 +1,12 @@
 # Applied cabinet binding
 
+2026-10-27 supplement: the historical record below describes the original serving
+binding, not current runtime readiness. New feature retains these cabinet routes
+inside the same app and adds settings/freshness/two previews. Runtime is rc_runtime
+on55461; new feature/QA/serving boundaries and pending migration018 are documented in
+[SUPPLIER_AUTOMATION.md](SUPPLIER_AUTOMATION.md). The frozen LIVE11/R13 checkout
+and original batch scope/HEAD approval remain separate; no new LIVE was executed.
+
 Serving application remains `../sku-service/scripts/run_local_rc_ui.py`, localhost
 58097, existing authentication and templates. The sibling feature is not mounted
 as a second application and never inherits the serving DB config.

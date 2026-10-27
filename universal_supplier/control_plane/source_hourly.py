@@ -6,12 +6,13 @@ import csv
 import io
 import json
 import os
+from uuid import uuid4
 from .source_resume import digest
 
 
 def atomic_text(path, text):
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + '.tmp')
+    temporary = path.with_name(path.name + '.' + uuid4().hex[:8] + '.tmp')
     with temporary.open('w', encoding='utf-8', newline='') as stream:
         stream.write(text); stream.flush(); os.fsync(stream.fileno())
     os.replace(temporary, path)

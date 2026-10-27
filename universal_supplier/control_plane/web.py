@@ -146,7 +146,7 @@ def filters_from_request(request: Request, *, forced_decision: str = "") -> Prod
 def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None,
                session_secret: str | None = None, auth_required: bool | None = None,
                commercial_qa_service=None, competitor_service=None, competitor_collection=None,
-               release_dispatch=None) -> FastAPI:
+               release_dispatch=None,cabinet_service=None) -> FastAPI:
     injected = store is not None; config = None
     if store is None:
         if os.environ.get("CONTROL_PLANE_DEMO_SNAPSHOT") == "YES":
@@ -163,6 +163,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         stage6e_service = PostgresStage6EService(config or store.config) if isinstance(store,PostgresControlPlaneStore) else InMemoryStage6EService()
     commercial_qa_service = commercial_qa_service or CommercialQaService.from_env()
     xml_service = XmlExportService(store)
+    preview_root=Path(os.environ.get('CONTROL_PLANE_EXPORT_ROOT',str(ROOT/'reports/xml-previews')))
     if session_secret:
         signer = SessionSigner(session_secret)
     elif auth_required:
@@ -175,7 +176,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     app.state.auth_required = auth_required; app.state.direct_crawl_executions = 0
     app.state.commercial_qa_service = commercial_qa_service
     app.state.competitor_monitoring_available = competitor_service is not None
-    login_throttle = app.state.login_throttle = PostgresLoginThrottle(admin_store.config) if isinstance(admin_store, PostgresAdminStore) else LoginThrottle()
+    login_throttle = app.state.login_throttle = PostgresLoginThrottle(admin_store.config,connection_factory=getattr(admin_store,'connection_factory',None)) if isinstance(admin_store, PostgresAdminStore) else LoginThrottle()
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE / "templates")
     templates.env.filters["ru"] = russian_label
@@ -206,10 +207,11 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         data = payload(request)
         read_only_source = bool(getattr(type(store), "read_only", False))
         return {"request": request, "csp_nonce":getattr(request.state,'csp_nonce',''), "current_user": current_user(request), "csrf_token": data.get("csrf", "") if data else "",
-            "safety_banner": "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
+            "safety_banner": "СИНТЕТИЧЕСКАЯ QA-БАЗА · НЕ LIVE · СБОР ЗАБЛОКИРОВАН" if os.environ.get('CONTROL_PLANE_QA_INSTANCE')=='YES' else "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
             "commercial_qa_available": bool(getattr(commercial_qa_service, "enabled", False)),
             "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
             "monitoring_available": competitor_service is not None,
+            "cabinet_available":cabinet_service is not None,
             "release_replay_available": release_dispatch is not None,
             "control_plane_read_only": read_only_source,
             "partner_pilot_enabled":__import__('universal_supplier.partner_pilot',fromlist=['enabled']).enabled(),
@@ -300,6 +302,11 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             return RedirectResponse("/login?next=" + quote(request.url.path), status_code=303)
         return page_error(request, str(exc.detail), exc.status_code)
 
+    @app.exception_handler(PermissionError)
+    async def runtime_guard_error(request,exc):
+        text=str(exc)
+        return PlainTextResponse(text if text.startswith(('CANARY_','AUTOMATION_','PANEL_')) else 'SQL safety guard blocked this action',status_code=503)
+
     @app.get("/login", response_class=HTMLResponse)
     def login_page(request: Request):
         if current_user(request): return RedirectResponse("/", 303)
@@ -311,7 +318,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     async def login(request: Request):
         require_trusted_origin(request); values = await form_values(request)
         throttle_key = (values.get("username", "").strip().lower(), request.client.host if request.client else "")
-        if login_throttle.locked(throttle_key):
+        try:locked=login_throttle.locked(throttle_key)
+        except PermissionError as error:
+            return PlainTextResponse(str(error),status_code=503)
+        if locked:
             return templates.TemplateResponse(request, "login.html", context(request, users_exist=admin_store.users_exist(), error="Слишком много неудачных попыток входа. Повторите позже", active=""), status_code=429)
         found = admin_store.user_by_username(values.get("username", ""))
         # Always run scrypt so unknown usernames cost the same as wrong passwords.
@@ -433,7 +443,26 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/suppliers", response_class=HTMLResponse)
     def suppliers(request: Request):
-        guard(request); return templates.TemplateResponse(request, "suppliers.html", context(request, suppliers=store.suppliers(), active="suppliers"))
+        guard(request)
+        rows=store.suppliers();automation={}
+        if callable(getattr(type(store),'automation_overview',None)):automation=store.automation_overview(rows)
+        return templates.TemplateResponse(request, "suppliers.html", context(request, suppliers=rows,automation=automation,active="suppliers"))
+
+    @app.get('/scheduler/execution',response_class=HTMLResponse)
+    def automation_executions(request: Request):
+        guard(request)
+        from .automation_status import overview
+        return templates.TemplateResponse(request,'automation_execution.html',context(request,sessions=overview(),active='scheduler'))
+
+    @app.post('/scheduler/execution/{identifier}/stop')
+    async def automation_execution_stop(request: Request,identifier:str):
+        user=guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        values=await form_values(request);check_csrf(request,values)
+        from .automation_status import stop
+        try:stop(identifier)
+        except ValueError as error:return page_error(request,str(error))
+        admin_store.audit(user.id,'AUTOMATION_STOP_REQUESTED','execution',identifier,None,{'stop_requested':True})
+        return RedirectResponse('/scheduler/execution',303)
 
     @app.get("/suppliers/{supplier_id}", response_class=HTMLResponse)
     def supplier_detail(request: Request, supplier_id: int):
@@ -448,6 +477,30 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         before = next((x for x in store.suppliers() if int(x["id"]) == supplier_id), None); enabled = values.get("enabled") == "true"
         store.set_supplier_enabled(supplier_id, enabled); admin_store.audit(user.id, "SUPPLIER_ENABLED_CHANGED", "supplier", supplier_id, {"enabled": before.get("enabled") if before else None}, {"enabled": enabled}, values.get("comment") or None)
         return RedirectResponse("/suppliers", 303)
+
+    @app.get('/suppliers/{supplier_id}/parsing',response_class=HTMLResponse)
+    def parsing_settings_page(request: Request,supplier_id: int):
+        guard(request)
+        if not hasattr(store,'parsing_settings'):raise HTTPException(503,'Настройки недоступны: подключён read-only snapshot')
+        try:item=store.parsing_settings(supplier_id)
+        except KeyError:raise HTTPException(404,'Поставщик не найден')
+        return templates.TemplateResponse(request,'supplier_parsing.html',context(request,
+            parsing=item,item=item['supplier'],saved=request.query_params.get('saved'),active='suppliers'))
+
+    @app.post('/suppliers/{supplier_id}/parsing')
+    async def parsing_settings_save(request: Request,supplier_id: int):
+        user=guard(request,{'ADMIN'});require_trusted_origin(request)
+        raw=await form_values(request);check_csrf(request,raw)
+        if getattr(store,'read_only',False) or not hasattr(store,'save_parsing_settings'):
+            raise HTTPException(403,'Подключён read-only источник; настройки не сохранены')
+        from .supplier_automation import BOOLEAN_FIELDS,INTEGER_FIELDS,NUMBER_FIELDS
+        try:
+            values={k:raw[k] for k in set(INTEGER_FIELDS)|set(NUMBER_FIELDS)|{'start_time','timezone'} if k in raw}
+            values.update({k:raw.get(k,'false') for k in BOOLEAN_FIELDS})
+            store.save_parsing_settings(supplier_id,values,int(raw['revision']),user.id or None)
+        except (KeyError,ValueError,TypeError) as error:
+            return page_error(request,'Настройки не сохранены: '+str(error))
+        return RedirectResponse(f'/suppliers/{supplier_id}/parsing?saved=1',303)
 
     @app.post("/suppliers/{supplier_id}/data-quality-policy")
     async def supplier_data_quality_policy(request: Request,supplier_id:int):
@@ -688,6 +741,15 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         for supplier in suppliers: supplier["schedule_controls"] = schedule_to_controls(supplier.get("cron_expression"))
         return templates.TemplateResponse(request, "scheduler.html", context(request, suppliers=suppliers, active="scheduler", advanced=advanced, saved=request.query_params.get("saved")))
 
+    @app.post('/suppliers/{supplier_id}/parsing/approve-host')
+    async def parsing_host_approval(request: Request,supplier_id: int):
+        user=guard(request,{'ADMIN'});require_trusted_origin(request)
+        raw=await form_values(request);check_csrf(request,raw)
+        if getattr(store,'read_only',False) or not hasattr(store,'approve_parsing_host'):raise HTTPException(403,'Read-only источник')
+        try:store.approve_parsing_host(supplier_id,int(raw['revision']),raw['policy_sha256'],user.id or None)
+        except (KeyError,ValueError) as error:return page_error(request,'Профиль не утверждён: '+str(error))
+        return RedirectResponse(f'/suppliers/{supplier_id}/parsing?host_saved=1',303)
+
     @app.post("/scheduler/{supplier_id}")
     async def scheduler_save(request: Request, supplier_id: int):
         user = guard(request, {"ADMIN"}); require_trusted_origin(request); raw = await form_values(request); check_csrf(request, raw)
@@ -719,6 +781,54 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             return templates.TemplateResponse(request, "scheduler.html", context(request, suppliers=suppliers, active="scheduler", advanced=True, validation_error=f"Настройки не сохранены: {error}"), status_code=400)
         store.save_schedule(supplier_id, values); admin_store.audit(user.id, "SCHEDULE_CHANGED", "supplier_schedule", supplier_id, None, values)
         return RedirectResponse("/scheduler?saved=1", 303)
+
+    @app.get('/exports/previews',response_class=HTMLResponse)
+    def dual_previews_page(request: Request):
+        guard(request)
+        from universal_supplier.dual_preview import latest
+        manifest=None;error=None
+        try:manifest=latest(preview_root)
+        except FileNotFoundError:pass
+        except (ValueError,KeyError,OSError):error='PREVIEW_INTEGRITY_ERROR: артефакт не выдан'
+        return templates.TemplateResponse(request,'dual_previews.html',context(request,
+            preview=manifest,error=error,active='xml_export'))
+
+    @app.post('/exports/previews/generate')
+    async def dual_previews_generate(request: Request):
+        user=guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        raw=await form_values(request);check_csrf(request,raw)
+        try:manifest=xml_service.publish_previews(preview_root)
+        except (ValueError,KeyError,OSError) as error:return page_error(request,'XML не заменён: '+str(error))
+        admin_store.audit(user.id or None,'LOCAL_PREVIEW_EXPORTED','xml_preview',manifest['version'],None,
+            {'counts':manifest['counts'],'checksums':manifest['checksums'],'import_allowed':False})
+        return RedirectResponse('/exports/previews',303)
+
+    @app.get('/exports/previews/{kind}/download')
+    def dual_previews_download(request: Request,kind: str):
+        guard(request)
+        from universal_supplier.dual_preview import latest,NAMES
+        if kind not in NAMES:raise HTTPException(404,'Неизвестный XML-предпросмотр')
+        try:data=latest(preview_root,kind)
+        except FileNotFoundError:raise HTTPException(404,'XML ещё не сформирован')
+        except (ValueError,KeyError,OSError):raise HTTPException(409,'PREVIEW_INTEGRITY_ERROR')
+        return Response(data,media_type='application/xml',headers={'Content-Disposition':f'attachment; filename="{NAMES[kind]}"'})
+
+    @app.get('/suppliers/{supplier_id}/freshness',response_class=HTMLResponse)
+    def supplier_freshness(request: Request,supplier_id: int):
+        guard(request)
+        if not hasattr(store,'dual_preview_snapshot'):raise HTTPException(503,'Freshness требует PostgreSQL snapshot')
+        from universal_supplier.commercial_freshness import assess
+        from .supplier_automation import settings_for
+        snapshot=store.dual_preview_snapshot()
+        item=next((s for s in snapshot['suppliers'] if s['id']==supplier_id),None)
+        if not item:raise HTTPException(404,'Поставщик не найден')
+        cfg=settings_for(item);seen=set();rows=[]
+        for row in snapshot['records']:
+            if row['supplier_id']!=supplier_id or row['source_product_id'] in seen:continue
+            seen.add(row['source_product_id'])
+            rows.append({'product':row,'freshness':assess(row,cfg,snapshot['as_of'])})
+        return templates.TemplateResponse(request,'supplier_freshness.html',context(request,
+            item=item,rows=rows,as_of=snapshot['as_of'],active='suppliers'))
 
     @app.get("/settings", response_class=HTMLResponse)
     def settings(request: Request):
@@ -1069,6 +1179,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.get("/ready")
     def ready():
         status = store.health(); ok = status.get("postgresql") in {"ok", "demo_snapshot"}; return JSONResponse({"ready":ok}, status_code=200 if ok else 503)
+    if cabinet_service is not None:
+        from .cabinet import register_cabinet
+        register_cabinet(app,templates,context,guard,cabinet_service,check_csrf,preserve_supplier_landing=True)
     return app
 
 

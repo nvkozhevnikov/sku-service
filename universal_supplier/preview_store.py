@@ -1,0 +1,95 @@
+"""One repeatable read snapshot for both previews; no DB mutation or HTTP."""
+from datetime import datetime,timezone
+from universal_supplier.partner_pilot import connect_postgres
+from universal_supplier.effective_identity import effective_identity_mapping_sql
+from .offer_selection import PostgresOfferSelectionStore
+
+
+def mark_quarantine(records,runs):
+    """A newer rejected source observation must not revive an older offer in a feed."""
+    from .commercial_freshness import timestamp
+    blocked={}
+    for run in runs:
+        for receipt in (run['runtime'] or {}).get('quarantined') or []:
+            at=timestamp((receipt.get('original_capture_metadata') or {}).get('observed_at')) or timestamp((receipt.get('http_evidence') or {}).get('observed_at')) or timestamp(run['started_at'])
+            for kind,key in (('id',receipt.get('external_id')),('url',receipt.get('url'))):
+                if key:
+                    token=(run['code'],kind,str(key))
+                    if token not in blocked:blocked[token]=at
+                    elif blocked[token] is None or at is None:blocked[token]=None
+                    else:blocked[token]=max(blocked[token],at)
+    for row in records:
+        tokens=[(row['supplier_code'],'id',str(row['external_id']))]+[
+            (row['supplier_code'],'url',u) for u in (row.get('source_url'),row.get('canonical_url'),row.get('capture_requested_url')) if u]
+        success=timestamp(row.get('source_last_success_at'))
+        row['blocking_quarantine']=any(t in blocked and (blocked[t] is None or success is None or blocked[t]>=success) for t in tokens)
+
+
+def load(config,*,connection_factory=None):
+    import psycopg
+    from psycopg.rows import dict_row,tuple_row
+    with (connection_factory or connect_postgres)(config,autocommit=True,row_factory=dict_row,
+            options='-c default_transaction_read_only=on -c statement_timeout=120000') as c,c.transaction():
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+        as_of=c.execute('SELECT transaction_timestamp() AS at').fetchone()['at']
+        suppliers=c.execute('SELECT id,code,name,enabled,base_url,rate_settings,crawl_settings FROM suppliers ORDER BY code').fetchall()
+        records=c.execute(f'''SELECT sp.id AS source_product_id,sp.supplier_id,s.code AS supplier_code,
+            sp.catalog_product_id,sp.external_id,sp.external_id_is_stable,sp.sku,sp.name,sp.brand_raw,
+            sp.manufacturer_raw,sp.description_text,sp.description_html,sp.source_url,sp.canonical_url,
+            sp.last_success_at AS source_last_success_at,sp.last_success_at,sp.last_changed_at,sp.active,
+            o.id AS offer_id,o.price,o.currency,o.quantity,o.availability_normalized,o.availability_raw,
+            o.price_raw,o.price_source,o.price_type,
+            obs.capture_id,obs.observed_at,obs.price_state,obs.price AS observed_price,
+            obs.currency AS observed_currency,obs.availability_normalized AS observed_availability,
+            obs.availability_raw AS observed_availability_raw,
+            cap.capture_fingerprint,cap.http_status,cap.requested_url AS capture_requested_url,cap.diagnostics AS capture_diagnostics,obs.extraction_evidence,
+            (cap.source_product_id=sp.id AND cap.supplier_id=s.id AND obs.supplier_id=s.id
+                AND obs.source_product_id=sp.id AND obs.offer_id=o.id
+                AND cap.observed_at=obs.observed_at) AS receipt_identity_valid,
+            pid.decision,pid.own_model,pid.reference_model,pid.product_kind,pid.conflicts,
+            pid.identity_characteristics,pid.decision_reason,pid.rule_version,pid.audited_at,
+            pm.status AS match_status,pm.conflicts AS match_conflicts,
+            (coalesce(pm.last_validated_at,pm.created_at)>=sp.last_success_at
+                AND pid.audited_at>=sp.last_success_at) AS matching_current_for_capture,
+            {effective_identity_mapping_sql('sp.id','sp.catalog_product_id')} AS identity_confirmed,
+            (SELECT min(sb.sterbrust_product_id) FROM sterbrust_products sb
+                WHERE sb.catalog_product_id=sp.catalog_product_id) AS confirmed_sterbrust_id,
+            (SELECT count(*) FROM sterbrust_products sb WHERE sb.catalog_product_id=sp.catalog_product_id) AS canonical_id_count,
+            EXISTS(SELECT 1 FROM review_cases rc WHERE rc.source_product_id=sp.id
+                AND rc.lifecycle_status IN ('OPEN','ASSIGNED','REOPENED_SOURCE_CHANGED')) AS blocking_review
+            FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+            LEFT JOIN offers o ON o.source_product_id=sp.id AND o.supplier_id=s.id
+            LEFT JOIN product_identity_decisions pid ON pid.source_product_id=sp.id
+            LEFT JOIN product_matches pm ON pm.source_product_id=sp.id AND pm.is_current
+            LEFT JOIN LATERAL (SELECT * FROM offer_commercial_observations co
+                WHERE co.source_product_id=sp.id AND co.offer_id=o.id
+                  AND COALESCE(co.region_code,'')=COALESCE(sp.raw_data->>'_commercial_projection_region','')
+                ORDER BY co.observed_at DESC,co.id DESC LIMIT 1) obs ON true
+            LEFT JOIN supplier_http_captures cap ON cap.id=obs.capture_id
+            ORDER BY s.code,sp.id,o.id''').fetchall()
+        registry=c.execute('SELECT sterbrust_product_id,catalog_product_id,brand_raw,model_raw FROM sterbrust_products ORDER BY id').fetchall()
+        quarantines=c.execute('''SELECT DISTINCT ON (s.code,coalesce(j.settings_snapshot->'automation'->>'phase',
+                j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode'))
+                s.code,r.started_at,r.metadata->'source_runtime' AS runtime
+                FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id JOIN crawl_runs r ON r.id=j.crawl_run_id
+                WHERE r.metadata ? 'source_runtime'
+                ORDER BY s.code,coalesce(j.settings_snapshot->'automation'->>'phase',
+                j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode'),j.id DESC''').fetchall()
+        mark_quarantine(records,quarantines)
+        for row in records:
+            if row['canonical_id_count']!=1:row['confirmed_sterbrust_id']=None
+        class Tuples:
+            def cursor(self):return c.cursor(row_factory=tuple_row)
+        candidates=PostgresOfferSelectionStore(Tuples()).load()
+        details={}
+        for row in c.execute('SELECT source_product_id,raw_name,raw_value,raw_unit,normalized_name,normalized_value,normalized_unit FROM product_properties ORDER BY source_product_id,position,id').fetchall():
+            details.setdefault(row['source_product_id'],{}).setdefault('properties',[]).append(row)
+        for row in c.execute('SELECT source_product_id,media_type,source_url,is_primary,document_type FROM product_media ORDER BY source_product_id,position,id').fetchall():
+            key='images' if row['media_type']=='image' else 'documents' if row['media_type']=='document' else None
+            if key:details.setdefault(row['source_product_id'],{}).setdefault(key,[]).append(row)
+        coverage=c.execute('''SELECT s.code,j.id,j.status,j.error_message,j.finished_at FROM suppliers s
+            LEFT JOIN LATERAL (SELECT id,status,error_message,finished_at FROM crawl_jobs
+                WHERE supplier_id=s.id ORDER BY id DESC LIMIT 1) j ON true ORDER BY s.code''').fetchall()
+        return {'complete':True,'as_of':as_of,'suppliers':suppliers,'records':records,
+                'registry':registry,'offer_candidates':candidates,'details':details,
+                'coverage':{'sources':coverage,'external_catalog_completeness':'NOT_PROVEN'}}

@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}<h2>{{evidence_title}}</h2><p>Сохранённый файл; классификация LIVE / synthetic определяется его provenance, не временем открытия.</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{evidence|tojson(indent=2)}}</pre>{% endblock %}

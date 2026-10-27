@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <a class="back" href="/suppliers">← Поставщики</a>
+<p><a class="button" href="/suppliers/{{item.id}}/parsing">Настройки парсинга и расписание</a> <a href="/suppliers/{{item.id}}/freshness">Свежесть данных</a></p>
 <div class="pagehead"><div><span class="eyebrow">ПОСТАВЩИК</span><h2>{{item.name}}</h2><p>{{item.base_url}}</p></div><span class="badge {{'ok' if item.enabled}}">{{'Включён' if item.enabled else 'Отключён'}}</span></div>
 <section class="grid2">
   <article class="panel"><h3>Состояние</h3><dl>

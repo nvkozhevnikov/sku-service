@@ -103,12 +103,13 @@ def product_where(filters: ProductFilters) -> tuple[str, list[Any]]:
 
 
 class PostgresControlPlaneStore:
-    def __init__(self, config: PostgresConfig) -> None:
+    def __init__(self, config: PostgresConfig, *, connection_factory=None) -> None:
         self.config = config
+        self.connection_factory=connection_factory
 
     def _connect(self):
         import psycopg
-        return connect_postgres(self.config, autocommit=True, row_factory=psycopg.rows.dict_row)
+        return (getattr(self,'connection_factory',None) or connect_postgres)(self.config, autocommit=True, row_factory=psycopg.rows.dict_row)
 
     def health(self) -> dict:
         try:
@@ -406,6 +407,132 @@ class PostgresControlPlaneStore:
 
     def suppliers(self) -> list[dict]:
         return self.dashboard()
+
+    def dual_preview_snapshot(self):
+        from universal_supplier.preview_store import load
+        return load(self.config,connection_factory=getattr(self,'connection_factory',None))
+
+    def automation_overview(self, suppliers):
+        from .supplier_automation import public_settings,next_due
+        from datetime import datetime,timezone
+        now=datetime.now(timezone.utc)
+        phase="coalesce(j.settings_snapshot->'automation'->>'phase',j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode')"
+        with self._connect() as c,c.cursor() as q:
+            q.execute(f'''SELECT DISTINCT ON (j.supplier_id,{phase}) j.supplier_id,{phase} AS phase,
+                j.id,j.status,j.scheduled_for,j.error_message,r.metadata,
+                (SELECT max(j2.finished_at) FROM crawl_jobs j2 WHERE j2.supplier_id=j.supplier_id
+                 AND j2.status='succeeded' AND coalesce(j2.settings_snapshot->'automation'->>'phase',
+                 j2.settings_snapshot->'source_batch'->>'phase',j2.settings_snapshot->'source_input'->>'mode')={phase}) AS last_success
+                FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
+                ORDER BY j.supplier_id,{phase},j.id DESC''')
+            phases=list(q.fetchall())
+            q.execute('''SELECT s.id AS supplier_id,sp.last_success_at AS source_last_success_at,
+                obs.capture_id,obs.observed_at,obs.price_state,obs.price AS observed_price,
+                obs.currency AS observed_currency,obs.availability_normalized AS observed_availability,
+                cap.capture_fingerprint,cap.http_status,cap.diagnostics AS capture_diagnostics,obs.extraction_evidence,
+                (cap.source_product_id=sp.id AND cap.supplier_id=s.id AND obs.supplier_id=s.id
+                 AND obs.source_product_id=sp.id AND cap.observed_at=obs.observed_at) AS receipt_identity_valid
+                FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+                LEFT JOIN LATERAL (SELECT co.* FROM offer_commercial_observations co JOIN offers o ON o.id=co.offer_id
+                    WHERE co.source_product_id=sp.id AND o.supplier_id=s.id AND o.active
+                    AND COALESCE(co.region_code,'')=COALESCE(sp.raw_data->>'_commercial_projection_region','')
+                    ORDER BY co.observed_at DESC,co.id DESC LIMIT 1) obs ON true
+                LEFT JOIN supplier_http_captures cap ON cap.id=obs.capture_id WHERE sp.active''')
+            commercial=list(q.fetchall())
+            q.execute('''SELECT sp.supplier_id,pm.status,pm.auto_accepted,count(*) AS n
+                FROM product_matches pm JOIN source_products sp ON sp.id=pm.source_product_id
+                WHERE pm.is_current GROUP BY sp.supplier_id,pm.status,pm.auto_accepted''')
+            matching=list(q.fetchall())
+        result={}
+        for s in suppliers:
+            view=public_settings(s,now);view['phases']={}
+            from universal_supplier.commercial_freshness import assess
+            from .source_hourly import bucket
+            from collections import Counter
+            counts={field:Counter() for field in ('price','availability','content')}
+            for card in commercial:
+                if card['supplier_id']!=s['id']:continue
+                freshness=assess(card,view['settings'],now)
+                for field in counts:counts[field][freshness[field]['state']]+=1
+            view['freshness']={field:dict(values) for field,values in counts.items()}
+            buckets=Counter()
+            for m in matching:
+                if m['supplier_id']==s['id']:buckets[bucket(m['status'],m['auto_accepted'])]+=m['n']
+            view['matching']=dict(buckets)
+            for p in phases:
+                if p['supplier_id']!=s['id'] or p['phase'] not in ('REFRESH','DISCOVERY'):continue
+                rt=(p.get('metadata') or {}).get('source_runtime') or {}
+                view['phases'][p['phase']]={**p,'runtime':rt}
+                if view['next'][p['phase']] is not None:
+                    view['next'][p['phase']]=next_due(view['settings'],p['phase'],now,p['scheduled_for'])
+            result[s['id']]=view
+        return result
+
+    def parsing_settings(self, supplier_id: int) -> dict:
+        from .supplier_automation import public_settings
+        with self._connect() as c,c.cursor() as q:
+            q.execute('SELECT id,code,name,base_url,enabled,rate_settings,crawl_settings FROM suppliers WHERE id=%s',(supplier_id,))
+            supplier=q.fetchone()
+            if not supplier:raise KeyError('Поставщик не найден')
+            q.execute('''SELECT DISTINCT ON (coalesce(j.settings_snapshot->'source_batch'->>'phase',
+                j.settings_snapshot->'source_input'->>'mode'))
+                coalesce(j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode') AS phase,
+                j.id,j.status,j.scheduled_for,j.finished_at,j.crawl_run_id,j.error_message,r.metadata
+                FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.supplier_id=%s
+                ORDER BY coalesce(j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode'),j.id DESC''',(supplier_id,))
+            phases=list(q.fetchall())
+            q.execute('''SELECT action,created_at,before_state,after_state FROM audit_events
+                WHERE entity_type='supplier' AND entity_id=%s AND action='PARSING_SETTINGS_CHANGED'
+                ORDER BY id DESC LIMIT 20''',(str(supplier_id),))
+            history=list(q.fetchall())
+        result=public_settings(supplier);result.update(supplier=supplier,phases=phases,history=history)
+        for row in phases:
+            row['runtime']=(row.get('metadata') or {}).get('source_runtime') or {}
+        return result
+
+    def save_parsing_settings(self, supplier_id: int, values: dict, expected_revision: int, actor_id=None) -> dict:
+        from .supplier_automation import settings_for,validate_settings,rate_for,VERSION,digest
+        from .admin_store import PostgresAdminStore
+        from psycopg.types.json import Jsonb
+        from datetime import datetime,timezone
+        with self._connect() as c,c.transaction(),c.cursor() as q:
+            q.execute('SELECT code,rate_settings,crawl_settings FROM suppliers WHERE id=%s FOR UPDATE',(supplier_id,))
+            row=q.fetchone()
+            if not row:raise KeyError('Поставщик не найден')
+            current=settings_for(row)
+            if type(expected_revision) is not int or expected_revision!=current['revision']:
+                raise ValueError('SETTINGS_REVISION_CHANGED: обновите страницу')
+            validated=validate_settings(values,current)
+            validated.update(version=VERSION,revision=current['revision']+1,
+                changed_at=datetime.now(timezone.utc).isoformat(),changed_by='admin-panel')
+            validated['settings_sha256']=digest({k:v for k,v in validated.items() if k!='settings_sha256'})
+            crawl={**(row['crawl_settings'] or {}),'automation':validated}
+            rate={**(row['rate_settings'] or {}),**rate_for(validated,row['rate_settings'])}
+            q.execute('UPDATE suppliers SET crawl_settings=%s,rate_settings=%s,updated_at=now() WHERE id=%s',
+                      (Jsonb(crawl),Jsonb(rate),supplier_id))
+            PostgresAdminStore._audit(q,actor_id,'PARSING_SETTINGS_CHANGED','supplier',supplier_id,
+                {'automation':current,'rate_settings':row['rate_settings']},
+                {'automation':validated,'rate_settings':rate},'Versioned settings; existing jobs retain snapshots')
+        return validated
+
+    def approve_parsing_host(self,supplier_id,revision,policy_sha,actor_id=None):
+        from .supplier_automation import settings_for,public_settings,rate_for,digest
+        from .host_fetch import host_key
+        from .admin_store import PostgresAdminStore
+        from psycopg.types.json import Jsonb
+        with self._connect() as c,c.transaction(),c.cursor() as q:
+            q.execute('SELECT id,code,base_url,rate_settings,crawl_settings FROM suppliers WHERE id=%s FOR UPDATE',(supplier_id,))
+            row=q.fetchone()
+            if not row:raise KeyError('Поставщик не найден')
+            cfg=settings_for(row);view=public_settings(row)
+            if cfg['revision']!=revision or view.get('host_policy_sha256')!=policy_sha:
+                raise ValueError('HOST_POLICY_CHANGED: обновите страницу')
+            approval={'host':host_key(row['base_url']),'reference':view['host_reference'],
+                      'approved_rate_sha256':digest(rate_for(cfg,row['rate_settings']))}
+            crawl={**(row['crawl_settings'] or {}),'host_policy_approval':approval}
+            q.execute('UPDATE suppliers SET crawl_settings=%s,updated_at=now() WHERE id=%s',(Jsonb(crawl),supplier_id))
+            PostgresAdminStore._audit(q,actor_id,'HOST_POLICY_APPROVED','supplier',supplier_id,
+                row['crawl_settings'],crawl,'Explicit ADMIN exact host/profile confirmation; no enqueue')
 
     def set_supplier_enabled(self, supplier_id: int, enabled: bool) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
