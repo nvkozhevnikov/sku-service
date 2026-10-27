@@ -63,6 +63,7 @@ class Update:
     offer_active: bool
     product_changed: bool
     commercial_changed: bool
+    commercial_only: bool = False
 
     def apply(self, repo, q, supplier_id, source_id, offer_id, at, counts):
         # Persist the same effective facts used by history/guards. Unknown price
@@ -81,7 +82,9 @@ class Update:
         if q.rowcount != 1:raise RuntimeError('SOURCE_UPDATE_OFFER_CONFLICT')
         if self.product_changed or not self.old_values:
             repo._replace_details(q, supplier_id, source_id, offer_id, self.card, at)
-        repo._record_field_observations(q, source_id, self.card, at)
+        # The commercial ledger below the writer holds the actual incoming
+        # values. Retained descriptions/properties must not receive fresh dates.
+        if not self.commercial_only:repo._record_field_observations(q, source_id, self.card, at)
         repo._record_seen_observation(q, source_id, self.run_id, at)
         if self.old_values:
             for group, value in self.new_values.items():
@@ -98,7 +101,7 @@ class Update:
         if q.fetchone() != (self.catalog_id,):raise RuntimeError('SOURCE_UPDATE_MAPPING_CONFLICT')
 
 
-def prepare_update(repo, q, supplier_id, run_id, card, observation, capture, existing):
+def prepare_update(repo, q, supplier_id, run_id, card, observation, capture, existing, *, commercial_only=False):
     reject_target_payload(card.raw_data)
     if capture.capture_scope != 'detail' or card.requested_url != capture.requested_url:
         raise RuntimeError('SOURCE_UPDATE_DETAIL_IDENTITY_REQUIRED')
@@ -108,6 +111,14 @@ def prepare_update(repo, q, supplier_id, run_id, card, observation, capture, exi
                  AND r.metadata->>'job_id'=j.id::text
                  AND r.metadata->>'source_mode' IN ('REFRESH','DISCOVERY','RESUME')''', (run_id, supplier_id))
     if q.fetchone() != (run_id,):raise RuntimeError('SOURCE_UPDATE_RUNNING_JOB_REQUIRED')
+    if commercial_only:
+        from .control_plane.commercial_refresh import authorize_card
+        expected=authorize_card(card,capture)
+        if not existing or (existing[0],existing[1])!=(expected['source_product_id'],expected['catalog_product_id']):
+            raise RuntimeError('SOURCE_UPDATE_MAPPING_CONFLICT')
+        q.execute("SELECT settings_snapshot->'automation'->>'approval_sha256' FROM crawl_jobs WHERE crawl_run_id=%s AND status='running'",(run_id,))
+        from .control_plane.automation_execution import require_active
+        if q.fetchone()!=(require_active().sha,):raise RuntimeError('COMMERCIAL_REFRESH_JOB_APPROVAL_CHANGED')
     q.execute('''SELECT id FROM source_products WHERE supplier_id=%s
                  AND (rtrim(coalesce(canonical_url,source_url),'/')=rtrim(%s,'/')
                       OR rtrim(source_url,'/')=rtrim(%s,'/')) FOR UPDATE''',
@@ -154,10 +165,24 @@ def prepare_update(repo, q, supplier_id, run_id, card, observation, capture, exi
                                      for k in ('identity', 'description', 'properties', 'categories', 'other'))
             if plan['bucket'] != 'AUTO' and (plan['bucket'] == 'CONFLICT' or not semantic_unchanged):
                 raise RuntimeError('SOURCE_UPDATE_SEMANTIC_CONFLICT:' + plan['reason'])
+    if commercial_only:
+        # Semantic checks above use the actual incoming identity. Only after
+        # they pass may the narrow refresh retain all stored content/details.
+        card=commercial_projection(previous,card)
     values = card_group_values(card)
     product_changed = bool(old_values) and any(not history_values_equal(old_values.get(k), v)
                                               for k, v in values.items() if k != 'commercial')
     commercial_changed = bool(old_values) and not commercial_values_equal(old_values.get('commercial'), values['commercial'])
     raw = dict(card.raw_data);raw['_commercial_projection_region'] = capture.region_code or ''
     return Update(replace(card, raw_data=raw), run_id, catalog_id, old_values, values,
-                  (existing[3] or {}) if existing else {}, active, product_changed, commercial_changed)
+                  (existing[3] or {}) if existing else {}, active, product_changed, commercial_changed,commercial_only)
+
+
+def commercial_projection(previous,incoming):
+    raw=dict(previous.raw_data)
+    for key in ('price_extraction','price_type_evidence','commercial_capture'):
+        if key in incoming.raw_data:raw[key]=incoming.raw_data[key]
+    return replace(previous,price=incoming.price,old_price=incoming.old_price,currency=incoming.currency,
+        availability_raw=incoming.availability_raw,availability_normalized=incoming.availability_normalized,
+        quantity=incoming.quantity,price_type=incoming.price_type,price_raw=incoming.price_raw,
+        price_source=incoming.price_source,raw_data=raw,http_status=incoming.http_status)

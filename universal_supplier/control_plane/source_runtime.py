@@ -415,7 +415,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     if any(marker in str(error).upper() for marker in ('CROSS_HOST','NAMESPACE','OUTSIDE_SCOPE','CHECKPOINT','CAPTURE','APPROVAL')):raise
                     raise CardExtractionError(str(error),'identity' if 'disagree' in str(error).lower() or 'model' in str(error).lower() else 'parse') from error
                 if code in NATIVE_SOURCES:product=replace(product,requested_url=cap.requested_url,final_url=cap.final_url,redirect_urls=cap.redirects)
-                external=product.external_id if code in ('kami',*NATIVE_SOURCES) else product.site_internal_id
+                from .source_jobs import frozen_identity
+                product=frozen_identity(code,product,entry)
+                external=product.external_id if code in ('kami',*NATIVE_SOURCES) else product.supplier_external_id or product.site_internal_id
                 if not external or not product.name:raise CardExtractionError('SOURCE_IDENTITY_UNRESOLVED','identity')
                 if entry.get('source_external_id') and external!=entry['source_external_id']:raise CardExtractionError('SOURCE_EXTERNAL_ID_CHANGED','identity')
                 if receipt and receipt.get('external_id') and receipt['external_id']!=external:raise CardExtractionError('RESUME_PARSER_ID_CHANGED','identity')
@@ -526,7 +528,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             resume_safe=plan['automatic_resume_allowed'] and bool(cp.state['frontier'] or plan['offline_pending'])
         else:
             plan={'uncertain':[],'failed_requires_decision':[]};resume_safe=bool(termination=='DISCOVERY_PAGE_BUDGET' and not discovery.state['inflight'])
-        if matching_pending and not (termination and termination.startswith(('SOURCE_BLOCKED','OPERATOR','SQL_','UNCERTAIN','HOST_LEASE','AUTONOMOUS','AUTOMATION'))):
+        if matching_pending and not (termination and termination.startswith(('SOURCE_BLOCKED','OPERATOR','SQL_','UNCERTAIN','HOST_LEASE','AUTONOMOUS','AUTOMATION','COMMERCIAL_REFRESH_'))):
             finish_pending_matching()
     except Exception as e:
         termination=(fetcher.stop_reason if fetcher else None) or str(e) or type(e).__name__

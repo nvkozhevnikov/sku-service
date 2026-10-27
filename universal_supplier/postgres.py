@@ -260,14 +260,25 @@ class PostgresRepository:
             self._replace_details(cursor, saved[0], product_id, offer_id, card, capture.observed_at.isoformat())
             return True
 
-    def _persist_passive_observation(self, card, observation, capture, *, source_run_id=None) -> dict[str, Any]:
+    def _persist_passive_observation(self, card, observation, capture, *, source_run_id=None, commercial_only=False) -> dict[str, Any]:
+        from .commercial import PriceState
         observed_at = capture.observed_at.isoformat()
-        if card.supplier_code not in PASSIVE_COMMERCIAL_SUPPLIERS:
+        if commercial_only:
+            from .control_plane.commercial_refresh import authorize_card
+            authorize_card(card,capture)
+            if source_run_id is None:raise RuntimeError('COMMERCIAL_REFRESH_RUN_REQUIRED')
+            observation=replace(observation,extraction_evidence={**observation.extraction_evidence,'commercial_only':True})
+        if card.supplier_code not in PASSIVE_COMMERCIAL_SUPPLIERS and not commercial_only:
             raise ValueError("commercial persistence is limited to passive suppliers")
         region = capture.region_code or ""
         counts = IngestCounts()
         with self.connection.transaction(), self.connection.cursor() as cursor:
-            supplier_id = self._ensure_passive_commercial_supplier(cursor, card.supplier_code)
+            if commercial_only:
+                cursor.execute('SELECT id FROM suppliers WHERE code=%s AND enabled FOR UPDATE',(card.supplier_code,))
+                found=cursor.fetchone()
+                if not found:raise RuntimeError('COMMERCIAL_REFRESH_ENABLED_SOURCE_REQUIRED')
+                supplier_id=found[0]
+            else:supplier_id = self._ensure_passive_commercial_supplier(cursor, card.supplier_code)
             if card.supplier_code == "intervesp":
                 from .intervesp_listing import persistence_identity
                 resolved = persistence_identity(cursor, supplier_id, card)
@@ -286,7 +297,7 @@ class PostgresRepository:
             runtime = None
             if source_run_id is not None:
                 from .source_update import prepare_update
-                runtime = prepare_update(self, cursor, supplier_id, source_run_id, card, observation, capture, existing)
+                runtime = prepare_update(self, cursor, supplier_id, source_run_id, card, observation, capture, existing,**({'commercial_only':True} if commercial_only else {}))
                 card = runtime.card
             kami_content_changed = True
             kami_commercial_changed = True
@@ -387,6 +398,12 @@ class PostgresRepository:
                     )
                     counts.changed_offers += int(runtime.commercial_changed if runtime else card.supplier_code != 'kami' or kami_commercial_changed)
                     if runtime and not runtime.commercial_changed:counts.unchanged_offers += 1
+            if projection_updated:
+                # Legacy observations keep their CHECK-constrained public type;
+                # the selected offer may carry a separately proved business type.
+                if observation.price_state in {PriceState.NUMERIC_PUBLIC, PriceState.PRICE_ON_REQUEST}:
+                    cursor.execute('UPDATE offers SET price_type=%s,price_raw=%s,price_source=%s WHERE id=%s',
+                        (card.price_type,observation.price_raw,observation.price_source,offer_id))
             if runtime and projection_updated:
                 runtime.apply(self, cursor, supplier_id, source_product_id, offer_id, observed_at, counts)
             if runtime is None and card.supplier_code == "kami" and projection_updated and kami_content_changed:

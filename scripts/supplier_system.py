@@ -12,13 +12,18 @@ def main(argv=None):
     p.add_argument('action',choices=('prepare','inspect','run','export-preview','stop'))
     p.add_argument('--approval',type=Path);p.add_argument('--sha256');p.add_argument('--confirm')
     p.add_argument('--limits',type=Path);p.add_argument('--not-before');p.add_argument('--execution-until')
+    p.add_argument('--confirmed-commercial-targets',type=Path)
     p.add_argument('--output',type=Path);p.add_argument('--session',type=Path)
+    p.add_argument('--resume-safe',action='store_true',help='explicit native safe resume within the SAME approved window; never UNKNOWN')
     args=p.parse_args(argv)
     cfg=runtime_config() if args.action!='stop' else None
     if args.action=='prepare':
-        if not all((args.limits,args.not_before,args.execution_until,args.output)):p.error('prepare requires limits/window/output')
+        if not all((args.limits or args.confirmed_commercial_targets,args.not_before,args.execution_until,args.output)):p.error('prepare requires limits or commercial targets, window/output')
         if args.output.exists():raise FileExistsError('APPROVAL_OUTPUT_ALREADY_EXISTS')
-        value=execution.prepare(cfg,json.loads(args.limits.read_text(encoding='utf-8')),args.not_before,args.execution_until)
+        if args.confirmed_commercial_targets:
+            from universal_supplier.control_plane.commercial_refresh import prepare
+            value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until)
+        else:value=execution.prepare(cfg,json.loads(args.limits.read_text(encoding='utf-8')),args.not_before,args.execution_until)
         args.output.parent.mkdir(parents=True,exist_ok=True)
         args.output.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps({'approval':str(args.output),'sha256':hashlib.sha256(args.output.read_bytes()).hexdigest(),
@@ -36,18 +41,22 @@ def main(argv=None):
                 phases=c.execute('''SELECT DISTINCT ON (supplier_id,settings_snapshot->'source_batch'->>'phase') status
                     FROM crawl_jobs WHERE settings_snapshot->'source_batch'->>'id'=%s
                     ORDER BY supplier_id,settings_snapshot->'source_batch'->>'phase',id DESC''',(value['protected_live11_batch_id'],)).fetchall()
+            from universal_supplier.control_plane.commercial_refresh import is_refresh,scope_rows
+            if is_refresh(value):scope_rows(cfg,[e for r in value['suppliers'].values() for e in r['targets']])
             print(json.dumps({'head':value['head'],'sources':len(value['suppliers']),'active_jobs':active,
                 'window_end':value['execution_until'],'live_blocked':None if len(phases)==22 and all(r[0]=='succeeded' for r in phases)
-                    else 'AUTOMATION_LIVE11_UNFINISHED_REQUIRES_SEPARATE_RECOVERY','HTTP':0,'enqueue':0,'matching':0}))
+                    or is_refresh(value) else 'AUTOMATION_LIVE11_UNFINISHED_REQUIRES_SEPARATE_RECOVERY','HTTP':0,'enqueue':0,'matching':0,
+                    'operator_confirmation_required':True,'purpose':value.get('purpose')}))
         else:
             from universal_supplier.control_plane.scheduler_main import run_approved
             from contextlib import redirect_stdout,redirect_stderr
             from uuid import uuid4
             folder=ROOT/'reports/automation-runtime'/str(uuid4());folder.mkdir(parents=True)
+            print(json.dumps({'session':str(folder),'log':str(folder/'runner.log'),'stop_uses_this_session':True}),flush=True)
             with (folder/'runner.log').open('a',encoding='utf-8',buffering=1) as log,redirect_stdout(log),redirect_stderr(log):
-                result=run_approved(cfg,args.approval,args.sha256,args.confirm,folder=folder)
+                result=run_approved(cfg,args.approval,args.sha256,args.confirm,folder=folder,resume_safe=args.resume_safe)
                 print(json.dumps(result,default=str))
-            return 0 if result['reason'] in ('OPERATOR_STOP','AUTOMATION_EXECUTION_WINDOW_EXPIRED') else 1
+            return 0 if result['reason'] in ('OPERATOR_STOP','AUTOMATION_EXECUTION_WINDOW_EXPIRED','COMMERCIAL_REFRESH_FINISHED') else 1
     elif args.action=='export-preview':
         from universal_supplier.control_plane.store import PostgresControlPlaneStore
         from universal_supplier.xml_export import XmlExportService
@@ -55,7 +64,15 @@ def main(argv=None):
         report=XmlExportService(PostgresControlPlaneStore(cfg,connection_factory=guarded_connect)).publish_previews(args.output)
         print(json.dumps({'version':report['version'],'counts':report['counts'],'checksums':report['checksums'],'import_allowed':False}))
     elif args.action=='stop':
-        if not args.session:p.error('stop requires --session directory')
+        if not args.session:
+            if not args.sha256 or len(args.sha256)!=64:p.error('stop requires --session or exact --sha256')
+            found=[]
+            for receipt in (ROOT/'reports/automation-runtime').glob('*/SESSION.json'):
+                value=json.loads(receipt.read_text(encoding='utf-8'))
+                if value.get('sha256')==args.sha256 and not (receipt.parent/'FINAL.json').exists() and not (receipt.parent/'FINAL_UNVERIFIED.json').exists():
+                    (receipt.parent/'STOP_REQUESTED').write_text('OPERATOR_STOP',encoding='utf-8');found.append(str(receipt.parent))
+            print(json.dumps({'STOP_REQUESTED':found,'note':'wait for FINAL and SETTINGS_RESTORED; no forced termination'}))
+            return 0
         target=args.session.resolve();allowed=(ROOT/'reports/automation-runtime').resolve()
         if not target.is_relative_to(allowed):raise PermissionError('AUTOMATION_SESSION_PATH_NOT_ALLOWED')
         if not (target/'SESSION.json').is_file():raise ValueError('AUTOMATION_SESSION_NOT_FOUND')

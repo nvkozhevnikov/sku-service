@@ -91,6 +91,9 @@ def to_product_card(product, *, final_url: str, aliases: tuple[str, ...] = ()) -
         "source_external_id": str(identity.external_id),
         "source_url": identity.source_url or identity.canonical_url,
     })
+    from universal_supplier.price_semantics import price_type_proof
+    proof=price_type_proof(raw_data.get('source_price_text') or '',source_path='own catalog-element price block')
+    raw_data['price_type_evidence']=proof
     return ProductCard(
         supplier_code="optimum",
         external_id=str(identity.external_id),
@@ -103,7 +106,7 @@ def to_product_card(product, *, final_url: str, aliases: tuple[str, ...] = ()) -
         redirect_urls=(),
         price=_decimal(product.commercial.price),
         old_price=_decimal(product.commercial.old_price),
-        currency=product.commercial.currency or "RUB",
+        currency=product.commercial.currency or "",
         availability_raw=product.commercial.availability_raw or "",
         availability_normalized=_availability_for_database(product.commercial.availability_normalized),
         quantity=_decimal(product.commercial.quantity),
@@ -122,7 +125,7 @@ def to_product_card(product, *, final_url: str, aliases: tuple[str, ...] = ()) -
         ),
         raw_data=raw_data,
         alias_urls=aliases,
-        price_type="unknown",
+        price_type=proof['classification'],
         price_raw=str((product.raw_data or {}).get("source_price_text") or product.commercial.price or ""),
         price_source="supplier page price block",
     )

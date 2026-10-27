@@ -14,7 +14,7 @@ DEFAULT_MAX_PARALLEL_SUPPLIER_JOBS = 2
 MAX_PARALLEL_SUPPLIER_JOBS_UPPER_BOUND = 32
 
 
-def run_approved(config,approval_path,sha,confirm,*,folder=None,poll_seconds=2.0,reporter=None):
+def run_approved(config,approval_path,sha,confirm,*,folder=None,poll_seconds=2.0,reporter=None,resume_safe=False):
     """An explicit bounded host for the same Scheduler and Orchestrator classes."""
     from pathlib import Path
     from datetime import datetime,timezone
@@ -27,6 +27,7 @@ def run_approved(config,approval_path,sha,confirm,*,folder=None,poll_seconds=2.0
     value=execution.load(approval_path,sha,confirm,for_execution=True)
     output=Path(folder or execution.ROOT/'reports/automation-runtime'/str(uuid4()))
     session=execution.Session(config,value,sha,output,approval_path=approval_path)
+    session.resume_safe=resume_safe
     from .runtime_config import guarded_connect
     queue=PostgresJobQueue(config,connection_factory=guarded_connect);worker=None;previous=None;index=0;reason=None
     report=reporter or write
@@ -47,6 +48,17 @@ def run_approved(config,approval_path,sha,confirm,*,folder=None,poll_seconds=2.0
                 next_report=time.monotonic()+3600;next_heartbeat=0;exported=set()
                 while True:
                     session.check();scheduler.tick();worker.tick()
+                    from .commercial_refresh import is_refresh
+                    if is_refresh(value) and scheduler.refresh_finished and not any(not f.done() for f in worker.active):
+                        reason='COMMERCIAL_REFRESH_BLOCKED' if scheduler.blocked else 'COMMERCIAL_REFRESH_FINISHED'
+                        # Per-field TTL and receipt checks remain in the existing
+                        # local preview service. No export/import permission is implied.
+                        from universal_supplier.xml_export import XmlExportService
+                        from .store import PostgresControlPlaneStore
+                        preview=XmlExportService(PostgresControlPlaneStore(config,connection_factory=guarded_connect)).publish_previews(output/'xml-previews')
+                        atomic_text(output/'XML_PREVIEW.json',json.dumps({'counts':preview['counts'],'checksums':preview['checksums'],'import_allowed':False}))
+                        if not preview['counts']['updates']:reason='COMMERCIAL_REFRESH_NO_USABLE_UPDATES'
+                        break
                     if time.monotonic()>=next_heartbeat:
                         atomic_text(output/'heartbeat.json',json.dumps({'at':datetime.now(timezone.utc).isoformat(),
                             'pid':os.getpid(),'worker':'RUNNING','sha256':sha,'blocked_sources':scheduler.blocked}))
@@ -82,7 +94,7 @@ def run_approved(config,approval_path,sha,confirm,*,folder=None,poll_seconds=2.0
                 try:
                     final=report(session,index,previous=previous,worker='STOPPED',blocked=scheduler.blocked)
                     atomic_text(output/'FINAL.json',json.dumps({'at':final['at'],'reason':reason,
-                        'active_jobs':final['active_jobs'],'original1282_exact':True,'temporary_database_settings_used':False,
+                        'active_jobs':final['active_jobs'],'original1282_exact':True,'temporary_database_settings_used':bool(value.get('commercial_only')),
                         'no_automatic_restart':True}))
                 except Exception as error:
                     failed={'at':datetime.now(timezone.utc).isoformat(),'postgres':'UNVERIFIED','worker':'STOPPED',

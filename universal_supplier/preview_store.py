@@ -53,7 +53,7 @@ def load(config,*,connection_factory=None):
             o.price_raw,o.price_source,o.price_type,
             obs.id AS observation_id,obs.capture_id,obs.observed_at,obs.price_state,obs.price AS observed_price,
             obs.currency AS observed_currency,obs.availability_normalized AS observed_availability,
-            obs.availability_raw AS observed_availability_raw,
+            obs.availability_raw AS observed_availability_raw,obs.unusable_price_reasons,
             obs.price_source AS observed_price_source,obs.price_type AS observed_price_type,
             cap.capture_fingerprint,cap.http_status,cap.requested_url AS capture_requested_url,
             cap.response_sha256,cap.evidence_ref,cap.diagnostics AS capture_diagnostics,obs.extraction_evidence,

@@ -71,6 +71,16 @@ def parse_existing(code,text,url,status=200):
     from universal_supplier.full_supplier_collection import _PARSERS
     return _PARSERS[code](text,source_url=url)
 
+
+def frozen_identity(code,product,entry):
+    """A listing URL identity is retained only for the identical detail URL."""
+    if code=='intervesp' and entry.get('source_external_id','').startswith('url-sha256:'):
+        from dataclasses import replace
+        from universal_supplier.intervesp_listing import url_identity
+        if product.site_internal_id and product.source_url==entry['url'] and url_identity(product.source_url)==entry['source_external_id']:
+            product=replace(product,supplier_external_id=entry['source_external_id'])
+    return product
+
 def load_manifest(settings,code,*,deadline,clock):
     path=Path(settings['source_manifest_path']).resolve()
     if path.stat().st_size>MAX_RESPONSE_BYTES:raise ValueError('SOURCE_MANIFEST_TOO_LARGE')

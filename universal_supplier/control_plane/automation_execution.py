@@ -33,6 +33,9 @@ def load(path,sha,confirm=None,*,for_execution=False):
     require(start.tzinfo is not None and end.tzinfo is not None and 0<(end-start).total_seconds()<=86400,
             'AUTOMATION_WINDOW_INVALID')
     require(len(value['mappings1282'])==1282 and len({r[0] for r in value['mappings1282']})==1282,'AUTOMATION_MAPPING_BASELINE_REQUIRED')
+    from .commercial_refresh import is_refresh,validate
+    if is_refresh(value):validate(value)
+    else:require(value.get('purpose') is None,'AUTOMATION_PURPOSE_UNKNOWN')
     for code,rule in value['suppliers'].items():
         require(isinstance(rule.get('settings_sha256'),str) and len(rule['settings_sha256'])==64,
                 'AUTOMATION_SOURCE_SETTINGS_APPROVAL_REQUIRED')
@@ -43,7 +46,7 @@ def load(path,sha,confirm=None,*,for_execution=False):
                 'AUTOMATION_QUEUE_ATTEMPTS_INVALID')
         for phase in ('REFRESH','DISCOVERY'):
             cap=rule['limits'][phase]
-            require(type(cap) is int and 1<=cap<=100000,'AUTOMATION_EXPLICIT_PRODUCT_CAP_REQUIRED')
+            require(type(cap) is int and (0 if is_refresh(value) else 1)<=cap<=100000,'AUTOMATION_EXPLICIT_PRODUCT_CAP_REQUIRED')
     if for_execution:
         require(confirm==sha,'AUTOMATION_EXACT_OPERATOR_CONFIRMATION_REQUIRED')
         require(not subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip(),
@@ -66,6 +69,8 @@ def validate_job(snapshot):
     marker=snapshot.get('automation')
     if not marker:return
     session=require_active(marker.get('approval_sha256'))
+    from .commercial_refresh import is_refresh,validate_snapshot
+    if is_refresh(session.value):validate_snapshot(snapshot,session)
     code=snapshot['supplier_code'];rule=session.value['suppliers'][code]
     require(rule.get('enabled_at_approval') is True,'AUTOMATION_SUPPLIER_ENABLE_REQUIRES_APPROVAL')
     require(digest(settings_for(snapshot))==rule['settings_sha256'],'AUTOMATION_SOURCE_SETTINGS_CHANGED')
@@ -202,16 +207,22 @@ class Session:
                     'AUTOMATION_FOREIGN_ACTIVE_JOB')
                 require(not c.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running') AND settings_snapshot ? 'source_batch'").fetchall(),
                     'AUTOMATION_LIVE11_ACTIVE_REQUIRES_SEPARATE_RECOVERY')
+                if self.value.get('commercial_only'):
+                    self.prior_jobs={r[0] for r in c.execute("SELECT id FROM crawl_jobs WHERE settings_snapshot->'automation'->>'approval_sha256'=%s",(self.sha,)).fetchall()}
                 phases=c.execute('''SELECT DISTINCT ON (supplier_id,settings_snapshot->'source_batch'->>'phase') status
                     FROM crawl_jobs WHERE settings_snapshot->'source_batch'->>'id'=%s
                     ORDER BY supplier_id,settings_snapshot->'source_batch'->>'phase',id DESC''',
                     (self.value['protected_live11_batch_id'],)).fetchall()
-                require(len(phases)==22 and all(r[0]=='succeeded' for r in phases),'AUTOMATION_LIVE11_UNFINISHED_REQUIRES_SEPARATE_RECOVERY')
+                from .commercial_refresh import is_refresh,settings
+                if not is_refresh(self.value):
+                    require(len(phases)==22 and all(r[0]=='succeeded' for r in phases),'AUTOMATION_LIVE11_UNFINISHED_REQUIRES_SEPARATE_RECOVERY')
                 ACTIVE=self
                 atomic_text(self.folder/'SESSION.json',json.dumps({'sha256':self.sha,'started_at':self.started.isoformat(),
                     'work_until':self.end.isoformat(),'execution_until':self.hard.isoformat(),
                     'pid':os.getpid(),'no_automatic_restart':True}))
-                yield self
+                if is_refresh(self.value):
+                    with settings(self,c):yield self
+                else:yield self
             finally:
                 ACTIVE=None;self.lock=None
                 # Closing a lost connection releases its session lock; do not

@@ -240,3 +240,11 @@ with unsupported URL-policy enforcement. Нельзя выдавать TestClien
 
 Дополнение по покрытию: docs/XML_COVERAGE_RECOVERY.md. Корректный пустой XML — не бизнес-PASS.
 Проверенный текущий результат206NEW/0updates; updatesNOT_READY до разрешённого REFRESH.
+# Отдельный confirmed commercial REFRESH
+
+См. [COMMERCIAL_RECOVERY.md](COMMERCIAL_RECOVERY.md). Новый purpose
+`confirmed-commercial-refresh/v1` — одноразовый явный допуск1270 точных mapped URL
+с временными settings, а не включение обычного recurring scheduler и не LIVE11 RESUME.
+Обычный `supplier-schedule-grant/v1` без этого exact purpose всё ещё требует22/22 LIVE11.
+Подготовка нового purpose — SELECT-only; `run` требует отдельного HEAD/engine/SHA/window
+подтверждения. Действующие ограничения production/ESOL/cron/import сохранены.

@@ -14,6 +14,7 @@ from sterbrust_matching.normalization import normalize_brand,normalize_text
 from .matching_policy_v2 import normalize_identity_model
 from .offer_selection import OfferSelectionPolicy,evaluate_offers
 from .commercial_freshness import assess
+from .price_semantics import observation_price_type
 from .control_plane.supplier_automation import settings_for,digest
 from .xml_export import _append,_product_element,FALSE_MATCH_GUARDS
 
@@ -172,7 +173,7 @@ def build(snapshot, *, as_of=None, baseline=None):
                    availability_normalized=row['observed_availability'] if f['availability']['state']=='fresh' else None,
                    availability_raw=row.get('observed_availability_raw') if f['availability']['state']=='fresh' else None,
                    old_price=None,quantity=None,price_raw=None,
-                   price_type=row.get('observed_price_type') if f['price']['state']=='fresh' else None,
+                   price_type=observation_price_type(row) if f['price']['state']=='fresh' else None,
                    price_source=row.get('observed_price_source',row.get('price_source')) if f['price']['state']=='fresh' else None)
         candidate_id='NEWC-'+digest([key,props])[:24].upper()
         new.append({'id':candidate_id,'row':row,'aliases':[{'supplier':r['supplier_code'],'external_id':r['external_id']} for r in rows]})

@@ -55,6 +55,10 @@ def collect(session,*,previous=None,worker='RUNNING',blocked=None):
             buckets=Counter(bucket(status,auto) for pid,status,auto in decisions if pid in known)
             if len(known)!=sum(buckets.values()):raise ValueError('AUTOMATION_MATCHING_PROOF_MISMATCH')
             before=next((r for r in (previous or {}).get('sources',[]) if r['source']==code),None)
+            if session.value.get('commercial_only'):
+                # Include approved URLs whose jobs have not started yet. SQL
+                # commits and durable quarantine are the only accounted outcomes.
+                remaining=max(0,len(session.value['suppliers'][code]['targets'])-len(receipts)-quarantine)
             elapsed=(now-datetime.fromisoformat(previous['at'])).total_seconds() if previous else 0
             speed=max(0,len(receipts)-(before or {}).get('committed',len(receipts)))*3600/elapsed if elapsed>0 else None
             rows.append({'source':code,'committed':len(receipts),'unique_products':len(ids),

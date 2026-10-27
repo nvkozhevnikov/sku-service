@@ -38,10 +38,13 @@ def assess(row, policy, now=None):
         price=Decimal(str(row.get('observed_price')))
         numeric=price.is_finite() and price>0 and bool(row.get('observed_currency'))
     except (InvalidOperation,TypeError,ValueError):numeric=False
-    price_at=observed if numeric and row.get('price_state') in ('numeric_public','numeric') else None
+    extraction=row.get('extraction_evidence') or {}
+    exact=(extraction.get('price_basis')!='from_price' and extraction.get('variant_or_group') is not True
+           and not row.get('unusable_price_reasons'))
+    price_at=observed if numeric and exact and row.get('price_state') in ('numeric_public','numeric') else None
     availability_at=observed if row.get('observed_availability') in ('in_stock','out_of_stock','incoming','preorder','backorder','discontinued') else None
     success=timestamp(row.get('source_last_success_at'))
-    content=observed if observed is not None and success is not None and success>=observed else None
+    content=observed if observed is not None and success is not None and success>=observed and not extraction.get('commercial_only') else None
     return {'price':field_state(price_at,policy['price_ttl'],now),
             'availability':field_state(availability_at,policy['availability_ttl'],now),
             'content':field_state(content,policy['content_ttl'],now),

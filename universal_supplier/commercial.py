@@ -47,6 +47,8 @@ class PriceExtraction:
     product_identity: str
     source_url: str | None
     context_path: str | None
+    price_type: str = 'unknown'
+    price_type_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

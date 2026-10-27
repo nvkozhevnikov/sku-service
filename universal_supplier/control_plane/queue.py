@@ -122,6 +122,12 @@ class PostgresJobQueue:
     def _canary_preview(self,connection,cursor,supplier_id,supplier,limit,mode='REFRESH'):
         from .source_canary import limit_value,validate_config,validate_connection,build_preview
         limit_value(limit);validate_config(self.config);validate_connection(connection)
+        from .automation_execution import ACTIVE
+        from .commercial_refresh import is_refresh,preview
+        if ACTIVE is not None and is_refresh(ACTIVE.value):
+            if mode!='REFRESH' or limit!=ACTIVE.value['suppliers'][supplier[0]]['limits']['REFRESH']:
+                raise PermissionError('COMMERCIAL_REFRESH_LIMIT_CHANGED')
+            return preview(self.config,supplier_id,supplier)
         cursor.execute('''WITH known AS (
             SELECT DISTINCT ON (coalesce(canonical_url,source_url)) id,external_id,coalesce(canonical_url,source_url) AS url
             FROM source_products WHERE supplier_id=%s AND active AND external_id_is_stable
@@ -273,6 +279,8 @@ class PostgresJobQueue:
                     'revision':settings_for({'rate_settings':rate_settings,'crawl_settings':crawl_settings})['revision'],
                     'rate_sha256':digest(snapshot['rate_settings']),'scheduled_for':scheduled_for.astimezone(timezone.utc).isoformat(),
                     'priority':settings_for({'rate_settings':rate_settings,'crawl_settings':crawl_settings})['priority']}
+                if session.value.get('purpose'):
+                    snapshot['automation']['purpose']=session.value['purpose']
                 validate_job(snapshot)
                 rule=session.value['suppliers'][code]
                 cursor.execute('''SELECT count(*) FROM crawl_jobs WHERE supplier_id=%s

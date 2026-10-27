@@ -105,7 +105,10 @@ def test_live_wrapper_uses_existing_client_contract_with_saved_response_only(tmp
     observed=datetime.fromisoformat(result['rows'][0]['observed_at'])
     assert before<=observed<=after
     assert observed!=datetime(2026,10,8,8,tzinfo=timezone.utc)
-    assert result['status']=='succeeded',result
+    # A parser-only request has no durable SQL receipt. The current resume
+    # contract must not present it as a successfully committed source job.
+    assert result['status']=='partial',result
+    assert result['termination_reason']=='UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR'
     from universal_supplier.control_plane.source_discovery import HOSTS
     assert [x[0] for x in calls]==['https://'+HOSTS[code]+'/robots.txt',url]
     assert result['sql_committed']==0 and result['matching_applied'] is False and not backend.writes

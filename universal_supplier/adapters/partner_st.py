@@ -28,7 +28,7 @@ def parse_decimal(value: object) -> Decimal | None:
 
 def normalize_currency(value: object) -> str:
     text = str(value or "").strip().upper()
-    return "RUB" if text in {"RUB", "RUR", "₽", "РУБ", "РУБ."} else text[:3]
+    return "RUB" if text in {"RUB", "RUR", "₽", "РУБ", "РУБ."} else text if re.fullmatch('[A-Z]{3}',text) else ''
 
 
 def normalize_availability(value: object) -> str:
@@ -43,6 +43,10 @@ def normalize_availability(value: object) -> str:
         return "preorder"
     if "backorder" in text or "под заказ" in text:
         return "backorder"
+    if "discontinued" in text or "снят с производства" in text:
+        return "discontinued"
+    if "incoming" in text or "в пути" in text:
+        return "incoming"
     return "unknown"
 
 
@@ -187,8 +191,11 @@ class PartnerStAdapter:
             quantity = parse_decimal(stock_node.get_text(" ", strip=True)) if stock_node else None
         # Prefer the product-scoped old price; the global selector may hit a
         # related-products card earlier in the document.
-        old_price_node = (soup.select_one(f"#old_price_update_{external_id} .ty-list-price")
-                          or soup.select_one(".ty-list-price"))
+        old_price_node = soup.select_one(f"#old_price_update_{external_id} .ty-list-price")
+        from universal_supplier.price_semantics import price_type_proof
+        price_node=soup.select_one(f'#price_update_{external_id}')
+        proof=price_type_proof(price_node.get_text(' ',strip=True) if price_node else '',
+            source_path=f'#price_update_{external_id}',declared=price_node.get('data-price-type') if price_node else None)
 
         return ProductCard(
             supplier_code=self.code, external_id=external_id, sku=sku, name=name,
@@ -202,8 +209,9 @@ class PartnerStAdapter:
             brand=brand, manufacturer=manufacturer, properties=tuple(properties), media=tuple(media), options=tuple(options),
             categories=tuple(categories),
             raw_data={"json_ld_product": product, "fetch_attempts": fetch.attempts, "elapsed_ms": fetch.elapsed_ms,
-                      "source_kind": "supplier_html"},
-            price_type="unknown",
-            price_raw=str(offer.get("price") or ""),
+                      "source_kind": "supplier_html","price_type_evidence":proof,
+                      "price_basis":'from_price' if price_node and re.search(r'\bот\s+\d',price_node.get_text(' ',strip=True),re.I) else 'exact'},
+            price_type=proof['classification'],
+            price_raw=str(offer.get("price") or (price_node.get_text(' ',strip=True) if price_node else '')),
             price_source="JSON-LD offers.price",
         )

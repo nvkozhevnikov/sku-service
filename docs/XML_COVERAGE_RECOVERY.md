@@ -74,3 +74,8 @@ NEW подавлялись collector-enabled/любым OPEN-case/audited_at;199
 это иной срез, чем исторический117-feed. Совместимый117-row fixture Stage5 проходит;
 unsupported-price-type guard не ослаблен ради числа117. Полное evidence в workspace
 reports/XML_COVERAGE_RECOVERY_20261027/. LIVE11/16tablehashes/42sequences/1282links сохранены.
+
+Следующий адресный этап: [COMMERCIAL_RECOVERY.md](COMMERCIAL_RECOVERY.md).
+Извлечение/observation provenance исправлены offline; подготовлен отдельный exact
+confirmed REFRESH1270 без повторного использования LIVE11 receipts. Новый LIVE ещё
+не разрешён; реальный HTTP→SQL→matching→selection→XML PASS нельзя подменить fixtures.

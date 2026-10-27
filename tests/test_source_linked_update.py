@@ -109,6 +109,8 @@ class DB:
                                 availability_normalized=args[11] if args[10] else self.card.availability_normalized, quantity=None)
             self.active = False
         elif q.startswith('UPDATE offers SET quantity'):self.card = replace(self.card,quantity=args[0]); self.active=args[1]
+        elif q.startswith('UPDATE offers SET price_type'):
+            self.card=replace(self.card,price_type=args[0],price_raw=args[1],price_source=args[2])
         elif q.startswith('INSERT INTO source_products'):
             self.new_products += 1; self.answer=(7,); self.raw=json.loads(args[6]); self.at=datetime.fromisoformat(args[7]);self.existing=True
         elif q.startswith('INSERT INTO offers'):self.new_offers+=1;self.answer=(8,);self.offer_exists=True;self.active=False
@@ -121,7 +123,7 @@ class DB:
         elif q.startswith('INSERT INTO entity_change_history'):self.history.append(args)
         elif q.startswith('SELECT catalog_product_id'):self.answer=(999 if self.tamper_readback else self.catalog,)
         elif q.startswith('SELECT c.evidence_sha256'):
-            code,fp,url,external=args;row=self.capture_rows.get(fp)
+            code,fp,url,external,external_optional=args;row=self.capture_rows.get(fp)
             self.answer=[] if not row or self.card.external_id != external or row[2]!=url else [
                 (row[9],datetime.fromisoformat(row[6]),row[3],any(o[3]==self.captures[fp] for o in self.observations))]
         else:raise AssertionError(q)

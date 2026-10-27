@@ -24,7 +24,7 @@ class Identity(StrictModel):
 class Commercial(StrictModel):
     price: str | None = None
     old_price: str | None = None
-    currency: str = "RUB"
+    currency: str | None = None
     availability_raw: str | None = None
     availability_normalized: str | None = None
     quantity: int | None = None

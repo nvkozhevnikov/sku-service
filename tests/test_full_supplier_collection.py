@@ -58,6 +58,7 @@ class FullSupplierCollectionTests(unittest.TestCase):
 
     def test_full_sitemaps_are_distinct_and_exclude_project_links(self):
         sources = {
+            "https://vekprom.ru/sitemap.xml": xml(),
             "https://intervesp.ru/sitemap.xml": xml("https://intervesp.ru/sitemap-iblock-1.xml", index=True),
             "https://intervesp.ru/sitemap-iblock-1.xml": xml(
                 "https://intervesp.ru/catalog/bandsaw/beka-mak-bmsy-440dgh-wp2/",
@@ -81,8 +82,8 @@ class FullSupplierCollectionTests(unittest.TestCase):
         self.assertIn("BMSY-440DGH-WP2", {item.expected_model for item in result.candidates})
         self.assertIn("OPUS-300", {item.expected_model for item in result.candidates})
         self.assertEqual(result.sha256, _candidate_sha(result.candidates))
-        self.assertEqual(len(client.calls), 5)
-        self.assertEqual(len(evidence), 5)
+        self.assertEqual(len(client.calls), 6)
+        self.assertEqual(len(evidence), 6)
         self.assertTrue(all(item["http_status"] == 200 and len(item["raw_sha256"]) == 64
                             for item in evidence))
 

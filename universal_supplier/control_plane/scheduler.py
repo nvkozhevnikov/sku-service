@@ -127,6 +127,8 @@ class Scheduler:
 
     def _tick_sources(self,now):
         """Two modes, same queue and leases; never drives the frozen LIVE11 batch."""
+        from .commercial_refresh import is_refresh,tick
+        if is_refresh(self.automation.value):return tick(self,now)
         from .supplier_automation import settings_for,due_occurrence,digest
         from .automation_execution import require_active,require
         session=require_active(self.automation.sha)

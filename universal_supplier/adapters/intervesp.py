@@ -18,6 +18,8 @@ from universal_supplier.commercial import (
     extract_public_price,
 )
 from ._source_content import breadcrumb_category
+from ._commercial_dom import soup, schema_availability
+from universal_supplier.price_semantics import typed_extraction
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -49,15 +51,22 @@ def _model(name: str) -> str | None:
 
 
 def _price(source: str, identity: str, url: str | None) -> PriceExtraction:
-    price_block = _raw_match(source, r'<div\s+id=["\']elPrice["\'][^>]*>(.*?)</div>\s*</div>') or ""
-    numeric = re.search(r'itemprop=["\']price["\']\s+content=["\']([^"\']+)', price_block, re.I)
-    if numeric:
-        synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"><span class="price-current">{numeric.group(1)} RUB</span></main>'
+    dom=soup(source);block=dom.select_one('#elPrice')
+    price_block=str(block) if block else ''
+    nodes=block.select('[itemprop="price"][content]') if block else []
+    currencies={n.get('content') or n.get_text(strip=True) for n in block.select('[itemprop="priceCurrency"]')} if block else set()
+    # Visible ruble label inside this price block is evidence; a bare numeric
+    # content attribute alone does not establish a currency.
+    if not currencies and block and re.search(r'₽|\bруб\.?|\bRUB\b',block.get_text(' ',strip=True),re.I):currencies={'RUB'}
+    values={n.get('content') for n in nodes}
+    if len(values)==1 and len(currencies)==1:
+        synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"><span class="price-current">{escape(next(iter(values)))} {escape(next(iter(currencies)))}</span></main>'
         result = extract_public_price(synthetic, product_identity=identity, source_url=url)
-        return replace(result, source_path="#elPrice [itemprop=price]", context_path="#elPrice")
-    synthetic = f'<main data-product-identity="{escape(identity, quote=True)}">{price_block}</main>'
-    result = extract_public_price(synthetic, product_identity=identity, source_url=url)
-    return replace(result, source_path="#elPrice", context_path="#elPrice")
+    else:
+        synthetic = f'<main data-product-identity="{escape(identity, quote=True)}">{price_block}</main>'
+        result = extract_public_price(synthetic, product_identity=identity, source_url=url)
+    result=replace(result,source_path='#elPrice',context_path='#elPrice')
+    return typed_extraction(result,block.get_text(' ',strip=True) if block else '',source_path='#elPrice',declared=block.get('data-price-type') if block else None)
 
 
 def parse_intervesp_detail(source: str, *, source_url: str | None = None) -> ReadOnlySupplierProduct:
@@ -67,11 +76,12 @@ def parse_intervesp_detail(source: str, *, source_url: str | None = None) -> Rea
     model = _model(name)
     canonical = _match(source, r'<link\s+rel=["\']canonical["\']\s+href=["\']([^"\']+)')
     url = source_url or canonical
-    site_id_match = re.search(r'<div\s+class=["\']el_Main["\']\s+id=["\']bx_[^"\']+_(\d+)', source, re.I)
+    dom=soup(source);own=dom.select_one('.el_Main[id]')
+    site_id_match = re.search(r'^bx_.+_(\d+)$',own.get('id','')) if own else None
     site_id = site_id_match.group(1) if site_id_match else None
     identity = model or name
     price = _price(source, identity, url)
-    availability = "InStock" if re.search(r'itemprop=["\']availability["\'][^>]+InStock', source, re.I) else None
+    availability = schema_availability(own) if own else None
     category, category_url = breadcrumb_category(source, url)
     return ReadOnlySupplierProduct(
         supplier="intervesp", source_url=url, name=name, supplier_model=model,

@@ -164,8 +164,11 @@ class KamiAdapter:
         price_raw = _text(current) or _text(cost)
         price = _rub(current)
         request = bool(re.search(r'цен[ауы]\s+по\s+запросу|запросить\s+цену|узнать\s+цену', price_raw, re.I))
-        price_state = 'price_on_request' if request else ('numeric_public' if price is not None else 'missing')
+        price_state = 'price_on_request' if request else ('zero_invalid' if price==0 else 'numeric_public' if price is not None else 'missing')
         price_basis = 'from_price' if re.match(r'^от\b', price_raw, re.I) else 'exact_price'
+        from universal_supplier.price_semantics import price_type_proof
+        type_proof=price_type_proof(_text(cost),source_path='.productCost__price',
+            declared=cost.get('data-price-type') if cost else None)
         old = grid.select_one('.productCost__price_old [data-currency="rub"]')
         availability_raw = _text(grid.select_one('.productCost__status'))
         category_node = grid.select_one('.productGrid__type a[href]')
@@ -196,7 +199,7 @@ class KamiAdapter:
                'full_model': model, 'variant_evidence': variants, 'comparison_matrix': matrix,
                'property_evidence': property_evidence,
                'identity_status': 'SOURCE_MODEL_OBSERVED' if model else 'REVIEW_VARIANT_OR_MODEL_IDENTITY',
-               'price_state': price_state, 'price_basis': price_basis, 'old_price_raw': _text(old),
+               'price_state': price_state, 'price_basis': price_basis, 'old_price_raw': _text(old),'price_type_evidence':type_proof,
                'lazy_content_sections': lazy, 'description_state': 'UNKNOWN' if 'detail' in lazy else ('OBSERVED' if description else 'NOT_FOUND'),
                'documents_state': 'OBSERVED' if document_urls else ('UNKNOWN' if lazy else 'NOT_FOUND'),
                'documents_provenance': 'own_productTabs_anchor_urls_only_not_download_verified',
@@ -204,8 +207,10 @@ class KamiAdapter:
                'canonical_assignment': None, 'quantity_state': 'NOT_FOUND'}
         return ProductCard(self.code, external, codes[0] if len(codes) == 1 else '', name,
                            fetch.requested_url, fetch.final_url, url, 200, fetch.redirects,
-                           None if request else price, _rub(old), 'RUB' if price is not None else '',
+                           price if price_state=='numeric_public' else None,
+                           _rub(old) if price_state=='numeric_public' and _rub(old) is not None and _rub(old)>0 else None,
+                           'RUB' if price_state=='numeric_public' else '',
                            availability_raw, _availability(availability_raw), None, description,
                            str(detail) if description else '', brand=brand, properties=tuple(properties),
                            media=tuple(media), categories=categories, raw_data=raw,
-                           price_type='unknown', price_raw=price_raw, price_source='.productCost__price [data-currency=rub]')
+                           price_type=type_proof['classification'] if price_state=='numeric_public' else 'unknown', price_raw=price_raw, price_source='.productCost__price [data-currency=rub]')

@@ -19,6 +19,10 @@ class SourceBackend:
         self.repo=PostgresRepository(config);self.config=config;self.code=code;self.run_id=None;self.summary={};self.started=time.monotonic()
     def start(self,job,mode):
         self.is_batch = bool(job.settings_snapshot.get('source_batch'))
+        self.commercial_only=bool(job.settings_snapshot.get('automation',{}).get('purpose')=='confirmed-commercial-refresh/v1')
+        if self.commercial_only:
+            from .automation_execution import validate_job
+            validate_job(job.settings_snapshot)
         value=job.settings_snapshot.get('source_input')
         if mode=='RESUME' and (job.settings_snapshot.get('crawl_settings') or {}).get('source_canary'):
             from .source_runtime import read_input
@@ -34,9 +38,18 @@ class SourceBackend:
             if q.rowcount!=1:raise RuntimeError('SOURCE_QUEUE_OWNER_LOST')
         return self.run_id
     def persist(self,product,capture):
-        if self.code in ('partner_st','optimum'):return self.persist_native(product,capture)
+        commercial_only=getattr(self,'commercial_only',False)
+        if self.code in ('partner_st','optimum') and not commercial_only:return self.persist_native(product,capture)
         if self.run_id is None:raise RuntimeError('SOURCE_RUN_NOT_STARTED')
         try:
+            if commercial_only:
+                from universal_supplier.commercial_persistence import native_observation,product_card_from_snapshot,observation_from_snapshot
+                if self.code in ('partner_st','optimum'):card,observation=product,native_observation(product,capture)
+                elif self.code=='kami':
+                    from universal_supplier.kami_persistence import prepare_observation
+                    card,observation=prepare_observation(product,capture)
+                else:card,observation=product_card_from_snapshot(product,capture),observation_from_snapshot(product,capture)
+                return self.repo._persist_passive_observation(card,observation,capture,source_run_id=self.run_id,commercial_only=True)
             if self.code=='kami':return self.repo.persist_kami_observation(product,capture,source_run_id=self.run_id)
             return self.repo.persist_commercial_observation(product,capture,source_run_id=self.run_id)
         except RuntimeError as error:
@@ -49,7 +62,8 @@ class SourceBackend:
                 raise RuntimeError('SEMANTIC_REJECTION_ROLLBACK_NOT_PROVEN') from error
             from dataclasses import asdict
             fields=asdict(capture);fields['observed_at']=capture.observed_at.isoformat()
-            receipt={'capture_fingerprint':capture.fingerprint,'original_capture_metadata':fields,'external_id':product.external_id}
+            external=getattr(product,'external_id',None) or getattr(product,'supplier_external_id',None) or getattr(product,'site_internal_id',None)
+            receipt={'capture_fingerprint':capture.fingerprint,'original_capture_metadata':fields,'external_id':external}
             if self.probe({'url':capture.requested_url},receipt)!='NOT_FOUND':
                 raise RuntimeError('SEMANTIC_REJECTION_SQL_NOT_PROVEN') from error
             with self.repo.connection.cursor() as q:
@@ -57,7 +71,7 @@ class SourceBackend:
                     FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
                     JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id
                     WHERE s.code=%s AND sp.external_id=%s AND sp.external_id_is_stable''',
-                    (self.code,product.external_id))
+                    (self.code,external))
                 mappings=q.fetchall()
             if len(mappings)!=1 or not all(x is not None for x in mappings[0]):
                 raise RuntimeError('SEMANTIC_REJECTION_MAPPING_NOT_PROVEN') from error
@@ -91,16 +105,16 @@ class SourceBackend:
                        capture.observed_at,capture.fingerprint,capture.response_sha256,capture.evidence_sha256,capture.evidence_ref,
                        Jsonb(list(capture.redirects)),Jsonb({'runtime':'native-checkpoint/v1','codes':capture.diagnostics})))
             capture_id=q.fetchone()[0]
-            payload=card.as_jsonable();extraction=hashlib.sha256(json.dumps(payload,sort_keys=True,default=str).encode()).hexdigest()
-            currency=card.currency if card.currency and len(card.currency)==3 and card.currency.isascii() and card.currency.isalpha() and card.currency.isupper() else None
-            numeric=card.price is not None and card.price>0 and currency is not None
-            price_state='numeric_public' if numeric else 'zero_invalid' if card.price==0 else 'parse_error' if card.price is not None else 'missing'
+            from universal_supplier.commercial_persistence import native_observation
+            observation=native_observation(card,capture)
             q.execute('''INSERT INTO offer_commercial_observations(supplier_id,source_product_id,offer_id,capture_id,observed_at,
-                         extraction_fingerprint,price_state,price,old_price,currency,availability_raw,availability_normalized,extraction_evidence)
-                         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
-                      (supplier_id,product_id,offer_id,capture_id,capture.observed_at,extraction,price_state,card.price if numeric else None,
-                       card.old_price if numeric and card.old_price is not None and card.old_price>0 else None,
-                       currency,card.availability_raw,card.availability_normalized,Jsonb({'parser':self.code,'evidence_sha256':capture.evidence_sha256})))
+                         extraction_fingerprint,price_state,price,old_price,currency,availability_raw,availability_normalized,
+                         price_type,price_raw,price_source,extraction_evidence)
+                         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                      (supplier_id,product_id,offer_id,capture_id,capture.observed_at,
+                       observation.extraction_fingerprint,observation.price_state.value,observation.price,observation.old_price,
+                       observation.currency,observation.availability_raw,observation.availability_normalized,
+                       observation.price_type,observation.price_raw,observation.price_source,Jsonb(observation.extraction_evidence)))
         return {'ingest_counts':counts}
     def probe(self,entry,receipt):
         if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')=='operator_scope':
@@ -156,7 +170,7 @@ class SourceBackend:
         from .adapter_registry import _finish_metadata
         # Actual material history of this run; read only. Never infer separate
         # price/stock changes from changed_offers (which also includes quantity).
-        if getattr(self, 'is_batch', False):
+        if getattr(self, 'is_batch', False) or getattr(self,'commercial_only',False):
             with self.repo.connection.cursor() as q:
                 q.execute('''SELECT old_value,new_value FROM entity_change_history
                     WHERE crawl_run_id=%s AND field_group='commercial' ORDER BY id''', (self.run_id,))
