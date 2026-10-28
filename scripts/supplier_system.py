@@ -14,14 +14,21 @@ def main(argv=None):
     p.add_argument('--limits',type=Path);p.add_argument('--not-before');p.add_argument('--execution-until')
     p.add_argument('--confirmed-commercial-targets',type=Path)
     p.add_argument('--continue-approval',type=Path);p.add_argument('--previous-sha256')
+    p.add_argument('--reuse-receipts',action='store_true',help='SELECT-only successor for a partially executed commercial grant; never replay COMMITTED/quarantine')
     p.add_argument('--output',type=Path);p.add_argument('--session',type=Path)
     p.add_argument('--resume-safe',action='store_true',help='explicit native safe resume within the SAME approved window; never UNKNOWN')
     args=p.parse_args(argv)
     cfg=runtime_config() if args.action!='stop' else None
     if args.action=='prepare':
-        if not all((args.limits or args.confirmed_commercial_targets,args.not_before,args.execution_until,args.output)):p.error('prepare requires limits or commercial targets, window/output')
+        if args.reuse_receipts:
+            if not all((args.continue_approval,args.previous_sha256,args.output)):p.error('receipt reuse requires previous approval/SHA and new output')
+            if any((args.limits,args.confirmed_commercial_targets,args.not_before,args.execution_until)):p.error('receipt reuse retains original scope/window; no replacements')
+        elif not all((args.limits or args.confirmed_commercial_targets,args.not_before,args.execution_until,args.output)):p.error('prepare requires limits or commercial targets, window/output')
         if args.output.exists():raise FileExistsError('APPROVAL_OUTPUT_ALREADY_EXISTS')
-        if args.confirmed_commercial_targets:
+        if args.reuse_receipts:
+            from universal_supplier.control_plane.commercial_continuation import prepare_receipts
+            value=prepare_receipts(cfg,args.continue_approval,args.previous_sha256)
+        elif args.confirmed_commercial_targets:
             from universal_supplier.control_plane.commercial_refresh import prepare
             value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until)
             if args.continue_approval:
@@ -47,9 +54,9 @@ def main(argv=None):
                     FROM crawl_jobs WHERE settings_snapshot->'source_batch'->>'id'=%s
                     ORDER BY supplier_id,settings_snapshot->'source_batch'->>'phase',id DESC''',(value['protected_live11_batch_id'],)).fetchall()
             from universal_supplier.control_plane.commercial_refresh import is_refresh,scope_rows
-            if is_refresh(value):scope_rows(cfg,[e for r in value['suppliers'].values() for e in r['targets']])
-            from universal_supplier.control_plane.commercial_continuation import validate_live
+            from universal_supplier.control_plane.commercial_continuation import validate_live,quarantine_ids
             validate_live(cfg,value)
+            if is_refresh(value):scope_rows(cfg,[e for r in value['suppliers'].values() for e in r['targets']],accounted_quarantine=quarantine_ids(value))
             print(json.dumps({'head':value['head'],'sources':len(value['suppliers']),'active_jobs':active,
                 'window_end':value['execution_until'],'live_blocked':None if len(phases)==22 and all(r[0]=='succeeded' for r in phases)
                     or is_refresh(value) else 'AUTOMATION_LIVE11_UNFINISHED_REQUIRES_SEPARATE_RECOVERY','HTTP':0,'enqueue':0,'matching':0,

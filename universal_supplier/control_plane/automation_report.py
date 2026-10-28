@@ -16,9 +16,11 @@ def collect(session,*,previous=None,worker='RUNNING',blocked=None):
         options='-c default_transaction_read_only=on -c statement_timeout=120000') as c:
         from .source_canary import validate_connection
         validate_connection(c);session.check_mappings(c)
+        proof=session.value.get('continuation') or {}
+        prior_ids=[j['job_id'] for j in proof.get('jobs',[]) if proof.get('kind')=='commercial-receipt-continuation/v1']
         jobs=c.execute('''SELECT j.id,s.code,j.status,j.crawl_run_id,j.settings_snapshot,r.metadata,j.error_message
             FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
-            WHERE j.settings_snapshot->'automation'->>'approval_sha256'=%s ORDER BY j.id''',(session.sha,)).fetchall()
+            WHERE j.settings_snapshot->'automation'->>'approval_sha256'=%s OR j.id=ANY(%s) ORDER BY j.id''',(session.sha,prior_ids)).fetchall()
         active=c.execute("SELECT id,status FROM crawl_jobs WHERE status IN ('queued','running') ORDER BY id").fetchall()
         for jid,code,state,run,snapshot,metadata,error in jobs:
             phase=snapshot['automation']['phase'];current[(code,phase)]=(jid,state,error)
@@ -31,7 +33,7 @@ def collect(session,*,previous=None,worker='RUNNING',blocked=None):
         c.execute('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
         session.check_mappings(c)
         for code in session.value['suppliers']:
-            receipts={};proven=set();quarantine=errors=cached=remaining=0;requests=0
+            receipts={};proven=set();quarantine=errors=cached=remaining=0;requests=reused_requests=0
             for (source,phase,owner),cp in copies.items():
                 if source!=code or cp is None:continue
                 for item in cp['terminal'].values():
@@ -43,7 +45,10 @@ def collect(session,*,previous=None,worker='RUNNING',blocked=None):
                         if receipt.get('matching_receipt',{}).get('status')=='succeeded':proven.add(receipt['external_id'])
                 remaining+=len(cp['frontier'])+len(cp['inflight'])
             for jid,source,state,run,snap,meta,error in jobs:
-                if source==code:requests+=((meta or {}).get('source_runtime') or {}).get('request_metrics',{}).get('requests_total',0)
+                if source==code:
+                    count=((meta or {}).get('source_runtime') or {}).get('request_metrics',{}).get('requests_total',0)
+                    requests+=count
+                    if jid in prior_ids:reused_requests+=count
             saved=c.execute('''SELECT cap.capture_fingerprint,cap.source_product_id,sp.external_id FROM supplier_http_captures cap
                 JOIN source_products sp ON sp.id=cap.source_product_id JOIN suppliers s ON s.id=cap.supplier_id
                 JOIN offer_commercial_observations obs ON obs.capture_id=cap.id AND obs.source_product_id=cap.source_product_id
@@ -65,6 +70,8 @@ def collect(session,*,previous=None,worker='RUNNING',blocked=None):
                 **{k:buckets.get(k,0) for k in ('AUTO','REVIEW','CONFLICT','NEW')},
                 'matching_pending':len(ids-known),'quarantine':quarantine,'errors':errors,
                 'cached_pending':cached,'remaining_urls':remaining,'HTTP':requests,'urls_per_hour':speed,
+                'HTTP_reused':reused_requests,'HTTP_this_execution':requests-reused_requests,
+                'reused_job_ids':[j['job_id'] for j in proof.get('jobs',[]) if j['job_id'] in prior_ids and j['source']==code],
                 'eta_hours_estimate':remaining/speed if speed else None,
                 'phases':{p:current.get((code,p)) for p in ('REFRESH','DISCOVERY')}})
         c.execute('ROLLBACK')

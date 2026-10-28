@@ -36,24 +36,33 @@ def validate(value):
     require(hashlib.sha256(matrix.read_bytes()).hexdigest()==value['matrix_sha256'],'COMMERCIAL_REFRESH_MATRIX_CHANGED')
     if value.get('continuation'):
         p=value['continuation']
-        require(p.get('kind')=='commercial-not-requested-continuation/v1' and p.get('scope_count')==1270 and
-            p.get('committed')==p.get('product_dispatches')==p.get('product_inflight')==0 and
+        from .commercial_continuation import RECEIPT_KIND
+        if p.get('kind')==RECEIPT_KIND:
+            require(p.get('committed',0)+p.get('quarantined',0)+p.get('not_requested',0)==1270 and
+                all(j['disposition'] in ('REUSE_TERMINAL','NOT_REQUESTED') for j in p['jobs']),
+                'CONTINUATION_RECEIPT_ACCOUNTING_CHANGED')
+        else:
+            require(p.get('kind')=='commercial-not-requested-continuation/v1' and
+                p.get('committed')==p.get('product_dispatches')==p.get('product_inflight')==0,
+                'CONTINUATION_SCOPE_OR_PROOF_CHANGED')
+        require(p.get('scope_count')==1270 and
             p.get('previous_scope_sha256')==value['scope_sha256'] and p.get('target')==value['target'] and
             p.get('not_before')==value['not_before'] and p.get('execution_until')==value['execution_until'],
             'CONTINUATION_SCOPE_OR_PROOF_CHANGED')
 
 
-def scope_rows(config,targets):
+def scope_rows(config,targets,*,accounted_quarantine=()):
     from universal_supplier.preview_store import load
     from .runtime_config import guarded_connect
     state=load(config,connection_factory=guarded_connect)
     ids={e['source_product_id'] for e in targets}
     actual=[r for r in state['records'] if r['source_product_id'] in ids]
     require(len(actual)==len(targets),'COMMERCIAL_REFRESH_SCOPE_ROWS_CHANGED')
-    keys=('supplier_id','supplier_code','source_product_id','external_id','source_url','offer_id','confirmed_sterbrust_id')
+    keys=('supplier_id','supplier_code','source_product_id','external_id','source_url','offer_id','confirmed_sterbrust_id','catalog_product_id')
     require(sorted(({k:r[k] for k in keys} for r in actual),key=lambda r:r['source_product_id'])==
         sorted(({k:r[k] for k in keys} for r in targets),key=lambda r:r['source_product_id']), 'COMMERCIAL_REFRESH_TARGETS_CHANGED')
-    require(all(r['identity_confirmed'] and not r['blocking_quarantine'] and r['active'] for r in actual),
+    require(all(r['identity_confirmed'] and (not r['blocking_quarantine'] or r['source_product_id'] in accounted_quarantine)
+        and r['active'] for r in actual),
         'COMMERCIAL_REFRESH_IDENTITY_OR_QUARANTINE_CHANGED')
     return state,actual
 
@@ -112,6 +121,8 @@ def prepare(config,path,not_before,execution_until):
 def authorize_card(card,capture):
     from .automation_execution import require_active
     session=require_active();require(is_refresh(session.value),'COMMERCIAL_REFRESH_APPROVAL_REQUIRED')
+    from .commercial_continuation import reused_sources
+    require(card.supplier_code not in reused_sources(session.value),'CONTINUATION_ACCOUNTED_SOURCE_CANNOT_RUN')
     targets=session.value['suppliers'][card.supplier_code]['targets']
     found=[e for e in targets if e['external_id']==card.external_id and e['source_url']==capture.requested_url]
     require(len(found)==1 and card.canonical_url==capture.final_url==capture.requested_url,
@@ -120,6 +131,8 @@ def authorize_card(card,capture):
 
 
 def validate_snapshot(snapshot,session):
+    from .commercial_continuation import reused_sources
+    require(snapshot['supplier_code'] not in reused_sources(session.value),'CONTINUATION_ACCOUNTED_SOURCE_CANNOT_RUN')
     marker=snapshot['automation'];rule=session.value['suppliers'][snapshot['supplier_code']]
     require(marker.get('purpose')==PURPOSE and marker['phase']=='REFRESH','COMMERCIAL_REFRESH_JOB_PURPOSE_CHANGED')
     expected=[{'source_product_id':r['source_product_id'],'source_external_id':r['external_id'],'url':r['source_url']} for r in rule['targets']]
@@ -133,6 +146,8 @@ def preview(config,supplier_id,supplier):
     from .automation_execution import require_active
     from .source_canary import build_preview
     session=require_active();rule=session.value['suppliers'][supplier[0]]
+    from .commercial_continuation import reused_sources
+    require(supplier[0] not in reused_sources(session.value),'CONTINUATION_ACCOUNTED_SOURCE_CANNOT_RUN')
     rows=[(e['source_product_id'],e['external_id'],e['source_url'],len(rule['targets'])) for e in rule['targets']]
     require(rows and supplier_id==rule['supplier_id'],'COMMERCIAL_REFRESH_EMPTY_OR_WRONG_SUPPLIER')
     return build_preview(supplier_id,supplier,rows,config,len(rows),'REFRESH')
@@ -144,9 +159,11 @@ def settings(session,connection):
     from psycopg.types.json import Jsonb
     from .source_recovery import normal
     from .source_canary import validate_connection
-    validate_connection(connection);scope_rows(session.config,[e for r in session.value['suppliers'].values() for e in r['targets']])
-    from .commercial_continuation import validate_live
+    validate_connection(connection)
+    from .commercial_continuation import validate_live,reused_sources,quarantine_ids
     validate_live(session.config,session.value)
+    scope_rows(session.config,[e for r in session.value['suppliers'].values() for e in r['targets']],
+        **({'accounted_quarantine':quarantine_ids(session.value)} if session.value.get('continuation',{}).get('kind')=='commercial-receipt-continuation/v1' else {}))
     def check_protected():
         old=session.value['protected_jobs']
         rows=connection.execute('SELECT id,md5(row_to_json(j)::text) FROM crawl_jobs j WHERE id=ANY(%s) ORDER BY id',([r[0] for r in old],)).fetchall()
@@ -156,7 +173,7 @@ def settings(session,connection):
     try:
         with connection.transaction():
             for code,r in session.value['suppliers'].items():
-                if not r['targets']:continue
+                if not r['targets'] or code in reused_sources(session.value):continue
                 before=r['settings_before'];after=r['settings_after']
                 row=connection.execute('SELECT enabled,rate_settings,crawl_settings FROM suppliers WHERE id=%s FOR UPDATE',(r['supplier_id'],)).fetchone()
                 require(list(row)==[before[k] for k in ('enabled','rate_settings','crawl_settings')],'COMMERCIAL_REFRESH_SOURCE_SETTINGS_CHANGED')
@@ -190,8 +207,9 @@ def tick(scheduler,now):
     """A single occurrence, native safe RESUME only; no recurring calendar slots."""
     session=scheduler.automation;session.check();scheduler.blocked={};scheduler.refresh_finished=False
     enqueued=[];done=0
+    from .commercial_continuation import reused_sources
     for code,r in session.value['suppliers'].items():
-        if not r['targets']:done+=1;continue
+        if not r['targets'] or code in reused_sources(session.value):done+=1;continue
         paused=session.source_reason(code) if hasattr(session,'source_reason') else None
         if paused:scheduler.blocked[code]=paused;continue
         with scheduler._connect() as c,c.cursor() as q:
