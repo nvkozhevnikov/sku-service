@@ -131,8 +131,8 @@ class PostgresControlPlaneStore:
     def dashboard(self) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("""SELECT s.id,s.code,s.name,s.enabled,s.base_url,s.rate_settings,s.crawl_settings,
-                       count(DISTINCT sp.id) AS products,
-                       count(DISTINCT ce.id) FILTER (WHERE ce.created_at>now()-interval '30 days') AS errors_30d,
+                       product_counts.n AS products,
+                       error_counts.n AS errors_30d,
                        last_run.id AS last_run_id,last_run.status AS last_status,last_run.started_at AS last_crawl,
                        last_run.metadata AS last_run_metadata,
                        last_run.discovered_count AS last_discovered_count,last_run.new_count AS last_new_count,
@@ -145,12 +145,11 @@ class PostgresControlPlaneStore:
                        (SELECT max(finished_at) FROM crawl_runs WHERE supplier_id=s.id AND status='succeeded') AS last_successful_crawl,
                        ss.enabled AS schedule_enabled,ss.cron_expression,ss.timezone
                 FROM suppliers s
-                LEFT JOIN source_products sp ON sp.supplier_id=s.id AND sp.active
-                LEFT JOIN crawl_errors ce ON ce.supplier_id=s.id
+                LEFT JOIN LATERAL (SELECT count(*) AS n FROM source_products WHERE supplier_id=s.id AND active) product_counts ON true
+                LEFT JOIN LATERAL (SELECT count(*) AS n FROM crawl_errors WHERE supplier_id=s.id AND created_at>now()-interval '30 days') error_counts ON true
                 LEFT JOIN LATERAL (SELECT id,status,started_at,finished_at,discovered_count,new_count,changed_count,error_count,metadata FROM crawl_runs WHERE supplier_id=s.id ORDER BY started_at DESC LIMIT 1) last_run ON true
                 LEFT JOIN LATERAL (SELECT id,status,error_message,crawl_run_id,created_at FROM crawl_jobs WHERE supplier_id=s.id ORDER BY id DESC LIMIT 1) active ON true
                 LEFT JOIN supplier_schedules ss ON ss.supplier_id=s.id
-                GROUP BY s.id,last_run.id,last_run.status,last_run.started_at,last_run.finished_at,last_run.discovered_count,last_run.new_count,last_run.changed_count,last_run.error_count,last_run.metadata,active.status,active.id,active.error_message,active.crawl_run_id,active.created_at,ss.enabled,ss.cron_expression,ss.timezone
                 ORDER BY s.name,s.id""")
             rows = list(cursor.fetchall())
         for row in rows:

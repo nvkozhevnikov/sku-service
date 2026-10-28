@@ -2,6 +2,7 @@
 from datetime import datetime,timedelta,timezone
 from collections import Counter,defaultdict
 from pathlib import Path
+from urllib.parse import urlsplit
 from threading import Lock
 import json,time,math
 from zoneinfo import ZoneInfo
@@ -46,13 +47,13 @@ class MonitoringRepository:
                       'item_metadata',v.payload->'item_metadata','content_kind',v.payload->'content_kind','campaign_coverage',v.payload->'campaign_coverage') payload
                       FROM competitor_page_versions v JOIN competitor_pages p ON p.id=v.page_id
                       JOIN competitor_page_versions cv ON cv.page_id=p.id AND cv.content_hash=p.current_content_hash
-                      WHERE v.qa_status='ACCEPTED' AND v.extractor_version=cv.extractor_version ORDER BY v.id LIMIT 1001''',cap=1000)
+                      WHERE v.qa_status='ACCEPTED' AND v.extractor_version=cv.extractor_version ORDER BY v.id LIMIT 10001''',cap=10000)
                     ids=[v['id'] for v in versions]
                     items=rows('''SELECT id,page_version_id,product_name,product_url,brand,model,category,old_price,new_price,currency,
                       price_type,price_label_raw,availability,region,priority,campaign_name,tab_title FROM competitor_campaign_items
-                      WHERE page_version_id=ANY(%s) ORDER BY id LIMIT 25001''',(ids,),cap=25000)
+                      WHERE page_version_id=ANY(%s) ORDER BY id LIMIT 200001''',(ids,),cap=200000)
                     observations=rows('''SELECT id,page_id,page_version_id,observed_at,transport FROM competitor_observations
-                      WHERE page_version_id=ANY(%s) ORDER BY id LIMIT 5001''',(ids,),cap=5000)
+                      WHERE page_version_id=ANY(%s) ORDER BY id LIMIT 50001''',(ids,),cap=50000)
                     surfaces=rows('''SELECT source_id,canonical_url,status,fetch_status,reason,observed_at,robots_disallowed,
                       details->'operator_capture' operator_capture,details->'automated_access_evidence' automated_access_evidence
                       FROM competitor_source_surfaces WHERE status IN ('ERROR','OPERATOR_CAPTURED') ORDER BY id LIMIT 501''',cap=500)
@@ -62,7 +63,7 @@ class MonitoringRepository:
                       FROM competitor_operator_captures ORDER BY source_id,canonical_url,capture_time DESC LIMIT 501''',cap=500) if c.fetchone()['name'] else []
                     # Aggregate lookup count only; never read historical seed payload.
                     seeds=rows('SELECT source_id,count(*) n FROM competitor_historical_seeds GROUP BY source_id',cap=30)
-                    runs=rows("SELECT id,jsonb_build_object('coverage',result->'coverage') result FROM competitor_runs WHERE result ? 'coverage' ORDER BY id DESC LIMIT 101",cap=100)
+                    runs=rows("SELECT id,jsonb_build_object('coverage',result->'coverage','sources',result->'sources') result FROM competitor_runs ORDER BY id DESC LIMIT 1001",cap=1000)
                 return {'competitor_sources':sources,'competitor_pages':pages,'competitor_page_versions':versions,'competitor_campaign_items':items,'competitor_observations':observations,'competitor_source_surfaces':surfaces,'competitor_operator_captures':captures,'competitor_ai_analysis':[],'competitor_runs':runs,'seed_counts':{r['source_id']:r['n'] for r in seeds}}
             finally:store.close()
         except Exception as error:raise MonitoringUnavailable('COMPETITOR_DATABASE_UNAVAILABLE') from error
@@ -91,10 +92,20 @@ def state_facts(state,now):
                 body=snapshot.get('text','')
                 item=content_by_url.get(snapshot['entity']) or {'source':snapshot['source'],'title':snapshot['title'],'url':safe_url(snapshot['entity']),
                     'published_at':snapshot.get('published_at'),'excerpt':' '.join(body.split())[:360],'observed_at':snapshot['observed_at'],'source_content_type':snapshot.get('content_kind') or snapshot['page_type']}
-                (all_news if snapshot['page_type']=='NEWS' else all_blog).append({**item,'search_text':body})
+                # Stored legacy NEWS also includes explicit article/blog routes.
+                # Use the published route only when this source supports blog content;
+                # this projection never changes persisted facts or detector history.
+                article_route=bool({'blog','articles'} & set(urlsplit(snapshot['entity']).path.lower().split('/')))
+                is_article=snapshot.get('content_kind') in ('BLOG','ARTICLE') or article_route and bool({'BLOG','ARTICLES'} & set(s.get('capabilities',[])))
+                (all_news if snapshot['page_type']=='NEWS' and not is_article else all_blog).append({**item,'search_text':body})
             s['comparable']=f['summary']['comparable_entities']>0
         except Exception:
             s={**src,'pages':0,'products':None,'latest_observed_at':None,'comparable':False,'promotions':0};problems[src['code']]='Данные источника требуют проверки';s['data_error']=True
+        for run in sorted((row for row in state.get('competitor_runs',[]) if isinstance(row.get('id'),int)),key=lambda row:row['id'],reverse=True):
+            outcomes=(run.get('result') or {}).get('sources')
+            if isinstance(outcomes,dict) and isinstance(outcomes.get(src['code']),dict):
+                s['last_collection_run']=run['id'];s['last_collection_outcome']=outcomes[src['code']]
+                break
         s['mode']='MANUAL' if src['code']=='youmet' else 'AUTO'
         s['issues']=[r for r in subset['competitor_source_surfaces'] if r['status']=='ERROR']
         for r in subset['competitor_source_surfaces']:

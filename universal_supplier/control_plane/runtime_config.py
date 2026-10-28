@@ -1,4 +1,4 @@
-"""Explicit shared test-runtime credential; no inheritance from legacy serving DB."""
+"""Explicit permanent main-runtime credential; no legacy database fallback."""
 import json,os
 from pathlib import Path
 from universal_supplier.postgres import PostgresConfig
@@ -7,7 +7,7 @@ from universal_supplier.postgres import PostgresConfig
 def runtime_config(path=None):
     root=Path(__file__).resolve().parents[2]
     path=Path(path or os.environ.get('STERBRUST_RUNTIME_CREDENTIALS') or
-        root.parent/'sku-service-unified-rc-20261019/reports/integration/private-live11-runtime.json')
+        root/'reports/integration/private-main-supplier-runtime.json')
     value=json.loads(path.read_text(encoding='utf-8'))
     if (value.get('host'),value.get('port'),value.get('database'),value.get('role'))!=('127.0.0.1',55461,'rc_verify_vi_20261019','rc_runtime'):
         raise PermissionError('AUTOMATION_RUNTIME_CREDENTIAL_TARGET_MISMATCH')

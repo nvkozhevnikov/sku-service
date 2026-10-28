@@ -58,6 +58,13 @@ def atomic_json(path,value):
             if os.name!='nt' or attempt==19:raise
             time.sleep(.025)  # Windows readers may briefly deny delete sharing.
 
+def stop_requested(runtime,result):
+    """A STOP belongs to exactly this run/process, never a future scheduled run."""
+    path=Path(runtime)/'stop-request.json'
+    if not path.exists():return False
+    value=json.loads(path.read_text(encoding='utf-8'))
+    return value.get('run_id')==result.get('run_id') and value.get('worker_identity')==result.get('worker_identity')
+
 def run_competitor_collection(repository,collector,rebuild,*,origin,config,runtime,selected_sources=None,max_pages=None,clock=time.monotonic,request_id=None):
     """Dependency-injected only for QA; normal entry points supply the same adapters."""
     if origin not in ORIGINS:raise ValueError('Invalid origin')
@@ -89,7 +96,12 @@ def run_competitor_collection(repository,collector,rebuild,*,origin,config,runti
                 if request_id:update_dispatch(runtime,request_id,result)
                 enabled=repository.enabled_sources()
                 repository.collection_options=config.get('targets',{})
-                for source in selected:
+                for index,source in enumerate(selected):
+                    if stop_requested(runtime,result):
+                        result['operator_stop_requested']=True
+                        result['errors'].append({'phase':'operator','reason':'OPERATOR_STOP'})
+                        for pending in selected[index:]:result['sources'][pending]={'status':'SKIPPED_OPERATOR_STOP','reason':'OPERATOR_STOP'}
+                        break
                     if source not in enabled:result['sources'][source]={'status':'SKIPPED_DISABLED'};continue
                     if clock()>=deadline:
                         result['sources'][source]={'status':'FAILED','reason':'MAX_RUNTIME'};result['errors'].append({'source':source,'reason':'MAX_RUNTIME'});continue
@@ -107,7 +119,7 @@ def run_competitor_collection(repository,collector,rebuild,*,origin,config,runti
                 result['report']=rebuild(repository,runtime/'business-report',config)
                 statuses=[v['status'] for v in result['sources'].values()]
                 preserved=any(v['status']=='COMPLETED' or v.get('stored',0)>0 for v in result['sources'].values())
-                result['status']='PARTIAL' if result['errors'] and preserved else 'FAILED' if result['errors'] else 'COMPLETED'
+                result['status']='PARTIAL' if result.get('operator_stop_requested') or result['errors'] and preserved else 'FAILED' if result['errors'] else 'COMPLETED'
             except Exception as error:
                 result['status']='FAILED';result['errors'].append({'phase':'execution/report','reason':type(error).__name__})
             finally:
@@ -156,6 +168,14 @@ class CollectionService:
         active=dispatch if dispatch and not dispatch.get('run_id') else last
         health='ORPHANED' if active and active.get('status')=='RUNNING' and not running and worker_state in ('GONE','PID_REUSED') else 'UNKNOWN' if active and active.get('status')=='RUNNING' and (not running or worker_state!='ALIVE') else 'RUNNING' if running else 'TERMINAL'
         return {'config':cfg,'last':last,'running':running,**history,'active':active,'worker_liveness':worker_state,'run_health':health,'dispatch':dispatch,'next_run_at':None,'installed':False}
+    def request_stop(self):
+        view=self.view();last=view.get('last') or {}
+        if not view['running'] or view['run_health']!='RUNNING' or last.get('status')!='RUNNING':
+            return {'status':'NO_ACTIVE_COLLECTION','collection_started':False}
+        value={'run_id':last['run_id'],'worker_identity':last['worker_identity'],'requested_at':datetime.now(timezone.utc).isoformat()}
+        atomic_json(self.runtime/'stop-request.json',value)
+        return {'status':'STOP_REQUESTED','run_id':last['run_id'],'boundary':'AFTER_CURRENT_BOUNDED_SOURCE','collection_started':False}
+
     def run(self,origin,selected_sources=None,max_pages=None,*,request_id=None):
         from .collection_adapter import Repository,collect_source,rebuild_report
         cfg=settings(self.schedule_config)

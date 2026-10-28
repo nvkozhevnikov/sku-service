@@ -1,6 +1,7 @@
-"""Existing operator UI, one login, real frozen supplier/competitor DB.
+"""Permanent main UI and independent native competitor runner.
 
-All live collection is disabled. Only explicit frozen replay can enqueue.
+Legacy frozen-dispatch helpers remain explicit; the serving path uses only
+rc_verify_vi_20261019 through separate supplier/competitor runtime credentials.
 """
 from pathlib import Path
 import json,os,sys,secrets
@@ -43,26 +44,39 @@ def initialize_local_login():
         (OUT/'private-runtime.json').write_text(json.dumps(cfg),encoding='utf-8')
 
 def build_app():
-    cfg=credentials();os.environ['SESSION_SIGNING_SECRET']=cfg['session_secret']
-    from universal_supplier.control_plane.web import create_app
-    from competitor_intel.monitoring import MonitoringService,MonitoringRepository
-    c=config('app_competitor')
-    p=OUT/('private-competitor-'+TARGET+'.json')
-    p.write_text(json.dumps({'dsn':make_conninfo(**c.kwargs())}),encoding='utf-8')
-    from universal_supplier.partner_pilot import enabled,connect_postgres
-    from universal_supplier.control_plane.queue import PostgresJobQueue
-    if enabled():
-        with connect_postgres(config(),autocommit=True):pass
-    return create_app(store=PostgresControlPlaneStore(config()) if enabled() else FrozenStore(config()),queue=PostgresJobQueue(config()) if enabled() else None,admin_store=PostgresAdminStore(config()),
-        auth_required=True,session_secret=cfg['session_secret'],
-        commercial_qa_service=DisabledCommercialQaService('Сбор отключён: используются сохранённые данные.'),
-        competitor_service=MonitoringService(MonitoringRepository(p)),
-        release_dispatch=FrozenDispatch(dispatch_connect))
+    """Main supplier app plus independent native competitor service/collector."""
+    from competitor_intel.main_runtime import configure, services, session_secret
+    configure()
+    os.environ['SESSION_SIGNING_SECRET']=session_secret()
+    from supplier_panel import build_app as supplier_app
+    monitoring, collection = services()
+    return supplier_app(competitor_service=monitoring,competitor_collection=collection)
 
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('--work-one',action='store_true');parser.add_argument('--pilot-work-one',action='store_true');args=parser.parse_args()
-    if args.pilot_work_one:
+    parser=argparse.ArgumentParser();parser.add_argument('--stop-competitors',action='store_true');parser.add_argument('--competitor-preflight',action='store_true');parser.add_argument('--collect-competitors',action='store_true');parser.add_argument('--scheduled-competitors',action='store_true');parser.add_argument('--source',choices=sorted(__import__('competitor_intel.execution',fromlist=['SOURCES']).SOURCES));parser.add_argument('--max-pages',type=int);parser.add_argument('--work-one',action='store_true');parser.add_argument('--pilot-work-one',action='store_true');args=parser.parse_args()
+    if sum((args.stop_competitors,args.competitor_preflight,args.collect_competitors,args.scheduled_competitors))>1:parser.error('Choose one competitor action')
+    if args.stop_competitors:
+        from competitor_intel.main_runtime import configure,services
+        configure();_,collection=services();print(json.dumps(collection.request_stop()))
+    elif args.competitor_preflight:
+        from competitor_intel.main_runtime import configure,services
+        configure();_,collection=services();repo=collection.repository()
+        try:
+            identity=repo.store.query("SELECT current_database() database,current_user role,inet_server_port() port,current_setting('search_path') search_path")[0]
+            print(json.dumps({'identity':identity,'enabled_sources':sorted(repo.enabled_sources()),'HTTP':0,'collection_started':False}))
+        finally:repo.close()
+    elif args.collect_competitors or args.scheduled_competitors:
+        from competitor_intel.main_runtime import configure, services
+        configure();_, collection=services()
+        try:
+            result=collection.run('SCHEDULED' if args.scheduled_competitors else 'CLI_MANUAL',[args.source] if args.source else None,args.max_pages)
+        except (ValueError,KeyError,FileNotFoundError,json.JSONDecodeError):
+            result={'status':'CONFIG_ERROR','exit_code':4,'reason':'EXECUTION_CONFIGURATION_UNAVAILABLE'}
+        except Exception:
+            result={'status':'FAILED','exit_code':2,'reason':'EXECUTION_UNAVAILABLE'}
+        print(json.dumps(result,ensure_ascii=False,default=str));raise SystemExit(result['exit_code'])
+    elif args.pilot_work_one:
         from universal_supplier.partner_pilot import enabled
         if not enabled():raise PermissionError('PILOT_MODE_REQUIRED')
         from universal_supplier.control_plane.orchestrator import Orchestrator

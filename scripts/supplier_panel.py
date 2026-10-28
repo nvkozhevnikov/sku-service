@@ -22,7 +22,7 @@ def inspect(config=None):
             ([] if users else ['PANEL_EXISTING_ADMIN_REQUIRED']),
         'HTTP_supplier':0,'enqueue':0,'schema_changes':0,'worker_started':False}
 
-def build_app():
+def build_app(*, competitor_service=None, competitor_collection=None):
     cfg=runtime_config();state=inspect(cfg)
     if state['blockers']:raise PermissionError(';'.join(state['blockers']))
     # Web process does not own execution. Only an independently approved bounded
@@ -38,7 +38,7 @@ def build_app():
     from universal_supplier.control_plane.commercial_qa import DisabledCommercialQaService
     store=PostgresControlPlaneStore(cfg,connection_factory=guarded_connect);commercial=DisabledCommercialQaService('Legacy55449 не используется writer55461')
     return create_app(store=store,admin_store=PostgresAdminStore(cfg,connection_factory=guarded_connect),queue=PostgresJobQueue(cfg,connection_factory=guarded_connect),
-        commercial_qa_service=commercial,cabinet_service=CabinetService(store,commercial),auth_required=True)
+        commercial_qa_service=commercial,cabinet_service=CabinetService(store,commercial),auth_required=True,competitor_service=competitor_service,competitor_collection=competitor_collection)
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('action',choices=('inspect','serve'));p.add_argument('--allow-loopback-http',action='store_true')

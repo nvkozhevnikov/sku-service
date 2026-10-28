@@ -41,11 +41,16 @@ class Store:
         """Explicit RC identity, schema and grants; dedicated legacy guard remains."""
         expected = {'dbname':'sterbrust_unified_rc_20261019', 'host':'127.0.0.1',
                     'port':'55461', 'user':'app_competitor'}
-        if os.environ.get('STERBRUST_UNIFIED_RC_RESTORE') == 'YES':
+        main = os.environ.get('STERBRUST_COMPETITOR_MAIN') == 'YES'
+        if main:
+            expected.update(dbname='rc_verify_vi_20261019', user='competitor_runtime')
+            if os.environ.get('STERBRUST_COMPETITOR_REHEARSAL') == 'YES':
+                expected['dbname']='ci_restore_target_20261028'
+        elif os.environ.get('STERBRUST_UNIFIED_RC_RESTORE') == 'YES':
             expected['dbname']='sterbrust_unified_restore_20261019'
         if any(cfg.get(k) != v for k,v in expected.items()):
             raise ValueError('Unified competitor identity mismatch')
-        conn = psycopg.connect(dsn, row_factory=dict_row)
+        conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5)
         try:
             with conn.cursor() as c:
                 c.execute('SELECT current_database() db,current_user role,host(inet_server_addr()) host,inet_server_port() port')
@@ -57,6 +62,16 @@ class Store:
                 c.execute("SELECT rolsuper,rolcreatedb,rolcreaterole,rolbypassrls FROM pg_roles WHERE rolname=current_user")
                 if any(c.fetchone().values()):
                     raise ValueError('Privileged competitor role forbidden')
+                if main:
+                    c.execute("SELECT system_identifier::text system FROM pg_control_system()")
+                    if c.fetchone()['system'] != '7698346631476390904':
+                        raise ValueError('Main competitor cluster identity mismatch')
+                    c.execute("SELECT 1 FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='competitor' AND t.relkind IN ('r','p') AND has_table_privilege(current_user,t.oid,'DELETE,TRUNCATE,REFERENCES,TRIGGER') LIMIT 1")
+                    if c.fetchone():
+                        raise ValueError('Destructive competitor permission forbidden')
+                    c.execute("SELECT has_schema_privilege(current_user,'competitor','CREATE') unsafe")
+                    if c.fetchone()['unsafe']:
+                        raise ValueError('Competitor runtime DDL forbidden')
                 c.execute("SELECT has_schema_privilege(current_user,'public','CREATE') unsafe")
                 if c.fetchone()['unsafe']:
                     raise ValueError('Cross-schema DDL permission forbidden')
