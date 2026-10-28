@@ -18,6 +18,17 @@ KIND='commercial-not-requested-continuation/v1'
 def file_sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def check_unstarted(folder,status,error,run_rows):
+    """No runner input/run/response: native expired-lease history is retained."""
+    require(status=='cancelled' or (status=='stale_failed' and
+        error=='ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT'),'CONTINUATION_UNSTARTED_STATE_NOT_SAFE')
+    require(not run_rows,'CONTINUATION_UNLINKED_CRAWL_RUN_EXISTS')
+    require(not any((Path(folder)/name).exists() for name in
+        ('input.json','checkpoint.json','result.json','responses','captures')),
+        'CONTINUATION_UNSTARTED_INPUT_OR_HTTP_EVIDENCE_EXISTS')
+    return {'no_started_run_input_or_response':True,'native_status_retained':status}
+
+
 def check_files(folder,code,jid,runtime,expected,previous_engine):
     folder=Path(folder);original=json.loads((folder/'input.json').read_text(encoding='utf-8'))
     cp=checkpoint(folder/'checkpoint.json');result=json.loads((folder/'result.json').read_text(encoding='utf-8'))
@@ -50,9 +61,9 @@ def proof(config,previous_path,previous_sha):
         Session(config,old,previous_sha,ROOT,approval_path=path).check_mappings(c)
         require(not c.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running')").fetchall(),'CONTINUATION_ACTIVE_JOB')
         rows=c.execute('''SELECT j.id,s.code,j.status,j.crawl_run_id,j.settings_snapshot,r.metadata
-            FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
+            ,j.error_message FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
             WHERE j.settings_snapshot->'automation'->>'approval_sha256'=%s ORDER BY j.id''',(previous_sha,)).fetchall()
-        for jid,code,status,run,snapshot,metadata in rows:
+        for jid,code,status,run,snapshot,metadata,error in rows:
             require(code in sources and code not in seen,'CONTINUATION_DUPLICATE_OR_UNKNOWN_SOURCE')
             seen.add(code);rule=old['suppliers'][code]
             expected=[{'source_product_id':e['source_product_id'],'source_external_id':e['external_id'],'url':e['source_url']} for e in rule['targets']]
@@ -60,12 +71,15 @@ def proof(config,previous_path,previous_sha):
                 'CONTINUATION_JOB_SCOPE_CHANGED')
             require(snapshot.get('automation',{}).get('phase')=='REFRESH','CONTINUATION_NON_REFRESH_JOB')
             record={'job_id':jid,'source':code,'status':status,'run_id':run,'scope_count':len(expected)}
+            folder=ROOT/'reports/source-runner-evidence'/code/('job-'+str(jid))
             if run is None:
-                require(status=='cancelled','CONTINUATION_UNSTARTED_STATE_NOT_SAFE')
+                require(snapshot['source_input'].get('engine_sha256')==old['engine'],
+                    'CONTINUATION_PREVIOUS_ENGINE_OR_INPUT_CHANGED')
+                run_rows=c.execute("SELECT id FROM crawl_runs WHERE metadata->>'job_id'=%s",(str(jid),)).fetchall()
+                record.update(check_unstarted(folder,status,error,run_rows))
             else:
                 require(status=='partial','CONTINUATION_STARTED_STATE_NOT_SAFE')
                 rt=(metadata or {}).get('source_runtime') or {}
-                folder=ROOT/'reports/source-runner-evidence'/code/('job-'+str(jid))
                 require(Path(rt['checkpoint']).resolve()==(folder/'checkpoint.json').resolve(),'CONTINUATION_CHECKPOINT_PATH_CHANGED')
                 record.update(check_files(folder,code,jid,rt,expected,old['engine']))
             jobs.append(record)

@@ -4,6 +4,7 @@ from copy import deepcopy
 import gzip,json
 import pytest
 from universal_supplier.control_plane.commercial_continuation import check_files
+from universal_supplier.control_plane.commercial_continuation import check_unstarted
 from universal_supplier.control_plane.source_resume import digest
 
 F=json.loads(gzip.decompress((Path(__file__).parent/'fixtures/commercial_network_incident_20261027.json.gz').read_bytes()))
@@ -51,3 +52,23 @@ def test_receipt_scope_or_dispatch_drift_stops_without_any_io(tmp_path,change,re
     c=saved(tmp_path,'beka_mak',change)
     with pytest.raises(PermissionError,match=reason):
         check_files(tmp_path,'beka_mak',137,c['result'],c['input']['entries'],F['previous_engine'])
+
+
+def test_native_expired_startup_without_any_runner_evidence_is_proven_unstarted(tmp_path):
+    (tmp_path/'STOP_REQUESTED').write_text('OPERATOR_STOP')
+    result=check_unstarted(tmp_path,'stale_failed','ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT',[])
+    assert result['native_status_retained']=='stale_failed' and result['no_started_run_input_or_response']
+
+
+@pytest.mark.parametrize('name',['input.json','checkpoint.json','result.json','captures','responses'])
+def test_any_runner_or_response_evidence_rejects_expired_startup_fast_path(tmp_path,name):
+    (tmp_path/name).write_text('{}')
+    with pytest.raises(PermissionError,match='INPUT_OR_HTTP_EVIDENCE'):
+        check_unstarted(tmp_path,'stale_failed','ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT',[])
+
+
+def test_unlinked_run_or_other_failure_is_never_treated_as_unstarted(tmp_path):
+    with pytest.raises(PermissionError,match='UNLINKED_CRAWL_RUN'):
+        check_unstarted(tmp_path,'cancelled','AUTOMATION_STOP',[(52,)])
+    with pytest.raises(PermissionError,match='STATE_NOT_SAFE'):
+        check_unstarted(tmp_path,'failed','UNKNOWN',[])

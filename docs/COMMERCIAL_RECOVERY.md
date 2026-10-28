@@ -173,3 +173,27 @@ Windows Task или cron нет. Существующие keep_awake, hourly JSO
 STOP самостоятельному pythonw-процессу; выключение ПК прерывает его, autorestart отсутствует.
 Точная новая команда и SHA: workspace `reports/COMMERCIAL_SOURCE_ISOLATION_20261027/`.
 До отдельного подтверждения этого допуска новый LIVE запрещён.
+
+### Worker boundary STOP — 28.10.2026
+
+Утверждённая попытка9867df4/SHA8271584f создала jobs145–152, но не создала ни одного
+crawl_run/input/response и не выполнила HTTP/ingest. Future startup failures не читались
+в Orchestrator.tick, а создание lease и cleanup находились вне обработчика runner.
+Шесть intents получили native stale_failed, два cancelled при штатномSTOP. Первичный
+текст startup exception не сохранился, поэтому DNS/TLS/SQL cause не утверждается.
+Повторные diagnostic lease/stub-runner probes прошли, первичная ошибка ими не воспроизведена.
+
+Теперь boundary failure сохраняет secret-safe WORKER_FAILURE_<job>.json и честный
+failed queue result; неожиданный Future.result() проверяется до следующего claim и
+даёт системный STOP вместо тихой потери Future. Нормальная source-local robots pause
+этот путь не использует. Offline regression покрывает lease failure, lost Future,
+redaction, отказ следующего claim и нормальный успешный task.
+
+Узкий continuation допускает native stale_failed безrun только при точном frozen
+input snapshot/engine, отсутствии любого materialized input/checkpoint/result/HTTP
+evidence и отсутствии даже unlinked crawl_run поjob_id. STOP_REQUESTED допускается;
+старый stale_failed и его UNCERTAIN history не переписываются. Любой run/input/response
+отвергает этот быстрый путь. Global captures0/mappings и прочие guards проверяются как прежде.
+Для исполнения нового backend требуется новая exactHEAD/SHA пара; повторного LIVE
+после STOP без неё нет. Actual evidence: workspace
+reports/COMMERCIAL_SOURCE_ISOLATION_20261027/EXECUTION_20261028/.

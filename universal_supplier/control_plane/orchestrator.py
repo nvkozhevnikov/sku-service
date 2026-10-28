@@ -37,6 +37,26 @@ class Orchestrator:
         return self.queue.recover_stale()
 
     def _run_job(self, job: CrawlJob) -> None:
+        try:
+            self._run_job_with_lease(job)
+        except Exception as error:
+            # Lease acquisition and cleanup used to sit outside the runner's
+            # exception boundary. A failed Future must never vanish as RUNNING.
+            from .transport_diagnostics import exception_evidence,safe_message
+            from . import automation_execution
+            import json
+            evidence={'job_id':job.id,'supplier_code':job.supplier_code,
+                      'stage':'WORKER_BOUNDARY','diagnostics':exception_evidence(error)}
+            LOGGER.error('worker boundary failed: %s',json.dumps(evidence))
+            session=automation_execution.ACTIVE
+            if session is not None:
+                from .source_hourly import atomic_text
+                session.fail('AUTOMATION_WORKER_BOUNDARY_FAILED')
+                atomic_text(session.folder/('WORKER_FAILURE_'+str(job.id)+'.json'),json.dumps(evidence))
+            self._complete(job,'failed',error_message='WORKER_BOUNDARY_FAILED:'+type(error).__name__+':'+safe_message(error))
+            raise
+
+    def _run_job_with_lease(self, job: CrawlJob) -> None:
         if not self.registry.supports(job.adapter_name, job.crawl_type):
             self.queue.complete(
                 job.id, "failed",
@@ -104,7 +124,20 @@ class Orchestrator:
     def tick(self) -> int:
         if self._last_recover is None or time.monotonic() - self._last_recover >= self.recover_interval_seconds:
             self.recover()
-        self.active = {future for future in self.active if not future.done()}
+        completed={future for future in self.active if future.done()}
+        self.active-=completed
+        for future in completed:
+            # Consume unexpected task exceptions instead of silently dropping
+            # them and claiming more jobs until their database leases expire.
+            try:future.result()
+            except Exception as error:
+                from . import automation_execution
+                from .transport_diagnostics import exception_evidence
+                import json
+                if automation_execution.ACTIVE is not None:
+                    automation_execution.ACTIVE.fail('AUTOMATION_WORKER_TASK_FAILED')
+                LOGGER.error('unexpected supplier worker task failure: %s',json.dumps(exception_evidence(error)))
+                raise
         submitted = 0
         while len(self.active) < self.max_parallel:
             job = self.queue.claim_next()
