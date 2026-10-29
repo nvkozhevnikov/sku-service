@@ -154,12 +154,68 @@ def test_new_exact_grant_cannot_silently_change_original_window_scope_or_policy(
     elif field=='targets':v['suppliers']['intervesp']['targets'].pop()
     else:v['suppliers']['intervesp']['policy']['min_request_interval_seconds']=0.01
     monkeypatch.setattr(cc,'receipt_proof',lambda *a:v['continuation'])
-    with pytest.raises(PermissionError,match='ORIGINAL_CONTRACT_CHANGED'):cc.validate_live(None,v)
+    reason='EXPLICIT_WINDOW_APPROVAL_REQUIRED' if field in ('not_before','execution_until') else 'ORIGINAL_CONTRACT_CHANGED'
+    with pytest.raises(PermissionError,match=reason):cc.validate_live(None,v)
 
 
 def test_parser_delta_needs_separate_review(monkeypatch):
     monkeypatch.setattr(cc.subprocess,'check_output',lambda *a,**k:'universal_supplier/adapters/bekamak.py\n')
     with pytest.raises(PermissionError,match='ENGINE_COMPATIBILITY'):cc.compatibility(F['old'])
+
+
+def window_value():
+    v=value();p=v['continuation']
+    v.update(not_before='2026-10-29T10:00:00Z',execution_until='2026-10-29T14:00:00Z',
+        transport_tls={'format':'public-certifi-tls/v1','verify_mode':'CERT_REQUIRED','check_hostname':True,'ca_bundle_sha256':'a'*64})
+    v['execution_reauthorization']={'format':cc.WINDOW_KIND,'original_not_before':p['not_before'],
+        'original_execution_until':p['execution_until'],'not_before':v['not_before'],
+        'execution_until':v['execution_until'],'scope_sha256':v['scope_sha256'],'requires_operator_confirmation':True}
+    return v
+
+
+def test_explicit_bounded_window_preserves_original_evidence_and_all1270_targets():
+    v=window_value();p=v['continuation'];before=deepcopy(v['suppliers'])
+    cr.validate(v);cc.validate_window(v,p['not_before'],p['execution_until'])
+    assert p['execution_until']=='2026-10-28T13:00:00Z' and v['execution_until']=='2026-10-29T14:00:00Z'
+    assert v['suppliers']==before and sum(len(r['targets']) for r in before.values())==1270
+    assert cc.reused_sources(v)=={'beka_mak','kami','ltt_msk','ltt_sib','partner_st','uss_stanko','vekprom'}
+
+
+@pytest.mark.parametrize('mutation,reason',[
+    (lambda v:v.pop('execution_reauthorization'),'EXPLICIT_WINDOW_APPROVAL'),
+    (lambda v:v['execution_reauthorization'].update(requires_operator_confirmation=False),'EXPLICIT_WINDOW_APPROVAL'),
+    (lambda v:v['execution_reauthorization'].update(original_execution_until='2026-10-29T00:00:00Z'),'EXPLICIT_WINDOW_APPROVAL'),
+    (lambda v:v.pop('transport_tls'),'VERIFIED_TLS_POLICY_REQUIRED'),
+    (lambda v:v['transport_tls'].update(check_hostname=False),'VERIFIED_TLS_POLICY_REQUIRED'),
+    (lambda v:v['transport_tls'].update(verify_mode='CERT_NONE'),'VERIFIED_TLS_POLICY_REQUIRED'),
+])
+def test_no_implicit_deadline_or_tls_guard_override(mutation,reason):
+    v=window_value();mutation(v)
+    with pytest.raises(PermissionError,match=reason):cc.validate_window(v,v['continuation']['not_before'],v['continuation']['execution_until'])
+
+
+@pytest.mark.parametrize('start,end',[
+    ('2026-10-29T10:00:00Z','2026-10-30T10:00:01Z'),
+    ('2026-10-29T10:00:00Z','2026-10-29T10:00:00Z'),
+    ('2026-10-27T10:00:00Z','2026-10-27T14:00:00Z'),
+    ('2026-10-29T10:00:00','2026-10-29T14:00:00'),
+])
+def test_invalid_new_window_stops_without_any_io(start,end):
+    v=window_value();v.update(not_before=start,execution_until=end)
+    v['execution_reauthorization'].update(not_before=start,execution_until=end)
+    with pytest.raises(PermissionError,match='NEW_WINDOW_INVALID'):cc.validate_window(v,v['continuation']['not_before'],v['continuation']['execution_until'])
+
+
+@pytest.mark.parametrize('missing_ancestor,changed_code,reason',[
+    (True,False,'PINNED_INTEGRATION_MISSING'),(False,True,'INTEGRATION_CODE_CHANGED'),(False,False,None)])
+def test_only_exact_pinned_unified_integration_is_compatible(monkeypatch,missing_ancestor,changed_code,reason):
+    name='universal_supplier/control_plane/runtime_config.py'
+    monkeypatch.setattr(cc.subprocess,'check_output',lambda *a,**k:name+'\n')
+    monkeypatch.setattr(cc.subprocess,'call',lambda args,**k:int(missing_ancestor) if args[1]=='merge-base' else int(changed_code))
+    monkeypatch.setattr(cc,'file_sha',lambda path:'a'*64)
+    if reason:
+        with pytest.raises(PermissionError,match=reason):cc.compatibility(F['old'])
+    else:assert cc.compatibility(F['old'])=={name:'a'*64}
 
 
 @pytest.mark.parametrize('drift,reason',[

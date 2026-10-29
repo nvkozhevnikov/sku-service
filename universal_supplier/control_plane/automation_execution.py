@@ -25,6 +25,9 @@ def load(path,sha,confirm=None,*,for_execution=False):
     require(head==value['head'],'AUTOMATION_HEAD_CHANGED')
     from .source_runtime import engine_fingerprint
     require(engine_fingerprint()==value['engine'],'AUTOMATION_ENGINE_CHANGED')
+    if value.get('transport_tls'):
+        from universal_supplier.public_connection import public_tls_identity
+        require(value['transport_tls']==public_tls_identity(),'AUTOMATION_TLS_POLICY_CHANGED')
     require(set(value['suppliers'])==set(RUNTIME_SOURCES) and value['max_parallel']==2,
             'AUTOMATION_EXACT_11_AND_MAX2_REQUIRED')
     require(value.get('production') is False and value.get('esol') is False and
@@ -182,6 +185,9 @@ class Session:
         if time.monotonic()-self.last_engine_check>=10:
             from .source_runtime import engine_fingerprint
             require(engine_fingerprint()==self.value['engine'],'AUTOMATION_ENGINE_CHANGED')
+            if self.value.get('transport_tls'):
+                from universal_supplier.public_connection import public_tls_identity
+                require(self.value['transport_tls']==public_tls_identity(),'AUTOMATION_TLS_POLICY_CHANGED')
             require(hashlib.sha256(self.approval_path.read_bytes()).hexdigest()==self.sha,'AUTOMATION_APPROVAL_SHA_CHANGED')
             self.last_engine_check=time.monotonic()
         if shutil.disk_usage(self.folder).free<5*1024**3:raise PermissionError('AUTOMATION_DISK_LOW')

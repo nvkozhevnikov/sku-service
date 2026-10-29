@@ -51,6 +51,16 @@ def test_exact_approval_not_inferred_and_dirty_checkout_stops(tmp_path,monkeypat
     with pytest.raises(PermissionError,match='DIRTY'):ex.load(p,sha,sha,for_execution=True)
     with pytest.raises(PermissionError,match='SHA_CHANGED'):ex.load(p,'0'*64)
 
+
+def test_ca_bundle_is_part_of_exact_execution_approval(tmp_path,monkeypatch):
+    v=grant();v['transport_tls']={'format':'public-certifi-tls/v1','ca_bundle_sha256':'a'*64,
+        'verify_mode':'CERT_REQUIRED','check_hostname':True}
+    p,sha=write(tmp_path,v);mocked_identity(monkeypatch)
+    monkeypatch.setattr('universal_supplier.public_connection.public_tls_identity',lambda:dict(v['transport_tls']))
+    assert ex.load(p,sha)['transport_tls']['check_hostname']
+    monkeypatch.setattr('universal_supplier.public_connection.public_tls_identity',lambda:{**v['transport_tls'],'ca_bundle_sha256':'b'*64})
+    with pytest.raises(PermissionError,match='TLS_POLICY_CHANGED'):ex.load(p,sha)
+
 @pytest.mark.parametrize('field,value,reason',[('max_parallel',3,'MAX2'),('head','other','HEAD'),
     ('engine','other','ENGINE'),('production',True,'PROTECTED'),('esol',True,'PROTECTED'),
     ('target',{'port':55449},'TARGET'),('execution_until',(NOW+timedelta(days=2)).isoformat(),'WINDOW'),

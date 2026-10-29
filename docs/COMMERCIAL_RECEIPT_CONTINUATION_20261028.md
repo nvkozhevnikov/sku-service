@@ -1,5 +1,34 @@
 # Commercial REFRESH: продолжение после фактических COMMITTED
 
+## Дополнение29Oct — интегрированный runtime и явно новый допуск
+
+Этап1 Unified RC зафиксирован167d3cf поверх одобренной интеграции52f3ece.
+Новый prepare --reuse-receipts может принять **оба** --not-before/--execution-until
+как предложение нового ограниченного окна. Поля execution_reauthorization сохраняют
+исходные27Oct13Z–28Oct13Z и точные новые даты/тот же scope SHA. Продление не выполняется
+без нового exact HEAD/engine/file SHA подтверждения. Диапазон<=24ч, timezone обязателен,
+новое окно не перекрывает прежнее. Старое разрешение никогда не становится новым.
+
+transport_tls pin содержит версию и SHA256 установленного certifi, CERT_REQUIRED и
+hostname=true; load и периодический session check отклоняют CA policy drift.
+Compatibility принимает неизменённые runtime/store/competitor templates **только**
+из exact интеграции52f3ece, существующую receipt-admission/reporting правку и public
+TLS context. Parser/matching/SQL writer delta по-прежнему требует review.
+Для historical receipts старый engine читается как evidence, а не исполняется.
+
+Пример подготовки после согласования конкретных дат (SELECT only):
+
+```powershell
+& ..\sku-service\.venv-audit\Scripts\python.exe scripts\supplier_system.py prepare --reuse-receipts --continue-approval OLD_APPROVAL.json --previous-sha256 OLD_SHA --not-before EXACT_NEW_START --execution-until EXACT_NEW_END --output NEW_NOT_APPROVED.json
+```
+
+Полный1270 manifest/1215 Product IDs,597 COMMITTED/353 Q и320 NOT_REQUESTED,
+operation_id, original T0/window/CP/history и max2/host/rate остаются. Активируется
+только pending Intervesp; семь учтённых sources не запускаются. Старые Q не ingest.
+Первый HTTP — robots внутри нового separately approved окна. Никакого LIVE11/R13.
+
+Ниже описание28Oct является историей до этого explicit-window дополнения.
+
 ## Проверенные границы
 
 LIVE-VERIFIED предыдущий запуск79dc/session4d83abab: полный manifest1270 URL,

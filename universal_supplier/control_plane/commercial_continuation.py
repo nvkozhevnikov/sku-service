@@ -19,7 +19,18 @@ REUSE_CODE_PATHS={
     'universal_supplier/control_plane/commercial_continuation.py',
     'universal_supplier/control_plane/commercial_refresh.py',
     'universal_supplier/control_plane/automation_report.py',
+    'universal_supplier/control_plane/automation_execution.py',
+    'universal_supplier/public_connection.py',
 }
+INTEGRATION_HEAD='52f3ecee22e5a42f673da455659fe3d1d0e20109'
+INTEGRATION_PATHS={
+    'universal_supplier/control_plane/runtime_config.py',
+    'universal_supplier/control_plane/store.py',
+    'universal_supplier/control_plane/templates/competitor_automation.html',
+    'universal_supplier/control_plane/templates/competitor_monitoring.html',
+    'universal_supplier/control_plane/templates/competitor_news.html',
+}
+WINDOW_KIND='same-scope-commercial-window/v1'
 
 
 def file_sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -121,10 +132,11 @@ def validate_live(config,value):
     if not p:return
     if p.get('kind')==RECEIPT_KIND:
         old=json.loads(Path(p['previous_path']).read_text(encoding='utf-8'))
-        require(all(value[k]==old[k] for k in ('scope_sha256','target','not_before','execution_until',
+        require(all(value[k]==old[k] for k in ('scope_sha256','target',
             'suppliers','host_policies','mappings1282','matrix_sha256','protected_live11_batch_id')) and
             value.get('operation_id')==old.get('operation_id',p['previous_approval_sha256']) and
             value['protected_jobs']==p['protected_jobs'],'CONTINUATION_ORIGINAL_CONTRACT_CHANGED')
+        validate_window(value,old['not_before'],old['execution_until'])
         require(p==receipt_proof(config,p['previous_path'],p['previous_approval_sha256']),
             'CONTINUATION_DURABLE_RECEIPTS_CHANGED')
         return
@@ -144,8 +156,36 @@ def quarantine_ids(value):
 def compatibility(old):
     changed=subprocess.check_output(['git','diff',old['head'],'--name-only','--',
         'universal_supplier','sterbrust_matching'],cwd=ROOT,text=True).splitlines()
-    require(set(changed)<=REUSE_CODE_PATHS,'CONTINUATION_ENGINE_COMPATIBILITY_REQUIRES_REVIEW')
+    require(set(changed)<=REUSE_CODE_PATHS|INTEGRATION_PATHS,'CONTINUATION_ENGINE_COMPATIBILITY_REQUIRES_REVIEW')
+    integrated=sorted(set(changed)&INTEGRATION_PATHS)
+    if integrated:
+        require(subprocess.call(['git','merge-base','--is-ancestor',INTEGRATION_HEAD,'HEAD'],cwd=ROOT)==0,
+            'CONTINUATION_PINNED_INTEGRATION_MISSING')
+        # git's canonical comparison handles existing CRLF checkouts. Actual
+        # file bytes remain pinned below and in the new exact engine SHA.
+        require(subprocess.call(['git','diff','--quiet',INTEGRATION_HEAD,'--',*integrated],cwd=ROOT)==0,
+            'CONTINUATION_INTEGRATION_CODE_CHANGED')
     return {p:file_sha(ROOT/p) for p in sorted(changed)}
+
+
+def validate_window(value,original_start,original_end):
+    """A new bounded window is a signed proposal, never an implicit extension."""
+    start=value['not_before'];end=value['execution_until']
+    if (start,end)==(original_start,original_end):
+        require(not value.get('execution_reauthorization'),'CONTINUATION_UNEXPECTED_WINDOW_REAUTHORIZATION')
+        return
+    from datetime import datetime
+    proof=value.get('execution_reauthorization')
+    require(proof=={'format':WINDOW_KIND,'original_not_before':original_start,'original_execution_until':original_end,
+        'not_before':start,'execution_until':end,'scope_sha256':value['scope_sha256'],
+        'requires_operator_confirmation':True},'CONTINUATION_EXPLICIT_WINDOW_APPROVAL_REQUIRED')
+    a,b=datetime.fromisoformat(start),datetime.fromisoformat(end)
+    require(a.tzinfo is not None and b.tzinfo is not None and 0<(b-a).total_seconds()<=86400 and
+        a>=datetime.fromisoformat(original_end),'CONTINUATION_NEW_WINDOW_INVALID')
+    tls=value.get('transport_tls') or {}
+    require(tls.get('format')=='public-certifi-tls/v1' and tls.get('verify_mode')=='CERT_REQUIRED' and
+        tls.get('check_hostname') is True and len(tls.get('ca_bundle_sha256',''))==64,
+        'CONTINUATION_VERIFIED_TLS_POLICY_REQUIRED')
 
 
 def verify_capture(folder,cap):
@@ -297,8 +337,8 @@ def receipt_proof(config,previous_path,previous_sha):
         'current_matching_sha256':digest(normal(matches)),'protected_jobs':normal(protected),'original1282_exact':True}
 
 
-def prepare_receipts(config,previous_path,previous_sha):
-    """SELECT-only successor draft, same original scope/window. Never self-approve."""
+def prepare_receipts(config,previous_path,previous_sha,*,not_before=None,execution_until=None):
+    """SELECT-only successor; any new window explicitly awaits exact approval."""
     from .commercial_refresh import ROOT as repo,validate,scope_rows
     from .source_runtime import engine_fingerprint
     from copy import deepcopy
@@ -310,6 +350,14 @@ def prepare_receipts(config,previous_path,previous_sha):
     value['operation_id']=old.get('operation_id',previous_sha);value['protected_jobs']=p['protected_jobs']
     value.pop('operator_startup_recovery',None)
     value['requires_operator_confirmation']=True
+    from universal_supplier.public_connection import public_tls_identity
+    value['transport_tls']=public_tls_identity()
+    require((not_before is None)==(execution_until is None),'CONTINUATION_BOTH_WINDOW_BOUNDS_REQUIRED')
+    if not_before is not None:
+        value['not_before']=not_before;value['execution_until']=execution_until
+        value['execution_reauthorization']={'format':WINDOW_KIND,'original_not_before':old['not_before'],
+            'original_execution_until':old['execution_until'],'not_before':not_before,
+            'execution_until':execution_until,'scope_sha256':value['scope_sha256'],'requires_operator_confirmation':True}
     # Old sources' settings remain frozen; only unfinished sources may activate.
     validate(value)
     scope_rows(config,[e for r in value['suppliers'].values() for e in r['targets']],accounted_quarantine=quarantine_ids(value))

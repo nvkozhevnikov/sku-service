@@ -36,18 +36,19 @@ def validate(value):
     require(hashlib.sha256(matrix.read_bytes()).hexdigest()==value['matrix_sha256'],'COMMERCIAL_REFRESH_MATRIX_CHANGED')
     if value.get('continuation'):
         p=value['continuation']
-        from .commercial_continuation import RECEIPT_KIND
+        from .commercial_continuation import RECEIPT_KIND,validate_window
         if p.get('kind')==RECEIPT_KIND:
             require(p.get('committed',0)+p.get('quarantined',0)+p.get('not_requested',0)==1270 and
                 all(j['disposition'] in ('REUSE_TERMINAL','NOT_REQUESTED') for j in p['jobs']),
                 'CONTINUATION_RECEIPT_ACCOUNTING_CHANGED')
+            validate_window(value,p['not_before'],p['execution_until'])
         else:
             require(p.get('kind')=='commercial-not-requested-continuation/v1' and
                 p.get('committed')==p.get('product_dispatches')==p.get('product_inflight')==0,
                 'CONTINUATION_SCOPE_OR_PROOF_CHANGED')
         require(p.get('scope_count')==1270 and
             p.get('previous_scope_sha256')==value['scope_sha256'] and p.get('target')==value['target'] and
-            p.get('not_before')==value['not_before'] and p.get('execution_until')==value['execution_until'],
+            (p.get('kind')==RECEIPT_KIND or (p.get('not_before')==value['not_before'] and p.get('execution_until')==value['execution_until'])),
             'CONTINUATION_SCOPE_OR_PROOF_CHANGED')
 
 

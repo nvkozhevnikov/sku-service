@@ -22,12 +22,14 @@ def main(argv=None):
     if args.action=='prepare':
         if args.reuse_receipts:
             if not all((args.continue_approval,args.previous_sha256,args.output)):p.error('receipt reuse requires previous approval/SHA and new output')
-            if any((args.limits,args.confirmed_commercial_targets,args.not_before,args.execution_until)):p.error('receipt reuse retains original scope/window; no replacements')
+            if any((args.limits,args.confirmed_commercial_targets)):p.error('receipt reuse retains original scope; no replacement targets/limits')
+            if bool(args.not_before)!=bool(args.execution_until):p.error('explicit new window requires both not-before and execution-until')
         elif not all((args.limits or args.confirmed_commercial_targets,args.not_before,args.execution_until,args.output)):p.error('prepare requires limits or commercial targets, window/output')
         if args.output.exists():raise FileExistsError('APPROVAL_OUTPUT_ALREADY_EXISTS')
         if args.reuse_receipts:
             from universal_supplier.control_plane.commercial_continuation import prepare_receipts
-            value=prepare_receipts(cfg,args.continue_approval,args.previous_sha256)
+            value=prepare_receipts(cfg,args.continue_approval,args.previous_sha256,
+                not_before=args.not_before,execution_until=args.execution_until)
         elif args.confirmed_commercial_targets:
             from universal_supplier.control_plane.commercial_refresh import prepare
             value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until)
