@@ -23,6 +23,41 @@ def test_exact_root_from_actual_failed_intervesp_chain_is_in_verified_bundle():
     assert ROOT_2022 in roots
 
 
+def test_actual_urllib_handler_must_not_eagerly_create_windows_default_context():
+    from urllib.request import build_opener,ProxyHandler
+    opener=build_opener(ProxyHandler({}),pc.PublicHTTPSHandler())
+    h=next(h for h in opener.handlers if isinstance(h,pc.PublicHTTPSHandler))
+    assert h._context.verify_mode==ssl.CERT_REQUIRED and h._context.check_hostname
+    assert ROOT_2022 in {sha256(c).hexdigest() for c in h._context.get_ca_certs(binary_form=True)}
+
+
+def test_actual_client_opener_gets_certifi_before_any_request(monkeypatch):
+    from universal_supplier import http_capture
+    seen=[]
+    class Response:
+        status=200;headers={'Content-Type':'text/plain'}
+        def __enter__(self):return self
+        def __exit__(self,*a):pass
+        def geturl(self):return 'https://intervesp.ru/robots.txt'
+        def read(self,n):return b'User-agent: *\nAllow: /\n'
+    class Opener:
+        def open(self,request,**kw):seen.append(request.full_url);return Response()
+    def build(*handlers):
+        h=next(h for h in handlers if isinstance(h,pc.PublicHTTPSHandler))
+        assert ROOT_2022 in {sha256(c).hexdigest() for c in h._context.get_ca_certs(binary_form=True)}
+        assert h._context.verify_mode==ssl.CERT_REQUIRED and h._context.check_hostname
+        return Opener()
+    monkeypatch.setattr(http_capture,'build_opener',build)
+    result=http_capture.UrllibPublicHttpClient().get_validated('https://intervesp.ru/robots.txt',timeout_seconds=5,validator=lambda u:None)
+    assert result.status_code==200 and seen==['https://intervesp.ru/robots.txt']
+
+
+def test_handler_cannot_disable_hostname_via_base_handler_options():
+    import pytest
+    with pytest.raises(ValueError,match='PUBLIC_TLS_VERIFICATION_REQUIRED'):
+        pc.PublicHTTPSHandler(check_hostname=False)
+
+
 def test_context_uses_explicit_installed_certifi_not_environment_or_peer_ca(monkeypatch,tmp_path):
     seen=[];original=ssl.create_default_context
     monkeypatch.setenv('SSL_CERT_FILE',str(tmp_path/'untrusted-environment.pem'))

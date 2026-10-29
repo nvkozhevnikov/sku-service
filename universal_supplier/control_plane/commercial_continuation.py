@@ -136,7 +136,7 @@ def validate_live(config,value):
             'suppliers','host_policies','mappings1282','matrix_sha256','protected_live11_batch_id')) and
             value.get('operation_id')==old.get('operation_id',p['previous_approval_sha256']) and
             value['protected_jobs']==p['protected_jobs'],'CONTINUATION_ORIGINAL_CONTRACT_CHANGED')
-        validate_window(value,old['not_before'],old['execution_until'])
+        validate_window(value,*original_window(old))
         require(p==receipt_proof(config,p['previous_path'],p['previous_approval_sha256']),
             'CONTINUATION_DURABLE_RECEIPTS_CHANGED')
         return
@@ -186,6 +186,45 @@ def validate_window(value,original_start,original_end):
     require(tls.get('format')=='public-certifi-tls/v1' and tls.get('verify_mode')=='CERT_REQUIRED' and
         tls.get('check_hostname') is True and len(tls.get('ca_bundle_sha256',''))==64,
         'CONTINUATION_VERIFIED_TLS_POLICY_REQUIRED')
+
+
+def original_window(value):
+    p=value.get('execution_reauthorization') or {}
+    if p:
+        require(p.get('format')==WINDOW_KIND,'CONTINUATION_WINDOW_LINEAGE_CHANGED')
+        return p['original_not_before'],p['original_execution_until']
+    return value['not_before'],value['execution_until']
+
+
+def inherited_jobs(old):
+    """Verify every signed ancestor's frozen files; inherit only terminal jobs.
+
+    A consumed successor may have created just its pending source. Do not demand
+    new jobs for its already-accounted sources or lose older NOT_REQUESTED proof.
+    """
+    first=old.get('continuation') or {};p=first;seen=set()
+    while p.get('kind')==RECEIPT_KIND:
+        path=Path(p['previous_path']).resolve()
+        require(str(path) not in seen and len(seen)<16,'CONTINUATION_GRANT_LINEAGE_CYCLE')
+        seen.add(str(path))
+        require(file_sha(path)==p['previous_approval_sha256'],'CONTINUATION_ANCESTOR_APPROVAL_CHANGED')
+        parent=json.loads(path.read_text(encoding='utf-8'))
+        require(parent.get('commercial_only') is True and all(parent[k]==old[k] for k in
+            ('purpose','scope_sha256','target','suppliers','host_policies','mappings1282','matrix_sha256','protected_live11_batch_id')),
+            'CONTINUATION_ANCESTOR_SCOPE_CHANGED')
+        for j in p['jobs']:
+            folder=ROOT/'reports/source-runner-evidence'/j['source']/('job-'+str(j['job_id']))
+            require(all(file_sha(folder/(n+'.json'))==j['files'][n] for n in ('input','checkpoint','result')),
+                'CONTINUATION_ANCESTOR_FROZEN_FILES_CHANGED')
+        p=parent.get('continuation') or {}
+    result={}
+    if first.get('kind')==RECEIPT_KIND:
+        for j in first['jobs']:
+            if j['disposition']!='REUSE_TERMINAL':continue
+            original=json.loads((ROOT/'reports/source-runner-evidence'/j['source']/('job-'+str(j['job_id']))/'input.json').read_text(encoding='utf-8'))
+            result[j['job_id']]={**j,'approval_sha256':j.get('approval_sha256',first['previous_approval_sha256']),
+                'input_engine_sha256':original['engine_sha256']}
+    return result
 
 
 def verify_capture(folder,cap):
@@ -282,6 +321,7 @@ def receipt_proof(config,previous_path,previous_sha):
     validate(old)
     require(old.get('commercial_only') is True,'CONTINUATION_WRONG_PREVIOUS_OPERATION')
     changes=compatibility(old)
+    inherited=inherited_jobs(old);root_start,root_end=original_window(old)
     targets=[e for r in old['suppliers'].values() for e in r['targets']]
     jobs=[];receipts={};seen=set()
     with guarded_connect(config,autocommit=True,options='-c default_transaction_read_only=on -c statement_timeout=120000') as c:
@@ -290,7 +330,8 @@ def receipt_proof(config,previous_path,previous_sha):
         require(not c.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running')").fetchall(),'CONTINUATION_ACTIVE_JOB')
         rows=c.execute('''SELECT j.id,s.code,j.status,j.crawl_run_id,j.settings_snapshot,r.metadata,j.error_message
             FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
-            WHERE j.settings_snapshot->'automation'->>'approval_sha256'=%s ORDER BY j.id''',(previous_sha,)).fetchall()
+            WHERE j.settings_snapshot->'automation'->>'approval_sha256'=%s OR j.id=ANY(%s) ORDER BY j.id''',
+            (previous_sha,sorted(inherited))).fetchall()
         for jid,code,status,run,snapshot,metadata,error in rows:
             require(code in old['suppliers'] and code not in seen,'CONTINUATION_DUPLICATE_OR_UNKNOWN_SOURCE')
             seen.add(code);rule=old['suppliers'][code]
@@ -298,14 +339,21 @@ def receipt_proof(config,previous_path,previous_sha):
             require(expected and not snapshot.get('source_batch') and snapshot.get('source_input',{}).get('entries')==expected and
                 snapshot.get('automation',{}).get('phase')=='REFRESH','CONTINUATION_JOB_SCOPE_CHANGED')
             rt=(metadata or {}).get('source_runtime') or {}
+            ancestor=inherited.get(jid)
+            expected_engine=ancestor['input_engine_sha256'] if ancestor else old['engine']
+            expected_grant=ancestor['approval_sha256'] if ancestor else previous_sha
+            require(snapshot['automation'].get('approval_sha256')==expected_grant and
+                (not ancestor or (ancestor['source'],ancestor['run_id'],ancestor['status'])==(code,run,status)),
+                'CONTINUATION_JOB_GRANT_LINEAGE_CHANGED')
             require(digest(snapshot['source_input'])==rt.get('input_sha256') and snapshot['rate_settings']==rule['policy'],
                 'CONTINUATION_JOB_INPUT_OR_POLICY_CHANGED')
             folder=ROOT/'reports/source-runner-evidence'/code/('job-'+str(jid))
             require(Path(rt.get('checkpoint','')).resolve()==(folder/'checkpoint.json').resolve(),'CONTINUATION_CHECKPOINT_PATH_CHANGED')
-            checked=check_receipt_files(folder,code,jid,run,status,rt,expected,old['engine'])
+            checked=check_receipt_files(folder,code,jid,run,status,rt,expected,expected_engine)
             require(not set(receipts)&set(checked['receipts']),'CONTINUATION_DUPLICATE_RECEIPT')
             receipts.update(checked.pop('receipts'))
-            jobs.append({'job_id':jid,'source':code,'status':status,'run_id':run,**checked})
+            jobs.append({'job_id':jid,'source':code,'status':status,'run_id':run,
+                'approval_sha256':expected_grant,'input_engine_sha256':expected_engine,**checked})
         require(seen=={code for code,r in old['suppliers'].items() if r['targets']},'CONTINUATION_MISSING_SOURCE_JOB')
         saved=c.execute('''SELECT cap.capture_fingerprint,cap.source_product_id,sp.external_id,cap.requested_url,cap.final_url,
             cap.observed_at,cap.response_sha256,cap.evidence_sha256,obs.offer_id,obs.observed_at=cap.observed_at
@@ -313,7 +361,7 @@ def receipt_proof(config,previous_path,previous_sha):
             LEFT JOIN offer_commercial_observations obs ON obs.capture_id=cap.id AND obs.source_product_id=cap.source_product_id
             WHERE (cap.source_product_id=ANY(%s) AND cap.observed_at>=%s::timestamptz)
                 OR cap.capture_fingerprint=ANY(%s) ORDER BY cap.id''',
-            ([e['source_product_id'] for e in targets],old['not_before'],list(receipts))).fetchall()
+            ([e['source_product_id'] for e in targets],root_start,list(receipts))).fetchall()
         target_by_id={e['source_product_id']:e for e in targets}
         for r in receipts.values():r['offer_id']=target_by_id[r['source_product_id']]['offer_id']
         check_sql_receipts(receipts,saved)
@@ -329,7 +377,8 @@ def receipt_proof(config,previous_path,previous_sha):
         c.execute('ROLLBACK')
     return {'kind':RECEIPT_KIND,'previous_path':str(path),'previous_approval_sha256':previous_sha,
         'previous_head':old['head'],'previous_engine':old['engine'],'previous_scope_sha256':old['scope_sha256'],
-        'target':old['target'],'not_before':old['not_before'],'execution_until':old['execution_until'],
+        'target':old['target'],'not_before':root_start,'execution_until':root_end,
+        'previous_effective_window':[old['not_before'],old['execution_until']],
         'compatible_code_sha256':changes,'jobs':jobs,'scope_count':1270,
         'committed':sum(j['committed'] for j in jobs),'quarantined':sum(j['quarantined'] for j in jobs),
         'not_requested':sum(len(old['suppliers'][j['source']]['targets']) for j in jobs if j['disposition']=='NOT_REQUESTED'),
@@ -355,8 +404,9 @@ def prepare_receipts(config,previous_path,previous_sha,*,not_before=None,executi
     require((not_before is None)==(execution_until is None),'CONTINUATION_BOTH_WINDOW_BOUNDS_REQUIRED')
     if not_before is not None:
         value['not_before']=not_before;value['execution_until']=execution_until
-        value['execution_reauthorization']={'format':WINDOW_KIND,'original_not_before':old['not_before'],
-            'original_execution_until':old['execution_until'],'not_before':not_before,
+        root_start,root_end=original_window(old)
+        value['execution_reauthorization']={'format':WINDOW_KIND,'original_not_before':root_start,
+            'original_execution_until':root_end,'not_before':not_before,
             'execution_until':execution_until,'scope_sha256':value['scope_sha256'],'requires_operator_confirmation':True}
     # Old sources' settings remain frozen; only unfinished sources may activate.
     validate(value)

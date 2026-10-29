@@ -71,6 +71,15 @@ class PublicHTTPHandler(HTTPHandler):
 
 
 class PublicHTTPSHandler(HTTPSHandler):
+    def __init__(self,*args,context=None,**kwargs):
+        # urllib may eagerly create its own default Windows context before the
+        # connection is constructed. Supply the approved bundle at this layer.
+        context=public_tls_context() if context is None else context
+        if context.verify_mode!=ssl.CERT_REQUIRED or not context.check_hostname:
+            raise ValueError('PUBLIC_TLS_VERIFICATION_REQUIRED')
+        super().__init__(*args,context=context,**kwargs)
+        if self._context.verify_mode!=ssl.CERT_REQUIRED or not self._context.check_hostname:
+            raise ValueError('PUBLIC_TLS_VERIFICATION_REQUIRED')
     def https_open(self,req):return self.do_open(PublicHTTPSConnection,req,context=self._context)
 
 

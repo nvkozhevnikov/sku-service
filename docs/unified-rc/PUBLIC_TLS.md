@@ -1,5 +1,19 @@
 # Public supplier TLS — 29.10.2026
 
+## Поправка после первого реального запуска 29Oct
+
+Первое исправление167d3cf было неполным: urllib.HTTPSHandler создавал Windows
+default context до PublicHTTPSConnection. Поэтому certifi-контекст connection
+не использовался фактическим opener. У job169/run60 один robots network attempt
+завершился URLError/SSLCertVerificationError, verify_code19; товарных requests0,
+ingest0, CP terminal0/frontier320/inflight0. Это доказанный дефект первого fix.
+
+PublicHTTPSHandler теперь получает certifi context явно до base constructor.
+CERT_REQUIRED/hostname проверяются до и после constructor, включая base options.
+Offline regression проверяет фактический build_opener и путь
+UrllibPublicHttpClient.get_validated, не только connection. Manifest3deec0c...
+использован; повтор требует нового exact HEAD/SHA. Остальные guards сохранены.
+
 Основной Unified RC сохраняет одну БД127.0.0.1:55461/rc_verify_vi_20261019,
 system7698346631476390904. Поставщики public/rc_runtime; конкуренты
 competitor/competitor_runtime. Интеграция52f3ece и receipt reuse08fdd5d сохранены.

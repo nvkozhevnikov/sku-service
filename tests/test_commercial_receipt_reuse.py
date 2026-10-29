@@ -226,6 +226,7 @@ def test_full_native_admission_checks_saved_jobs_and_physical_mapping_baseline(t
     old=tmp_path/'old.json';old.write_text(json.dumps(F['old']),encoding='utf-8')
     jobs=deepcopy(F['jobs']);protected=deepcopy(F['native_proof']['protected_jobs']);maps=deepcopy(F['all_mappings'])
     for j in jobs:
+        j[4]['automation']['approval_sha256']=cc.file_sha(old)
         folder=tmp_path/'reports/source-runner-evidence'/j[1]/f'job-{j[0]}';folder.mkdir(parents=True)
         for name,v in F['cases'][j[1]].items():(folder/(name+'.json')).write_text(json.dumps(v),encoding='utf-8')
         j[5]['source_runtime']['checkpoint']=str(folder/'checkpoint.json')
@@ -256,3 +257,65 @@ def test_full_native_admission_checks_saved_jobs_and_physical_mapping_baseline(t
     else:
         proof=cc.receipt_proof(None,old,cc.file_sha(old))
         assert (proof['committed'],proof['quarantined'],proof['not_requested'])==(597,353,320)
+
+
+@pytest.mark.parametrize('drift,reason',[
+    (None,None),('ancestor_file','ANCESTOR_FROZEN_FILES_CHANGED'),
+    ('ancestor_scope','ANCESTOR_SCOPE_CHANGED'),('pending_http','PRODUCT_OPERATION_ALREADY_ATTEMPTED'),
+    ('pending_uncertain','PRODUCTS_NOT_PROVEN_UNREQUESTED'),('job_grant','JOB_GRANT_LINEAGE_CHANGED'),
+])
+def test_actual_robots_only169_inherits_seven_frozen_sources_without_replaying950(tmp_path,monkeypatch,drift,reason):
+    latest=json.loads(gzip.decompress((Path(__file__).parent/'fixtures/commercial_robots_only_169_20261029.json.gz').read_bytes()))
+    parent=tmp_path/'parent.json';parent_value=deepcopy(F['old'])
+    if drift=='ancestor_scope':parent_value['target']['database']='wrong'
+    parent.write_text(json.dumps(parent_value),encoding='utf-8');parent_sha=cc.file_sha(parent)
+    old=deepcopy(latest['old']);p=old['continuation'];p['previous_path']=str(parent);p['previous_approval_sha256']=parent_sha
+    jobs=[]
+    for original in F['jobs']:
+        j=deepcopy(original);code=j[1]
+        folder=tmp_path/'reports/source-runner-evidence'/code/f'job-{j[0]}';folder.mkdir(parents=True)
+        for name,v in F['cases'][code].items():(folder/(name+'.json')).write_text(json.dumps(v),encoding='utf-8')
+        record=next(r for r in p['jobs'] if r['job_id']==j[0])
+        record['files']={n:cc.file_sha(folder/(n+'.json')) for n in ('input','checkpoint','result')}
+        j[5]['source_runtime']['checkpoint']=str(folder/'checkpoint.json');j[4]['automation']['approval_sha256']=parent_sha
+        if code!='intervesp':jobs.append(j)
+    leaf=tmp_path/'leaf.json';leaf.write_text(json.dumps(old),encoding='utf-8')
+    j=deepcopy(latest['job']);folder=tmp_path/'reports/source-runner-evidence/intervesp/job-169';folder.mkdir(parents=True)
+    case=deepcopy(latest['case'])
+    if drift=='pending_http':case['result']['canary']['product_requests']=['https://intervesp.ru/attempted']
+    if drift=='pending_uncertain':case['checkpoint']['inflight']['unknown']={}
+    case['checkpoint'].pop('checksum');case['checkpoint']['checksum']=digest(case['checkpoint'])
+    for n,v in case.items():(folder/(n+'.json')).write_text(json.dumps(v),encoding='utf-8')
+    j[5]['source_runtime']['checkpoint']=str(folder/'checkpoint.json');j[4]['automation']['approval_sha256']=cc.file_sha(leaf)
+    jobs.append(j)
+    if drift=='ancestor_file':(tmp_path/'reports/source-runner-evidence/kami/job-163/result.json').write_text('{}',encoding='utf-8')
+    if drift=='job_grant':jobs[0][4]['automation']['approval_sha256']='foreign'
+    class DB:
+        def __enter__(self):return self
+        def __exit__(self,*a):pass
+        def execute(self,sql,args=()):
+            assert sql.lstrip().startswith(('SELECT','BEGIN','ROLLBACK'))
+            if 'status IN' in sql:self.rows=[]
+            elif 'SELECT j.id,s.code' in sql:
+                assert set(args[1])=={161,163,164,165,166,167,168};self.rows=sorted(jobs)
+            elif 'SELECT cap.capture_fingerprint' in sql:
+                assert args[1]=='2026-10-27T13:00:00Z';self.rows=F['sql_rows']
+            elif 'SELECT id,supplier_id' in sql:self.rows=F['all_mappings']
+            elif 'row_to_json(j)' in sql:self.rows=old['protected_jobs']
+            elif 'row_to_json(pm)' in sql:self.rows=[(i,'matching-pin') for i in range(597)]
+            else:self.rows=[]
+            return self
+        def fetchall(self):return self.rows
+    monkeypatch.setattr(cc,'ROOT',tmp_path);monkeypatch.setattr(cc,'guarded_connect',lambda *a,**k:DB())
+    monkeypatch.setattr(cc,'compatibility',lambda old:{})
+    monkeypatch.setattr(cc.Session,'check_mappings',lambda *a:None)
+    checked=cc.check_receipt_files
+    monkeypatch.setattr(cc,'check_receipt_files',lambda *a,**k:checked(*a,**k,verify=lambda *a:None))
+    if reason:
+        with pytest.raises(PermissionError,match=reason):cc.receipt_proof(None,leaf,cc.file_sha(leaf))
+    else:
+        proof=cc.receipt_proof(None,leaf,cc.file_sha(leaf))
+        assert (proof['committed'],proof['quarantined'],proof['not_requested'])==(597,353,320)
+        assert {r['job_id'] for r in proof['jobs']}=={161,163,164,165,166,167,168,169}
+        assert proof['not_before']=='2026-10-27T13:00:00Z' and proof['execution_until']=='2026-10-28T13:00:00Z'
+        assert proof['previous_effective_window']==['2026-10-29T09:00:00Z','2026-10-29T13:00:00Z']

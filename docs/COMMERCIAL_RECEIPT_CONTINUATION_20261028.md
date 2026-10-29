@@ -1,5 +1,22 @@
 # Commercial REFRESH: продолжение после фактических COMMITTED
 
+## Продолжение после robots-only job169 — 29Oct
+
+Первый29Oct manifest3deec0c... использован: job169/run60 partial, SOURCE_ROBOTS_UNAVAILABLE,
+один TLS network attempt к robots, товарных HTTP/ingest0. Старый manifest не запускается
+повторно. Без ручной смены статуса создаётся отдельный exact successor в прежнем окне.
+
+receipt_proof проверяет цепочку подписанных previous approvals, scope/target/матрицу,
+все frozen input/checkpoint/result hashes каждого предка. Семь REUSE_TERMINAL jobs
+161,163–168 наследуются с их исходными engine/grant; latest Intervesp169 допускается
+только при полном доказательстве NOT_REQUESTED всех320, пустом inflight/terminal,
+отсутствии product requests, новых captures и SQL receipts. Изменённые файлы, scope,
+чужой approval, UNCERTAIN или попытка товарного HTTP дают STOP.
+Исходное окно27–28Oct сохраняется как evidence; successor требует явного exact
+подтверждения окна29Oct09–13UTC, действующего HEAD/SHA и TLS bundle SHA.
+597 COMMITTED и353 Q не становятся новыми заданиями. Это прежний коммерческий
+operation_id/1270 targets, без LIVE11/R13, новых matching или schema/role изменений.
+
 ## Дополнение29Oct — интегрированный runtime и явно новый допуск
 
 Этап1 Unified RC зафиксирован167d3cf поверх одобренной интеграции52f3ece.
