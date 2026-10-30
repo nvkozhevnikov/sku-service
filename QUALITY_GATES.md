@@ -2,6 +2,29 @@
 
 OPERATOR-CONFIRMED 2026-10-08. Scoped supplement to workspace qa/QUALITY_GATES.md.
 
+## Signed robots-policy exception gate — 2026-10-30
+
+Pacing below a source's robots-declared Crawl-delay/Request-rate is allowed
+ONLY through `robots_policy_exception` (robots-policy-exception/v1) inside an
+operator-signed approval. Gate conditions, all mandatory and offline-proven
+(tests/test_robots_policy_exception.py, 9 cases, no HTTP/SQL):
+
+- Approval contract (automation_execution.load): format/source/host exact
+  match; `requires_operator_confirmation: true`; 64-hex robots SHA256;
+  `0 < applied < declared`; the approval's own intervesp interval must EQUAL
+  the signed applied interval (AUTOMATION_ROBOTS_EXCEPTION_RATE_MISMATCH).
+- Runtime acceptance (source_runtime.robots): active approved session only;
+  robots body SHA256 must equal the signed one (site policy change ⇒ STOP);
+  declared minimum must equal the live-parsed minimum; job profile interval
+  must be ≥ the signed applied interval (faster-than-signed ⇒ STOP).
+- Transparency: the applied exception is recorded in result.json
+  (`robots_policy_exception_applied`); the default STOP is preserved for
+  every other source, unsigned session, changed robots bytes or faster
+  profile.
+- 5 s mode additionally requires: the owner's written decision, a new
+  approval on the new HEAD, preflight green (RUNBOOK §2), window ≤24 h.
+  LIVE remains blocked until then; tests passing is not business acceptance.
+
 XML coverage supplement2026-10-27: empty well-formed XML is NOT business acceptance.
 Independent field TTL/omission, durable identity, native receipt-backed selection,
 NEW-staging vs REVIEW and per-record reconciliation are mandatory. Positive→zero needs

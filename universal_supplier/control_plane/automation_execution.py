@@ -47,6 +47,27 @@ def load(path,sha,confirm=None,*,for_execution=False):
             'AUTOMATION_SOURCE_POLICY_INVALID')
         require(type(rule['max_queue_attempts']) is int and 1<=rule['max_queue_attempts']<=3,
                 'AUTOMATION_QUEUE_ATTEMPTS_INVALID')
+        exception=rule.get('robots_policy_exception')
+        if exception is not None:
+            from .source_runtime import ROBOTS_EXCEPTION_KIND
+            import re as _re
+            require(exception.get('format')==ROBOTS_EXCEPTION_KIND and exception.get('source')==code
+                    and exception.get('host')==rule.get('host')
+                    and exception.get('requires_operator_confirmation') is True,
+                    'AUTOMATION_ROBOTS_EXCEPTION_CONTRACT_INVALID')
+            require(isinstance(exception.get('robots_sha256'),str)
+                    and _re.fullmatch(r'[0-9a-f]{64}',exception['robots_sha256']) is not None,
+                    'AUTOMATION_ROBOTS_EXCEPTION_ROBOTS_SHA_INVALID')
+            require(type(exception.get('declared_minimum_seconds')) in (int,float)
+                    and __import__('math').isfinite(exception['declared_minimum_seconds'])
+                    and exception['declared_minimum_seconds']>0,
+                    'AUTOMATION_ROBOTS_EXCEPTION_DECLARED_INVALID')
+            require(type(exception.get('applied_min_request_interval_seconds')) in (int,float)
+                    and __import__('math').isfinite(exception['applied_min_request_interval_seconds'])
+                    and 0<exception['applied_min_request_interval_seconds']<exception['declared_minimum_seconds'],
+                    'AUTOMATION_ROBOTS_EXCEPTION_APPLIED_INVALID')
+            require(exception['applied_min_request_interval_seconds']==rule['min_request_interval_seconds'],
+                    'AUTOMATION_ROBOTS_EXCEPTION_RATE_MISMATCH')
         for phase in ('REFRESH','DISCOVERY'):
             cap=rule['limits'][phase]
             require(type(cap) is int and (0 if is_refresh(value) else 1)<=cap<=100000,'AUTOMATION_EXPLICIT_PRODUCT_CAP_REQUIRED')

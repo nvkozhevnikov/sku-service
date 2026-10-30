@@ -1,5 +1,25 @@
 # Matching Policy V2 acceptance
 
+## Intervesp 5 s robots exception — 2026-10-30 (owner decision PENDING)
+
+Intervesp.ru robots.txt (captured 2026-10-29, SHA256 `a6862161f2c07c36f0ecc789bf7d31cd48ef41b02c142c41d7f7c4e861d53f51`)
+declares `Crawl-delay: 20` for `User-Agent: *`. The owner's desired interval
+is 5 s. The conflict is explicit; nothing is bypassed silently.
+
+| Criterion | Acceptance / status | Scope and evidence |
+|---|---|---|
+| Default robots guard | REQUIRED, unchanged | Declared robots minimum ≤ job `min_request_interval_seconds`, else source-local STOP `ROBOTS_REQUIRES_SLOWER_PROFILE` (job-169/170 evidence) |
+| 5 s WITHOUT owner sign-off | NOT_ACCEPTED | No configuration flag exists; guard is unconditional outside the signed-exception path |
+| 5 s WITH signed exception | PENDING OWNER DECISION | `robots_policy_exception` (robots-policy-exception/v1) inside an operator-signed approval, bound to exact robots SHA256; job profile may not run faster than the signed applied interval; runtime proof in tests/test_robots_policy_exception.py (9 cases) |
+| Exception scope | intervesp only, session-bound | Other 10 sources keep default guard; exception inert without the active approved session; changed robots bytes → STOP → new decision |
+| Robots-compliant fallback (20 s) | ALWAYS AVAILABLE | ≈107 min pacing for 320 URLs; no code change needed |
+| Data preservation | REQUIRED, verified | 597 COMMITTED + 353 quarantined never re-requested (durable receipts); 320 proven NOT_REQUESTED only; 1282 mappings intact; 0 active jobs at preflight |
+| LIVE launch | BLOCKED until owner decision + new approval on new HEAD | Exact conditions: RUNBOOK.md §3; no push/merge/production write |
+
+## Historical sections below
+
+
+
 ## Automatic matching required — operator correction, 2026-10-19
 
 OPERATOR-CONFIRMED: permanent MATCHING HOLD in the final system is

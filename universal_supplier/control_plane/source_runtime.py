@@ -27,6 +27,29 @@ LEASED_HOST = ContextVar('source_collector_leased_host', default=None)
 LEASE_ALIVE = ContextVar('source_collector_lease_alive', default=None)
 MODES = ('REFRESH', 'DISCOVERY', 'RESUME')
 AGENT = 'UniversalSupplierReadOnly/1.0'
+ROBOTS_EXCEPTION_KIND = 'robots-policy-exception/v1'
+
+
+def signed_robots_exception(code, robots_sha256, minimum):
+    """The only path below a robots Crawl-delay/Request-rate: an explicit
+    approval block signed against the exact robots bytes, active session only.
+
+    Returns the exception block when every identity check passes, else None;
+    the caller then keeps the default ROBOTS_REQUIRES_SLOWER_PROFILE stop.
+    """
+    from . import automation_execution
+    session = automation_execution.ACTIVE
+    rule = (session.value['suppliers'].get(code) or {}) if session else {}
+    value = rule.get('robots_policy_exception')
+    if not value or value.get('format') != ROBOTS_EXCEPTION_KIND: return None
+    if value.get('requires_operator_confirmation') is not True: return None
+    if value.get('source') != code or value.get('robots_sha256') != robots_sha256: return None
+    try:
+        declared = float(value['declared_minimum_seconds'])
+        applied = float(value['applied_min_request_interval_seconds'])
+    except (KeyError, TypeError, ValueError): return None
+    if declared != minimum or not 0 < applied < declared: return None
+    return value
 
 
 class CardExtractionError(ValueError):
@@ -188,6 +211,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     sql_counts={k:0 for k in count_names};counts_known=True
     http_started=clock.monotonic();http_seconds=0.;sql_seconds=0.;parse_seconds=0.;matching_seconds=None
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
+    robots_exception_applied=None
     isolated=[];consecutive_card_errors=0
     try:
         recovery_proof = None
@@ -329,7 +353,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             matching_pending.clear()
 
         def robots():
-            nonlocal robot
+            nonlocal robot,robots_exception_applied
             try:
                 outcomes=fetch([robots_url],request_scope='robots')
                 if len(outcomes)!=1 or outcomes[0].error or outcomes[0].response is None or outcomes[0].response.status_code!=200:raise ValueError(fetcher.stop_reason or 'ROBOTS_NOT_PROVEN')
@@ -338,7 +362,15 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 robot=RobotFileParser();robot.parse(response.body.decode('utf-8').splitlines())
                 delay=robot.crawl_delay(AGENT);rr=robot.request_rate(AGENT)
                 minimum=max(delay or 0,rr.seconds/rr.requests if rr else 0)
-                if minimum>rate.min_request_interval_seconds:raise PermissionError('ROBOTS_REQUIRES_SLOWER_PROFILE')
+                if minimum>rate.min_request_interval_seconds:
+                    # Slower-than-declared pacing needs the operator-signed
+                    # exception bound to these exact robots bytes; anything
+                    # else (no session, changed robots, faster profile) stops.
+                    exception=signed_robots_exception(code,hashlib.sha256(response.body).hexdigest(),minimum)
+                    if exception is None or exception['applied_min_request_interval_seconds']>rate.min_request_interval_seconds:
+                        raise PermissionError('ROBOTS_REQUIRES_SLOWER_PROFILE')
+                    robots_exception_applied={k:exception[k] for k in ('format','source','robots_sha256',
+                        'declared_minimum_seconds','applied_min_request_interval_seconds')}
             except (ValueError,PermissionError) as error:
                 from . import automation_execution
                 from .source_failure import ROBOTS_LOCAL
@@ -588,6 +620,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             'stage_timings':{'parsing_seconds_sum':parse_seconds,'sql_seconds':sql_seconds,'matching_seconds':matching_seconds},
             'effective_rate_policy':rate.snapshot(),'approved_total_cap':limit,'safety_gate_size':gate_size,'safety_gate_passed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values())>=min(gate_size,len(entries)) if entries else False,'termination_reason':termination,'resume_available':locals().get('resume_safe',False),
             'resume_uncertain':locals().get('plan',{}).get('uncertain',[]),'matching_applied':identity.get('matching_applied',False),
+            'robots_policy_exception_applied':robots_exception_applied,
             'identity_post_processing':identity}
         result['transport_errors']=[o.error_diagnostics for o in fetcher.outcomes if o.error_diagnostics] if fetcher else []
         from .source_failure import failure_scope
