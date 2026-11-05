@@ -31,6 +31,12 @@ INTEGRATION_PATHS={
     'universal_supplier/control_plane/templates/competitor_news.html',
 }
 WINDOW_KIND='same-scope-commercial-window/v1'
+# The signed robots-exception engine change is pinned to its exact reviewed
+# commit; any further drift of these files still forces a review.
+ROBOTS_EXCEPTION_PATHS={
+    'universal_supplier/control_plane/source_runtime.py',
+}
+ROBOTS_EXCEPTION_HEAD='1ba40640d3a1c70b8cce3ea7c45e0980df3bd6e5'
 
 
 def file_sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -133,9 +139,26 @@ def validate_live(config,value):
     if p.get('kind')==RECEIPT_KIND:
         old=json.loads(Path(p['previous_path']).read_text(encoding='utf-8'))
         require(all(value[k]==old[k] for k in ('scope_sha256','target',
-            'suppliers','host_policies','mappings1282','matrix_sha256','protected_live11_batch_id')) and
+            'mappings1282','protected_live11_batch_id')) and
             value.get('operation_id')==old.get('operation_id',p['previous_approval_sha256']) and
             value['protected_jobs']==p['protected_jobs'],'CONTINUATION_ORIGINAL_CONTRACT_CHANGED')
+        # A proven NOT_REQUESTED source never dispatched a product request;
+        # a successor signed by the operator may re-sign only its pacing
+        # policy (incl. the robots exception). Every REUSE_TERMINAL source,
+        # and everything but those fields, stays byte-frozen.
+        fresh={j['source'] for j in p['jobs'] if j.get('disposition')=='NOT_REQUESTED'}
+        re_signable={'policy','rate_sha256','settings_sha256','settings_after',
+            'min_request_interval_seconds','robots_policy_exception'}
+        for code,rule in old['suppliers'].items():
+            new=value['suppliers'][code]
+            if code not in fresh:
+                require(new==rule,'CONTINUATION_FROZEN_SOURCE_CONTRACT_CHANGED');continue
+            require({k:v for k,v in rule.items() if k not in re_signable}==
+                {k:v for k,v in new.items() if k not in re_signable},'CONTINUATION_NOT_REQUESTED_SCOPE_CHANGED')
+        for host,entries in old['host_policies'].items():
+            for code,digest_value in entries.items():
+                if code not in fresh:
+                    require(value['host_policies'][host][code]==digest_value,'CONTINUATION_FROZEN_HOST_POLICY_CHANGED')
         validate_window(value,*original_window(old))
         require(p==receipt_proof(config,p['previous_path'],p['previous_approval_sha256']),
             'CONTINUATION_DURABLE_RECEIPTS_CHANGED')
@@ -156,7 +179,7 @@ def quarantine_ids(value):
 def compatibility(old):
     changed=subprocess.check_output(['git','diff',old['head'],'--name-only','--',
         'universal_supplier','sterbrust_matching'],cwd=ROOT,text=True).splitlines()
-    require(set(changed)<=REUSE_CODE_PATHS|INTEGRATION_PATHS,'CONTINUATION_ENGINE_COMPATIBILITY_REQUIRES_REVIEW')
+    require(set(changed)<=REUSE_CODE_PATHS|INTEGRATION_PATHS|ROBOTS_EXCEPTION_PATHS,'CONTINUATION_ENGINE_COMPATIBILITY_REQUIRES_REVIEW')
     integrated=sorted(set(changed)&INTEGRATION_PATHS)
     if integrated:
         require(subprocess.call(['git','merge-base','--is-ancestor',INTEGRATION_HEAD,'HEAD'],cwd=ROOT)==0,
@@ -165,6 +188,12 @@ def compatibility(old):
         # file bytes remain pinned below and in the new exact engine SHA.
         require(subprocess.call(['git','diff','--quiet',INTEGRATION_HEAD,'--',*integrated],cwd=ROOT)==0,
             'CONTINUATION_INTEGRATION_CODE_CHANGED')
+    pinned=sorted(set(changed)&ROBOTS_EXCEPTION_PATHS)
+    if pinned:
+        require(subprocess.call(['git','merge-base','--is-ancestor',ROBOTS_EXCEPTION_HEAD,'HEAD'],cwd=ROOT)==0,
+            'CONTINUATION_PINNED_ROBOTS_EXCEPTION_MISSING')
+        require(subprocess.call(['git','diff','--quiet',ROBOTS_EXCEPTION_HEAD,'--',*pinned],cwd=ROOT)==0,
+            'CONTINUATION_PINNED_ROBOTS_EXCEPTION_CODE_CHANGED')
     return {p:file_sha(ROOT/p) for p in sorted(changed)}
 
 
@@ -251,7 +280,7 @@ def check_receipt_files(folder,code,jid,run,status,runtime,expected,previous_eng
         'CONTINUATION_CHECKPOINT_IDENTITY_CHANGED')
     record={'disposition':'REUSE_TERMINAL','committed':0,'quarantined':0,'quarantine_ids':[],
         'files':{n:file_sha(folder/(n+'.json')) for n in ('input','checkpoint','result')},'receipts':{}}
-    if status=='partial' and runtime.get('termination_reason')=='SOURCE_ROBOTS_UNAVAILABLE':
+    if status=='partial' and runtime.get('termination_reason') in ('SOURCE_ROBOTS_UNAVAILABLE','ROBOTS_REQUIRES_SLOWER_PROFILE'):
         record.update(check_files(folder,code,jid,runtime,expected,previous_engine))
         require(result.get('stop_scope')=='supplier' and not result.get('global_stop_reason'),
             'CONTINUATION_ROBOTS_NOT_SOURCE_LOCAL')

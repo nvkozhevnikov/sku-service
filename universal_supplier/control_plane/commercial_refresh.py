@@ -19,6 +19,20 @@ ROOT=Path(__file__).resolve().parents[2]
 def is_refresh(value):return value.get('purpose')==PURPOSE
 
 
+def matrix_pins(value,matrix):
+    """Exact file pin, or only proven NOT_REQUESTED sources' rows re-signed."""
+    if hashlib.sha256(Path(matrix).read_bytes()).hexdigest()==value['matrix_sha256']:return
+    p=value.get('continuation') or {}
+    fresh={j['source'] for j in p.get('jobs',[]) if
+        p.get('kind')=='commercial-receipt-continuation/v1' and j.get('disposition')=='NOT_REQUESTED'}
+    require(fresh,'COMMERCIAL_REFRESH_MATRIX_CHANGED')
+    rows={r['SOURCE']:r for r in csv.DictReader(Path(matrix).open(encoding='utf-8-sig',newline=''))}
+    for code,rule in value['suppliers'].items():
+        if code in fresh:continue
+        require(rows.get(code,{}).get('APPROVAL_DIGEST_SHA256')==value['host_policies'][rule['host']][code],
+            'COMMERCIAL_REFRESH_MATRIX_CHANGED')
+
+
 def validate(value):
     rules=value['suppliers'];targets=[e for r in rules.values() for e in r['targets']]
     require(len(targets)==1270 and len({e['source_product_id'] for e in targets})==1270,'COMMERCIAL_REFRESH_EXACT_1270_REQUIRED')
@@ -33,7 +47,7 @@ def validate(value):
         require(code!='beka_mak_tr' or not entries,'COMMERCIAL_REFRESH_REFERENCE_ONLY')
         require(r['settings_after']['enabled']==bool(entries) or not entries,'COMMERCIAL_REFRESH_ENABLE_APPROVAL_REQUIRED')
     matrix=ROOT/'config/live11_approval_matrix.csv'
-    require(hashlib.sha256(matrix.read_bytes()).hexdigest()==value['matrix_sha256'],'COMMERCIAL_REFRESH_MATRIX_CHANGED')
+    matrix_pins(value,matrix)
     if value.get('continuation'):
         p=value['continuation']
         from .commercial_continuation import RECEIPT_KIND,validate_window
