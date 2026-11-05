@@ -50,6 +50,15 @@ Recovery of the 55449 rc-local cluster has its own guarded script
 
 ## 3. Intervesp 5 s mode — decision and LIVE conditions
 
+**Owner decision 2026-11-05: variant A** — 5 s with the signed robots
+exception. The prepared successor window and its exact launch command live in
+`../../reports/RC_INTERVESP_5S_ROBOTS_EXCEPTION_20261105/` (launch ONLY the
+recorded SHA, via `INTERVESP_5S_START_AFTER_APPROVAL.txt`). The re-sign path
+(commit 765ac15) permits changing a pacing policy ONLY for sources proven
+NOT_REQUESTED (source-local robots stop, zero product dispatches); every
+REUSE_TERMINAL source stays byte-frozen; the robots-exception engine change
+stays pinned to commit 1ba4064.
+
 **Conflict, not hidden**: intervesp.ru/robots.txt (captured 2026-10-29,
 SHA256 `a6862161f2c07c36f0ecc789bf7d31cd48ef41b02c142c41d7f7c4e861d53f51`)
 declares `Crawl-delay: 20` for `User-Agent: *`. The runtime guard stops any

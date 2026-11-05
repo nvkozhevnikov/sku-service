@@ -25,6 +25,25 @@ operator-signed approval. Gate conditions, all mandatory and offline-proven
   approval on the new HEAD, preflight green (RUNBOOK §2), window ≤24 h.
   LIVE remains blocked until then; tests passing is not business acceptance.
 
+## NOT_REQUESTED re-sign gate — 2026-11-05 (owner decision: variant A)
+
+A successor commercial window may change a source's pacing policy (including
+the robots exception) ONLY when that source's previous job stopped before any
+product request (source-local `SOURCE_ROBOTS_UNAVAILABLE` or
+`ROBOTS_REQUIRES_SLOWER_PROFILE`, zero dispatches, full frontier). Offline
+proven (tests/test_robots_exception_resign.py, 14 cases, no HTTP/SQL):
+
+- disposition whitelist (check_receipt_files): unknown partial reasons and
+  non-source-local stops are never NOT_REQUESTED;
+- contract freeze (validate_live): REUSE_TERMINAL sources byte-frozen;
+  NOT_REQUESTED sources re-signable only in policy/rate/settings/exception
+  fields — scope, targets, limits, identity stay frozen; frozen host digests
+  unchanged;
+- matrix drift (matrix_pins): exact file pin, or row changes confined to
+  NOT_REQUESTED sources with every other row digest still matching;
+- engine pin (compatibility): the robots-exception engine change stays pinned
+  to commit 1ba4064; any further drift forces review.
+
 XML coverage supplement2026-10-27: empty well-formed XML is NOT business acceptance.
 Independent field TTL/omission, durable identity, native receipt-backed selection,
 NEW-staging vs REVIEW and per-record reconciliation are mandatory. Positive→zero needs

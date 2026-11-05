@@ -25,17 +25,18 @@ by any new approval.
   stale `postmaster.pid` preserved as `postmaster.pid.original.*`; clean WAL
   redo, identity re-verified. Procedure: RUNBOOK.md.
 
-## Owner decision 5 s vs Crawl-delay 20 — NOT YET GIVEN
+## Owner decision 5 s vs Crawl-delay 20 — DECIDED 2026-11-05: variant A
 
-The desired 5 s interval is FASTER than the robots-declared 20 s. The runtime
-robots guard (source_runtime.robots) stops any profile faster than the declared
-minimum. This conflict is not hidden and not bypassed: a 5 s run REQUIRES an
-explicit operator-signed `robots_policy_exception` block in the approval
-document. The mechanism is implemented and offline-tested (this commit);
-it is INERT unless the owner signs an approval containing it. See
-ACCEPTANCE_MATRIX.md (2026-10-30 section) and RUNBOOK.md for the exact LIVE
-conditions. The owner may instead choose the robots-compliant 20 s profile
-(320 URLs ≈ 107 min pure pacing) or obtaining source permission.
+The owner chose the 5 s interval WITH the signed `robots_policy_exception`.
+Successor window drafted and fully validated offline (see
+`../../reports/RC_INTERVESP_5S_ROBOTS_EXCEPTION_20261105/`): intervesp rule
+re-signed to `min_request_interval_seconds: 5.0` + the exception block bound
+to the current robots.txt SHA; the other 10 sources byte-frozen; receipts
+597 COMMITTED + 353 quarantined proven reusable; 320 URLs NOT_REQUESTED only.
+Execution remains BLOCKED until the owner signs the exact approval SHA and
+the window time (RUNBOOK.md §3). Re-sign guards:
+commercial_continuation.validate_live, commercial_refresh.matrix_pins,
+tests/test_robots_exception_resign.py.
 
 ## Historical state below is retained as history
 
