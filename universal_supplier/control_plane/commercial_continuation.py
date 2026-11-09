@@ -322,16 +322,22 @@ def check_mixed_recovery(folder,code,jid,run,status,runtime,expected,previous_en
         and not set(cp['terminal'])&set(cp['frontier']),'CONTINUATION_MIXED_SCOPE_CHANGED')
     reauthorized=recovery.get('reauthorized_uncertain') or {}
     record={'disposition':'RECOVER_RESUME','committed':0,'quarantined':0,'quarantine_ids':[],
-        'not_requested':0,'recover_pending':0,'offline_pending':[],'offline_fingerprints':[],
+        'not_requested':0,'recover_pending':0,'matching_pending':0,'offline_pending':[],'offline_fingerprints':[],
         'reauthorized_uncertain':[],
         'files':{n:file_sha(folder/(n+'.json')) for n in ('input','checkpoint','result')},'receipts':{}}
     for url,item in cp['terminal'].items():
         state=item['state'];r=item['receipt'];entry=entries[url]
         if state=='COMMITTED':
-            mr=r.get('matching_receipt') or {}
-            require(r.get('sql_verified') is True and mr.get('status')=='succeeded' and mr.get('job_id')==jid
-                and mr.get('run_id')==run and mr.get('external_id')==r['external_id'],
-                'CONTINUATION_MIXED_COMMIT_NOT_DURABLE')
+            require(r.get('sql_verified') is True,'CONTINUATION_MIXED_COMMIT_NOT_DURABLE')
+            mr=r.get('matching_receipt')
+            if mr is not None:
+                # Completed matching must be durable and bound to this run; a
+                # mid-stop commit without matching stays pending — the RESUME
+                # child completes it through the normal pending-matching path.
+                require(mr.get('status')=='succeeded' and mr.get('job_id')==jid
+                    and mr.get('run_id')==run and mr.get('external_id')==r['external_id'],
+                    'CONTINUATION_MIXED_COMMIT_NOT_DURABLE')
+            else:record['matching_pending']+=1
             cap=r['original_capture_metadata']
             require(cap['requested_url']==cap['final_url']==url and cap['http_status']==200 and not cap.get('redirects'),
                 'CONTINUATION_CAPTURE_IDENTITY_CHANGED')
@@ -517,7 +523,8 @@ def receipt_proof(config,previous_path,previous_sha,*,mixed_recovery=None):
         require(len(maps)==len({r[0] for r in old['mappings1282']}),'CONTINUATION_PHYSICAL_MAPPING_COUNT_CHANGED')
         matches=c.execute('SELECT id,md5(row_to_json(pm)::text) FROM product_matches pm WHERE is_current AND source_product_id=ANY(%s) ORDER BY id',
             ([r['source_product_id'] for r in receipts.values() if r['state']=='COMMITTED'],)).fetchall()
-        require(len(matches)==sum(j['committed'] for j in jobs),'CONTINUATION_CURRENT_MATCHING_MISSING')
+        pending_matching=sum(j.get('matching_pending',0) for j in jobs if j.get('disposition')=='RECOVER_RESUME')
+        require(len(matches)==sum(j['committed'] for j in jobs)-pending_matching,'CONTINUATION_CURRENT_MATCHING_MISSING')
         c.execute('ROLLBACK')
     return {'kind':RECEIPT_KIND,'previous_path':str(path),'previous_approval_sha256':previous_sha,
         'previous_head':old['head'],'previous_engine':old['engine'],'previous_scope_sha256':old['scope_sha256'],
