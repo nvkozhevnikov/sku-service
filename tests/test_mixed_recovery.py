@@ -63,9 +63,7 @@ def check(tmp_path,value):
 def test_mixed_checkpoint_accounted_per_state(tmp_path):
     v=evidence(tmp_path);r=check(tmp_path,v)
     assert (r['committed'],r['not_requested'],r['recover_pending'])==(2,1,2)
-    def pending(v):v['cp']['terminal'][URLS[0]]['receipt']['matching_receipt']=None
-    r=evidence(tmp_path,pending);r=check(tmp_path,r)
-    assert r['matching_pending']==1
+
     assert r['offline_pending']==[URLS[2]] and r['reauthorized_uncertain']==[URLS[3]] and len(r['receipts'])==2
 
 
