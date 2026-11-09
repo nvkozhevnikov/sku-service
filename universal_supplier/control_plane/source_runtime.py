@@ -94,9 +94,21 @@ def checked_input(value,code):
     if value.get('format')!='source-runtime-input/v1' or value.get('supplier_code')!=code:raise ValueError('SOURCE_INPUT_NAMESPACE')
     if value.get('mode') not in ('REFRESH','DISCOVERY'):raise ValueError('SOURCE_INPUT_MODE')
     if value.get('engine_sha256')!=engine_fingerprint():
-        if not os.environ.get('STERBRUST_LIVE11_RECOVERY_FILE'):raise ValueError('SOURCE_ENGINE_CHANGED_REQUIRES_REVIEW')
-        from .source_recovery import allow_old_input
-        allow_old_input(value)
+        admitted=False
+        from . import automation_execution as _automation
+        session=getattr(_automation,'ACTIVE',None)
+        if session is not None:
+            # A signed mixed-recovery RESUME child legitimately carries its
+            # parent's frozen input; the block pins that exact parent engine.
+            block=((session.value['suppliers'].get(code) or {}).get('mixed_recovery') or {})
+            admitted=(block.get('format')=='commercial-mixed-recovery/v1'
+                and block.get('requires_operator_confirmation') is True
+                and block.get('source')==code
+                and block.get('parent_engine_sha256')==value.get('engine_sha256'))
+        if os.environ.get('STERBRUST_LIVE11_RECOVERY_FILE'):
+            from .source_recovery import allow_old_input
+            allow_old_input(value)
+        elif not admitted:raise ValueError('SOURCE_ENGINE_CHANGED_REQUIRES_REVIEW')
     entries=value.get('entries',[]);urls=set();ids=set()
     if len(entries)>100000:raise ValueError('SOURCE_INPUT_TOO_LARGE')
     for e in entries:

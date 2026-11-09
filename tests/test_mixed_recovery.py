@@ -225,3 +225,17 @@ def test_tick_resumes_whitelisted_parent_instead_of_failing_or_requeueing(tmp_pa
     assert cr.tick(scheduler,None)==[172]
     assert calls[0]['source_mode']=='RESUME' and calls[0]['resume_job_id']==JID
     assert not scheduler.blocked
+
+
+def test_frozen_parent_input_admitted_only_through_signed_block(monkeypatch):
+    from universal_supplier.control_plane import source_runtime as sr
+    value={'format':'source-runtime-input/v1','supplier_code':'intervesp','mode':'REFRESH','entries':[{'url':'https://intervesp.ru/catalog/group/product-detail/'}],'engine_sha256':'old-engine'}
+    monkeypatch.setattr(sr,'engine_fingerprint',lambda:'new-engine')
+    monkeypatch.delenv('STERBRUST_LIVE11_RECOVERY_FILE',raising=False)
+    monkeypatch.setattr(ae,'ACTIVE',None)
+    with pytest.raises(ValueError,match='SOURCE_ENGINE_CHANGED_REQUIRES_REVIEW'):
+        sr.checked_input(value,'intervesp')
+    block={'format':ae.MIXED_RECOVERY_KIND,'source':'intervesp','requires_operator_confirmation':True,
+        'parent_engine_sha256':'old-engine'}
+    monkeypatch.setattr(ae,'ACTIVE',session(block))
+    sr.checked_input(value,'intervesp')
