@@ -446,7 +446,10 @@ def check_sql_receipts(receipts,rows,offline=()):
     exactly by their pinned fingerprints and carry no observation."""
     committed={fp:r for fp,r in receipts.items() if r['state']=='COMMITTED'}
     offline=set(offline)
-    require(len(rows)==len(committed)+len(offline&{r[0] for r in rows}) and {r[0] for r in rows}==set(committed)|offline,
+    row_fps={r[0] for r in rows}
+    # An offline-pending capture may or may not have been persisted before the
+    # stop; either way its evidence file stays authoritative for the resume.
+    require(len(rows)==len(committed)+len(offline&row_fps) and row_fps==set(committed)|(offline&row_fps),
         'CONTINUATION_SQL_RECEIPT_MISMATCH')
     for fp,pid,ext,url,final,at,response,evidence,observation_offer,observation_same_time in rows:
         if fp in offline:continue
