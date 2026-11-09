@@ -14,6 +14,7 @@ def main(argv=None):
     p.add_argument('--limits',type=Path);p.add_argument('--not-before');p.add_argument('--execution-until')
     p.add_argument('--confirmed-commercial-targets',type=Path)
     p.add_argument('--continue-approval',type=Path);p.add_argument('--previous-sha256')
+    p.add_argument('--mixed-recovery',type=Path,help='operator mixed-recovery blocks {"<source>": block} for one mixed parent checkpoint')
     p.add_argument('--reuse-receipts',action='store_true',help='SELECT-only successor for a partially executed commercial grant; never replay COMMITTED/quarantine')
     p.add_argument('--output',type=Path);p.add_argument('--session',type=Path)
     p.add_argument('--resume-safe',action='store_true',help='explicit native safe resume within the SAME approved window; never UNKNOWN')
@@ -28,8 +29,10 @@ def main(argv=None):
         if args.output.exists():raise FileExistsError('APPROVAL_OUTPUT_ALREADY_EXISTS')
         if args.reuse_receipts:
             from universal_supplier.control_plane.commercial_continuation import prepare_receipts
+            mixed=(json.loads(args.mixed_recovery.read_text(encoding='utf-8'))
+                if args.mixed_recovery is not None else None)
             value=prepare_receipts(cfg,args.continue_approval,args.previous_sha256,
-                not_before=args.not_before,execution_until=args.execution_until)
+                not_before=args.not_before,execution_until=args.execution_until,mixed_recovery=mixed)
         elif args.confirmed_commercial_targets:
             from universal_supplier.control_plane.commercial_refresh import prepare
             value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until)

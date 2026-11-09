@@ -75,7 +75,7 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
         output.append({'entry':deepcopy(entry),'receipt':deepcopy(receipt),'state':state,'origin':dict(origin)})
     return output
 
-def pending_manifest(original,classified,*,parent_job_id,parent_manifest_sha256,retry_failed=False):
+def pending_manifest(original,classified,*,parent_job_id,parent_manifest_sha256,retry_failed=False,reauthorized_uncertain=frozenset()):
     """New pending-only manifest data; original snapshot remains byte-for-byte owned by caller."""
     expected={'source':original['supplier_code'],'job_id':parent_job_id,'manifest_sha256':parent_manifest_sha256}
     if any(r.get('origin')!=expected for r in classified):raise ValueError('CLASSIFICATION_OWNER_MISMATCH')
@@ -88,6 +88,7 @@ def pending_manifest(original,classified,*,parent_job_id,parent_manifest_sha256,
         if entry!=known[entry['url']]:raise ValueError('MANIFEST_ENTRY_CHANGED')
         if state=='NOT_REQUESTED' or (state=='FAILED' and retry_failed):http.append(deepcopy(entry))
         elif state=='HTTP_CAPTURED_NOT_COMMITTED':offline.append(deepcopy(row))
+        elif state=='UNCERTAIN' and entry['url'] in reauthorized_uncertain:http.append(deepcopy(entry))
         elif state=='UNCERTAIN':uncertain.append(entry['url'])
         elif state=='FAILED':failed.append(entry['url'])
         elif state=='QUARANTINED':quarantined.append(deepcopy(row))
@@ -174,6 +175,20 @@ class SourceCheckpoint:
             self.state['terminal'][url]={'state':'NOT_REQUESTED','receipt':deepcopy(receipt),'history':history}
             self.state['inflight'].pop(url)
             if url not in self.state['frontier']:self.state['frontier'].insert(0,url)
+    def reauthorize_uncertain(self,urls):
+        """Operator-signed mixed recovery only: proven no-response UNCERTAIN
+        claims re-enter the frontier; receipt history is preserved."""
+        with self._change():
+            for url in urls:
+                self.validator(url)
+                item=self.state['terminal'].get(url)
+                if item is None or item['state']!='UNCERTAIN':raise ValueError('REAUTHORIZED_URL_NOT_UNCERTAIN')
+                if url in self.state['inflight'] or url in self.state['frontier']:raise ValueError('REAUTHORIZED_URL_STATE_INVALID')
+                entry={'url':url,'state':'NOT_REQUESTED','operator_reauthorization':True,
+                    'origin':{'source':self.state['source'],'job_id':self.state['job_id'],'manifest_sha256':self.state['manifest_sha256']}}
+                self.state['terminal'][url]={'state':'NOT_REQUESTED','receipt':dict(entry),
+                    'history':item['history']+[entry]}
+                self.state['frontier'].insert(0,url)
     def quarantine_unrequested(self,receipt):
         """Only reuse an approved prior refusal; never invent transport/UNCERTAIN."""
         from .source_recovery import approved_scope_item

@@ -86,7 +86,7 @@ def resign_intervesp(value):
 def patched_lineage(monkeypatch):
     monkeypatch.setattr(cc,'validate_window',lambda *a,**k:None)
     holder=[]
-    monkeypatch.setattr(cc,'receipt_proof',lambda config,path,sha:holder[0] if holder else None)
+    monkeypatch.setattr(cc,'receipt_proof',lambda config,path,sha,**k:holder[0] if holder else None)
     return holder
 
 

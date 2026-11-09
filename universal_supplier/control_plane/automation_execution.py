@@ -9,6 +9,7 @@ from .source_jobs import RUNTIME_SOURCES
 ACTIVE=None
 ROOT=Path(__file__).resolve().parents[2]
 ENV='STERBRUST_AUTOMATION'
+MIXED_RECOVERY_KIND='commercial-mixed-recovery/v1'
 
 
 def require(condition,reason):
@@ -68,6 +69,28 @@ def load(path,sha,confirm=None,*,for_execution=False):
                     'AUTOMATION_ROBOTS_EXCEPTION_APPLIED_INVALID')
             require(exception['applied_min_request_interval_seconds']==rule['min_request_interval_seconds'],
                     'AUTOMATION_ROBOTS_EXCEPTION_RATE_MISMATCH')
+        recovery=rule.get('mixed_recovery')
+        if recovery is not None:
+            import re as _re
+            require(recovery.get('format')==MIXED_RECOVERY_KIND and recovery.get('source')==code
+                and recovery.get('host')==rule.get('host')
+                and recovery.get('requires_operator_confirmation') is True,
+                'AUTOMATION_MIXED_RECOVERY_CONTRACT_INVALID')
+            require(type(recovery.get('parent_job_id')) is int and recovery['parent_job_id']>0,
+                'AUTOMATION_MIXED_RECOVERY_PARENT_INVALID')
+            require(isinstance(recovery.get('parent_manifest_sha256'),str)
+                and _re.fullmatch(r'[0-9a-f]{64}',recovery['parent_manifest_sha256']) is not None,
+                'AUTOMATION_MIXED_RECOVERY_MANIFEST_INVALID')
+            require(isinstance(recovery.get('parent_approval_sha256'),str)
+                and _re.fullmatch(r'[0-9a-f]{64}',recovery['parent_approval_sha256']) is not None,
+                'AUTOMATION_MIXED_RECOVERY_APPROVAL_INVALID')
+            require(isinstance(recovery.get('parent_engine_sha256'),str)
+                and _re.fullmatch(r'[0-9a-f]{64}',recovery['parent_engine_sha256']) is not None,
+                'AUTOMATION_MIXED_RECOVERY_ENGINE_INVALID')
+            items=recovery.get('reauthorized_uncertain')
+            require(isinstance(items,dict) and items and all(isinstance(url,str) and isinstance(item,dict)
+                and item.get('transport_response_available') is False for url,item in items.items()),
+                'AUTOMATION_MIXED_RECOVERY_URLS_INVALID')
         for phase in ('REFRESH','DISCOVERY'):
             cap=rule['limits'][phase]
             require(type(cap) is int and (0 if is_refresh(value) else 1)<=cap<=100000,'AUTOMATION_EXPLICIT_PRODUCT_CAP_REQUIRED')
@@ -87,6 +110,26 @@ def require_active(sha=None):
 
 def stop_reason():
     return ACTIVE.reason() if ACTIVE else None
+
+
+def mixed_recovery(code,owner,sha):
+    """Operator-signed admission for one mixed parent checkpoint: its named
+    UNCERTAIN urls (proven no-response transport) may be re-requested and the
+    parent resumed into this session. Inert outside the active approval."""
+    session=ACTIVE
+    if session is None:return None
+    block=((session.value['suppliers'].get(code) or {}).get('mixed_recovery') or {})
+    if block.get('format')!=MIXED_RECOVERY_KIND or block.get('source')!=code:return None
+    if block.get('requires_operator_confirmation') is not True:return None
+    if block.get('parent_job_id')!=owner or block.get('parent_manifest_sha256')!=sha:return None
+    items=block.get('reauthorized_uncertain')
+    if not isinstance(items,dict) or not items:return None
+    return block if all(isinstance(item,dict) and item.get('transport_response_available') is False
+        for item in items.values()) else None
+
+
+def reauthorized_uncertain(code,owner,sha):
+    return set(((mixed_recovery(code,owner,sha) or {}).get('reauthorized_uncertain') or {}))
 
 
 def source_stop_reason(code):

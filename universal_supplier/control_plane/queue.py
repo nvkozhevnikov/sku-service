@@ -263,7 +263,17 @@ class PostgresJobQueue:
                     parent={'status':previous[0],'supplier_code':code,'settings':previous[2],'result':(previous[3] or {}).get('source_runtime',{})}
                     if automation_sha256 is not None:
                         prior_marker=previous[2].get('automation') or {}
-                        if prior_marker.get('approval_sha256')!=automation_sha256:raise PermissionError('AUTOMATION_RESUME_APPROVAL_CHANGED')
+                        if prior_marker.get('approval_sha256')!=automation_sha256:
+                            # Cross-approval resume only through the operator-signed
+                            # mixed-recovery block pinning this exact parent job and
+                            # its own approval.
+                            from .automation_execution import mixed_recovery
+                            prior_rt=(previous[3] or {}).get('source_runtime') or {}
+                            block=(mixed_recovery(code,prior_rt.get('owner_job_id'),prior_rt.get('input_sha256'))
+                                if prior_rt.get('owner_job_id') and prior_rt.get('input_sha256') else None)
+                            if (block is None or block.get('parent_job_id')!=resume_job_id or
+                                    block.get('parent_approval_sha256')!=prior_marker.get('approval_sha256')):
+                                raise PermissionError('AUTOMATION_RESUME_APPROVAL_CHANGED')
                         snapshot=deepcopy(previous[2])
                 snapshot=prepare_snapshot(snapshot,source_mode,known_rows=known,resume=parent,config=self.config)
                 if source_mode=='RESUME' and previous[2].get('source_batch'):

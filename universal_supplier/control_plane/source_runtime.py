@@ -434,10 +434,18 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     if r and r['state']=='NOT_REQUESTED':return 'NOT_FOUND'
                     return backend.probe(e,r) if backend else 'UNKNOWN'
                 classified=classify(entries,receipts,probe,source=code,parent_job_id=owner,manifest_sha256=sha)
-                return classified,pending_manifest({'supplier_code':code,'entries':entries},classified,parent_job_id=owner,parent_manifest_sha256=sha)
+                from . import automation_execution
+                return classified,pending_manifest({'supplier_code':code,'entries':entries},classified,parent_job_id=owner,
+                    parent_manifest_sha256=sha,
+                    reauthorized_uncertain=automation_execution.reauthorized_uncertain(code,owner,sha))
             if mode=='RESUME':
                 classified,plan=reconcile()
                 if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR')
+                from . import automation_execution as _automation
+                reauth=_automation.reauthorized_uncertain(code,owner,sha)
+                if reauth:
+                    uncertain_now=[u for u in sorted(reauth) if cp.state['terminal'].get(u,{}).get('state')=='UNCERTAIN']
+                    if uncertain_now:cp.reauthorize_uncertain(uncertain_now)
                 from .source_recovery import matching_only_receipts
                 reused_matching=matching_only_receipts(approved,code,cp.state) if approved else {}
                 reconciled_receipts=[]

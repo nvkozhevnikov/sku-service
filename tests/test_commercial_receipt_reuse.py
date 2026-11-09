@@ -147,15 +147,23 @@ def test_unproven_quarantine_still_blocks_pending_source(monkeypatch):
     with pytest.raises(PermissionError,match='IDENTITY_OR_QUARANTINE'):cr.scope_rows(None,[e],accounted_quarantine={-1})
 
 
-@pytest.mark.parametrize('field',['execution_until','not_before','targets','policy'])
+@pytest.mark.parametrize('field',['execution_until','not_before','targets'])
 def test_new_exact_grant_cannot_silently_change_original_window_scope_or_policy(tmp_path,monkeypatch,field):
     v=value();old=tmp_path/'previous.json';old.write_text(json.dumps(F['old']),encoding='utf-8');v['continuation']['previous_path']=str(old)
     if field in ('not_before','execution_until'):v[field]='2026-11-01T13:00:00Z'
     elif field=='targets':v['suppliers']['intervesp']['targets'].pop()
-    else:v['suppliers']['intervesp']['policy']['min_request_interval_seconds']=0.01
-    monkeypatch.setattr(cc,'receipt_proof',lambda *a:v['continuation'])
-    reason='EXPLICIT_WINDOW_APPROVAL_REQUIRED' if field in ('not_before','execution_until') else 'ORIGINAL_CONTRACT_CHANGED'
+    monkeypatch.setattr(cc,'receipt_proof',lambda *a,**k:v['continuation'])
+    reason='EXPLICIT_WINDOW_APPROVAL_REQUIRED' if field in ('not_before','execution_until') else 'NOT_REQUESTED_SCOPE_CHANGED'
     with pytest.raises(PermissionError,match=reason):cc.validate_live(None,v)
+
+
+def test_not_requested_source_pacing_resign_is_the_signed_not_silent_path(tmp_path,monkeypatch):
+    v=value();old=tmp_path/'previous.json';old.write_text(json.dumps(F['old']),encoding='utf-8');v['continuation']['previous_path']=str(old)
+    v['suppliers']['intervesp']['policy']['min_request_interval_seconds']=5.0
+    v['suppliers']['intervesp']['min_request_interval_seconds']=5.0
+    monkeypatch.setattr(cc,'receipt_proof',lambda *a,**k:v['continuation'])
+    monkeypatch.setattr(cc,'validate_window',lambda *a,**k:None)
+    assert cc.validate_live(None,v) is None
 
 
 def test_parser_delta_needs_separate_review(monkeypatch):

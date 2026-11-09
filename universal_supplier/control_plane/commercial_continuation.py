@@ -147,10 +147,16 @@ def validate_live(config,value):
         # policy (incl. the robots exception). Every REUSE_TERMINAL source,
         # and everything but those fields, stays byte-frozen.
         fresh={j['source'] for j in p['jobs'] if j.get('disposition')=='NOT_REQUESTED'}
+        recover={j['source'] for j in p['jobs'] if j.get('disposition')=='RECOVER_RESUME'}
         re_signable={'policy','rate_sha256','settings_sha256','settings_after',
             'min_request_interval_seconds','robots_policy_exception'}
         for code,rule in old['suppliers'].items():
             new=value['suppliers'][code]
+            if code in recover:
+                # Only the operator-signed mixed-recovery block may be added;
+                # everything else, including pacing, stays byte-frozen.
+                require({k:v for k,v in new.items() if k!='mixed_recovery'}==rule,
+                    'CONTINUATION_FROZEN_SOURCE_CONTRACT_CHANGED');continue
             if code not in fresh:
                 require(new==rule,'CONTINUATION_FROZEN_SOURCE_CONTRACT_CHANGED');continue
             require({k:v for k,v in rule.items() if k not in re_signable}==
@@ -160,7 +166,8 @@ def validate_live(config,value):
                 if code not in fresh:
                     require(value['host_policies'][host][code]==digest_value,'CONTINUATION_FROZEN_HOST_POLICY_CHANGED')
         validate_window(value,*original_window(old))
-        require(p==receipt_proof(config,p['previous_path'],p['previous_approval_sha256']),
+        blocks={code:value['suppliers'][code].get('mixed_recovery') for code in recover}
+        require(p==receipt_proof(config,p['previous_path'],p['previous_approval_sha256'],mixed_recovery=blocks),
             'CONTINUATION_DURABLE_RECEIPTS_CHANGED')
         return
     require(p==proof(config,p['previous_path'],p['previous_approval_sha256']), 'CONTINUATION_DURABLE_PROOF_CHANGED')
@@ -262,10 +269,83 @@ def verify_capture(folder,cap):
     require(file_sha(path)==cap['evidence_sha256'],'CONTINUATION_CAPTURE_BYTES_CHANGED')
 
 
-def check_receipt_files(folder,code,jid,run,status,runtime,expected,previous_engine,*,verify=verify_capture):
+def check_mixed_recovery(folder,code,jid,run,status,runtime,expected,previous_engine,recovery,*,verify=verify_capture):
+    """Operator-signed admission for ONE mixed checkpoint: committed receipts
+    are reused, a captured-uncommitted URL is proven offline-pending, and the
+    named UNCERTAIN URLs (no-response transport, evidence-pinned) may be
+    re-requested through the session's signed block. Nothing else."""
+    folder=Path(folder)
+    original=json.loads((folder/'input.json').read_text(encoding='utf-8'))
+    cp=checkpoint(folder/'checkpoint.json')
+    result=json.loads((folder/'result.json').read_text(encoding='utf-8'))
+    require(original['supplier_code']==code and original['mode']=='REFRESH' and original['entries']==expected,
+        'CONTINUATION_FROZEN_INPUT_CHANGED')
+    require(original['engine_sha256']==previous_engine and digest(original)==runtime['input_sha256'],
+        'CONTINUATION_PREVIOUS_ENGINE_OR_INPUT_CHANGED')
+    require(cp['source']==code and cp['job_id']==jid and cp['manifest_sha256']==runtime['input_sha256'] and
+        result['owner_job_id']==jid and result['crawl_run_id']==run and result['input_sha256']==runtime['input_sha256'],
+        'CONTINUATION_CHECKPOINT_IDENTITY_CHANGED')
+    require(status=='partial' and runtime.get('termination_reason')=='AUTOMATION_UNKNOWN_HTTP_OUTCOME'
+        and result.get('stop_scope')=='system' and not cp['inflight'],
+        'CONTINUATION_MIXED_RECOVERY_STATE_NOT_SAFE')
+    require(recovery.get('parent_job_id')==jid and recovery.get('source')==code
+        and recovery.get('parent_manifest_sha256')==runtime['input_sha256'],
+        'CONTINUATION_MIXED_RECOVERY_BINDING_CHANGED')
+    entries={e['url']:e for e in expected}
+    require(len(entries)==len(expected) and set(cp['terminal'])|set(cp['frontier'])==set(entries)
+        and not set(cp['terminal'])&set(cp['frontier']),'CONTINUATION_MIXED_SCOPE_CHANGED')
+    reauthorized=recovery.get('reauthorized_uncertain') or {}
+    record={'disposition':'RECOVER_RESUME','committed':0,'quarantined':0,'quarantine_ids':[],
+        'not_requested':0,'recover_pending':0,'offline_pending':[],'offline_fingerprints':[],
+        'reauthorized_uncertain':[],
+        'files':{n:file_sha(folder/(n+'.json')) for n in ('input','checkpoint','result')},'receipts':{}}
+    for url,item in cp['terminal'].items():
+        state=item['state'];r=item['receipt'];entry=entries[url]
+        if state=='COMMITTED':
+            mr=r.get('matching_receipt') or {}
+            require(r.get('sql_verified') is True and mr.get('status')=='succeeded' and mr.get('job_id')==jid
+                and mr.get('run_id')==run and mr.get('external_id')==r['external_id'],
+                'CONTINUATION_MIXED_COMMIT_NOT_DURABLE')
+            cap=r['original_capture_metadata']
+            require(cap['requested_url']==cap['final_url']==url and cap['http_status']==200 and not cap.get('redirects'),
+                'CONTINUATION_CAPTURE_IDENTITY_CHANGED')
+            verify(folder,cap)
+            fp=r['capture_fingerprint'];require(fp not in record['receipts'],'CONTINUATION_DUPLICATE_RECEIPT')
+            record['receipts'][fp]={'state':'COMMITTED','source_product_id':entry['source_product_id'],
+                'external_id':r['external_id'],'url':url,'observed_at':cap['observed_at'],
+                'response_sha256':cap['response_sha256'],'evidence_sha256':cap['evidence_sha256']}
+            record['committed']+=1
+        elif state=='HTTP_CAPTURED_NOT_COMMITTED':
+            cap=r.get('original_capture_metadata') or {}
+            require(cap.get('requested_url')==cap.get('final_url')==url and cap.get('http_status')==200
+                and len(r.get('capture_fingerprint',''))==64,'CONTINUATION_MIXED_CAPTURE_INVALID')
+            verify(folder,cap)
+            record['offline_pending'].append(url);record['recover_pending']+=1
+            record['offline_fingerprints'].append(r['capture_fingerprint'])
+        elif state=='UNCERTAIN':
+            item=reauthorized.get(url) or {}
+            evidence_file=folder/'transport-errors'/((item.get('transport_evidence_sha256') or '')+'.json')
+            require(item.get('transport_response_available') is False
+                and isinstance(item.get('transport_evidence_sha256'),str)
+                and len(item['transport_evidence_sha256'])==64
+                and evidence_file.is_file()
+                and file_sha(evidence_file)==item['transport_evidence_sha256'],
+                'CONTINUATION_MIXED_UNCERTAIN_NOT_REAUTHORIZED')
+            record['reauthorized_uncertain'].append(url);record['recover_pending']+=1
+        else:raise PermissionError('CONTINUATION_MIXED_UNEXPECTED_STATE')
+    record['not_requested']=len(cp['frontier'])
+    require(result['sql_committed']==runtime.get('sql_committed')==record['committed']
+        and result['processed']==runtime.get('processed')==len(cp['terminal']),
+        'CONTINUATION_MIXED_RESULT_COUNTS_CHANGED')
+    record['offline_pending'].sort();record['reauthorized_uncertain'].sort()
+    return record
+
+
+def check_receipt_files(folder,code,jid,run,status,runtime,expected,previous_engine,*,verify=verify_capture,recovery=None):
     """Only entire accounted phases OR entirely unrequested phases are reusable.
 
-    Mixed, cached and uncertain phases need native RESUME, not this admission.
+    Mixed, cached and uncertain phases need native RESUME, not this admission —
+    except the one operator-signed mixed-recovery parent bound to its session.
     """
     folder=Path(folder)
     original=json.loads((folder/'input.json').read_text(encoding='utf-8'))
@@ -280,6 +360,8 @@ def check_receipt_files(folder,code,jid,run,status,runtime,expected,previous_eng
         'CONTINUATION_CHECKPOINT_IDENTITY_CHANGED')
     record={'disposition':'REUSE_TERMINAL','committed':0,'quarantined':0,'quarantine_ids':[],
         'files':{n:file_sha(folder/(n+'.json')) for n in ('input','checkpoint','result')},'receipts':{}}
+    if recovery is not None:
+        return check_mixed_recovery(folder,code,jid,run,status,runtime,expected,previous_engine,recovery,verify=verify)
     if status=='partial' and runtime.get('termination_reason') in ('SOURCE_ROBOTS_UNAVAILABLE','ROBOTS_REQUIRES_SLOWER_PROFILE'):
         record.update(check_files(folder,code,jid,runtime,expected,previous_engine))
         require(result.get('stop_scope')=='supplier' and not result.get('global_stop_reason'),
@@ -325,12 +407,17 @@ def check_receipt_files(folder,code,jid,run,status,runtime,expected,previous_eng
     return record
 
 
-def check_sql_receipts(receipts,rows):
-    """Rows join each capture to its exact observation; duplicates/extra SQL STOP."""
+def check_sql_receipts(receipts,rows,offline=()):
+    """Rows join each capture to its exact observation; duplicates/extra SQL STOP.
+
+    Offline-pending captures (saved response, commit not finished) are allowed
+    exactly by their pinned fingerprints and carry no observation."""
     committed={fp:r for fp,r in receipts.items() if r['state']=='COMMITTED'}
-    require(len(rows)==len(committed) and {r[0] for r in rows}==set(committed),
+    offline=set(offline)
+    require(len(rows)==len(committed)+len(offline&{r[0] for r in rows}) and {r[0] for r in rows}==set(committed)|offline,
         'CONTINUATION_SQL_RECEIPT_MISMATCH')
     for fp,pid,ext,url,final,at,response,evidence,observation_offer,observation_same_time in rows:
+        if fp in offline:continue
         r=committed[fp]
         require((pid,ext,url,final,response,evidence)==(r['source_product_id'],r['external_id'],r['url'],r['url'],r['response_sha256'],r['evidence_sha256']) and
             datetime_iso(at)==datetime_iso(r['observed_at']) and observation_offer==r['offer_id'] and observation_same_time,
@@ -342,7 +429,7 @@ def datetime_iso(value):
     return (datetime.fromisoformat(value) if isinstance(value,str) else value).astimezone(timezone.utc).isoformat()
 
 
-def receipt_proof(config,previous_path,previous_sha):
+def receipt_proof(config,previous_path,previous_sha,*,mixed_recovery=None):
     path=Path(previous_path).resolve()
     require(file_sha(path)==previous_sha,'CONTINUATION_PREVIOUS_APPROVAL_CHANGED')
     old=json.loads(path.read_text(encoding='utf-8'))
@@ -352,7 +439,7 @@ def receipt_proof(config,previous_path,previous_sha):
     changes=compatibility(old)
     inherited=inherited_jobs(old);root_start,root_end=original_window(old)
     targets=[e for r in old['suppliers'].values() for e in r['targets']]
-    jobs=[];receipts={};seen=set()
+    jobs=[];receipts={};seen=set();offline=set()
     with guarded_connect(config,autocommit=True,options='-c default_transaction_read_only=on -c statement_timeout=120000') as c:
         c.execute('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
         Session(config,old,previous_sha,ROOT,approval_path=path).check_mappings(c)
@@ -378,9 +465,11 @@ def receipt_proof(config,previous_path,previous_sha):
                 'CONTINUATION_JOB_INPUT_OR_POLICY_CHANGED')
             folder=ROOT/'reports/source-runner-evidence'/code/('job-'+str(jid))
             require(Path(rt.get('checkpoint','')).resolve()==(folder/'checkpoint.json').resolve(),'CONTINUATION_CHECKPOINT_PATH_CHANGED')
-            checked=check_receipt_files(folder,code,jid,run,status,rt,expected,expected_engine)
+            checked=check_receipt_files(folder,code,jid,run,status,rt,expected,expected_engine,
+                recovery=(mixed_recovery or {}).get(code))
             require(not set(receipts)&set(checked['receipts']),'CONTINUATION_DUPLICATE_RECEIPT')
             receipts.update(checked.pop('receipts'))
+            offline.update(checked.pop('offline_fingerprints',[]))
             jobs.append({'job_id':jid,'source':code,'status':status,'run_id':run,
                 'approval_sha256':expected_grant,'input_engine_sha256':expected_engine,**checked})
         require(seen=={code for code,r in old['suppliers'].items() if r['targets']},'CONTINUATION_MISSING_SOURCE_JOB')
@@ -393,7 +482,7 @@ def receipt_proof(config,previous_path,previous_sha):
             ([e['source_product_id'] for e in targets],root_start,list(receipts))).fetchall()
         target_by_id={e['source_product_id']:e for e in targets}
         for r in receipts.values():r['offer_id']=target_by_id[r['source_product_id']]['offer_id']
-        check_sql_receipts(receipts,saved)
+        check_sql_receipts(receipts,saved,offline=offline)
         maps=c.execute('SELECT id,supplier_id,external_id,catalog_product_id FROM source_products WHERE catalog_product_id IS NOT NULL ORDER BY id').fetchall()
         protected=c.execute('SELECT id,md5(row_to_json(j)::text) FROM crawl_jobs j ORDER BY id').fetchall()
         old_ids={r[0] for r in old['protected_jobs']}
@@ -410,24 +499,28 @@ def receipt_proof(config,previous_path,previous_sha):
         'previous_effective_window':[old['not_before'],old['execution_until']],
         'compatible_code_sha256':changes,'jobs':jobs,'scope_count':1270,
         'committed':sum(j['committed'] for j in jobs),'quarantined':sum(j['quarantined'] for j in jobs),
-        'not_requested':sum(len(old['suppliers'][j['source']]['targets']) for j in jobs if j['disposition']=='NOT_REQUESTED'),
+        'not_requested':sum(len(old['suppliers'][j['source']]['targets']) for j in jobs if j['disposition']=='NOT_REQUESTED')
+            +sum(j.get('not_requested',0) for j in jobs if j['disposition']=='RECOVER_RESUME'),
         'sql_receipts_sha256':digest(normal(saved)),'all_mappings_sha256':digest(normal(maps)),
         'current_matching_sha256':digest(normal(matches)),'protected_jobs':normal(protected),'original1282_exact':True}
 
 
-def prepare_receipts(config,previous_path,previous_sha,*,not_before=None,execution_until=None):
+def prepare_receipts(config,previous_path,previous_sha,*,not_before=None,execution_until=None,mixed_recovery=None):
     """SELECT-only successor; any new window explicitly awaits exact approval."""
     from .commercial_refresh import ROOT as repo,validate,scope_rows
     from .source_runtime import engine_fingerprint
     from copy import deepcopy
     old=json.loads(Path(previous_path).read_text(encoding='utf-8'))
-    p=receipt_proof(config,previous_path,previous_sha)
+    p=receipt_proof(config,previous_path,previous_sha,mixed_recovery=mixed_recovery)
     value=deepcopy(old)
     value['head']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()
     value['engine']=engine_fingerprint();value['continuation']=p
     value['operation_id']=old.get('operation_id',previous_sha);value['protected_jobs']=p['protected_jobs']
     value.pop('operator_startup_recovery',None)
     value['requires_operator_confirmation']=True
+    for code,block in (mixed_recovery or {}).items():
+        require(block.get('source')==code,'CONTINUATION_MIXED_RECOVERY_SOURCE_MISMATCH')
+        value['suppliers'][code]['mixed_recovery']=block
     from universal_supplier.public_connection import public_tls_identity
     value['transport_tls']=public_tls_identity()
     require((not_before is None)==(execution_until is None),'CONTINUATION_BOTH_WINDOW_BOUNDS_REQUIRED')

@@ -82,6 +82,9 @@ def verify_resume(code,owner,sha,original,config):
     try:
         def probe(entry,r):return 'NOT_FOUND' if r and r['state']=='NOT_REQUESTED' else backend.probe(entry,r)
         rows=classify(entries,receipts,probe,source=code,parent_job_id=owner,manifest_sha256=sha)
-        plan=pending_manifest({'supplier_code':code,'entries':entries},rows,parent_job_id=owner,parent_manifest_sha256=sha)
+        from . import automation_execution
+        reauthorized=automation_execution.reauthorized_uncertain(code,owner,sha)
+        plan=pending_manifest({'supplier_code':code,'entries':entries},rows,parent_job_id=owner,
+            parent_manifest_sha256=sha,reauthorized_uncertain=reauthorized)
         if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME')
     finally:backend.close()

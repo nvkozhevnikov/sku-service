@@ -20,16 +20,29 @@ def is_refresh(value):return value.get('purpose')==PURPOSE
 
 
 def matrix_pins(value,matrix):
-    """Exact file pin, or only proven NOT_REQUESTED sources' rows re-signed."""
+    """Exact file pin; otherwise row drift is ruled by the continuation.
+
+    REUSE_TERMINAL rows stay byte-pinned. NOT_REQUESTED rows are free (the
+    successor re-signs and exactly pins the whole file). Rows of sources the
+    continuation never covered — and approvals without a continuation — may
+    have drifted through later signed re-issues; those rows must remain
+    self-consistent signed profiles."""
     if hashlib.sha256(Path(matrix).read_bytes()).hexdigest()==value['matrix_sha256']:return
     p=value.get('continuation') or {}
-    fresh={j['source'] for j in p.get('jobs',[]) if
-        p.get('kind')=='commercial-receipt-continuation/v1' and j.get('disposition')=='NOT_REQUESTED'}
-    require(fresh,'COMMERCIAL_REFRESH_MATRIX_CHANGED')
+    jobs=p.get('jobs') if p.get('kind')=='commercial-receipt-continuation/v1' else None
+    fresh={j['source'] for j in (jobs or []) if j.get('disposition')=='NOT_REQUESTED'}
+    frozen={j['source'] for j in (jobs or []) if j.get('disposition')=='REUSE_TERMINAL'}
     rows={r['SOURCE']:r for r in csv.DictReader(Path(matrix).open(encoding='utf-8-sig',newline=''))}
+    from .host_fetch import policy_digest
+    from .rate_control import DomainRatePolicy
     for code,rule in value['suppliers'].items():
+        row=rows.get(code);digest_value=value['host_policies'][rule['host']][code]
+        if row is None or row.get('APPROVAL_DIGEST_SHA256')==digest_value:continue
         if code in fresh:continue
-        require(rows.get(code,{}).get('APPROVAL_DIGEST_SHA256')==value['host_policies'][rule['host']][code],
+        if code in frozen:
+            require(False,'COMMERCIAL_REFRESH_MATRIX_CHANGED')
+        require(row.get('APPROVAL_DIGEST_SHA256')==policy_digest(code,rule['host'],
+            DomainRatePolicy.from_mapping(json.loads(row['RATE_POLICY_JSON'])),row.get('APPROVAL_REFERENCE')),
             'COMMERCIAL_REFRESH_MATRIX_CHANGED')
 
 
@@ -52,8 +65,9 @@ def validate(value):
         p=value['continuation']
         from .commercial_continuation import RECEIPT_KIND,validate_window
         if p.get('kind')==RECEIPT_KIND:
-            require(p.get('committed',0)+p.get('quarantined',0)+p.get('not_requested',0)==1270 and
-                all(j['disposition'] in ('REUSE_TERMINAL','NOT_REQUESTED') for j in p['jobs']),
+            pending=sum(j.get('recover_pending',0) for j in p['jobs'] if j.get('disposition')=='RECOVER_RESUME')
+            require(p.get('committed',0)+p.get('quarantined',0)+p.get('not_requested',0)+pending==1270 and
+                all(j['disposition'] in ('REUSE_TERMINAL','NOT_REQUESTED','RECOVER_RESUME') for j in p['jobs']),
                 'CONTINUATION_RECEIPT_ACCOUNTING_CHANGED')
             validate_window(value,p['not_before'],p['execution_until'])
         else:
@@ -153,7 +167,15 @@ def validate_snapshot(snapshot,session):
     expected=[{'source_product_id':r['source_product_id'],'source_external_id':r['external_id'],'url':r['source_url']} for r in rule['targets']]
     require(snapshot['source_input']['entries']==expected and snapshot['source_input']['mode']=='REFRESH',
         'COMMERCIAL_REFRESH_JOB_SCOPE_CHANGED')
-    require(snapshot['source_input']['engine_sha256']==session.value['engine'],'COMMERCIAL_REFRESH_JOB_ENGINE_CHANGED')
+    engine_ok=snapshot['source_input']['engine_sha256']==session.value['engine']
+    if not engine_ok and (snapshot['crawl_settings'] or {}).get('resume_owner_job_id'):
+        # A mixed-recovery RESUME child carries its parent's frozen input; only
+        # the operator-signed block may pin that exact parent engine.
+        block=rule.get('mixed_recovery') or {}
+        engine_ok=(block.get('format')=='commercial-mixed-recovery/v1'
+            and block.get('parent_job_id')==(snapshot['crawl_settings'] or {}).get('resume_owner_job_id')
+            and block.get('parent_engine_sha256')==snapshot['source_input']['engine_sha256'])
+    require(engine_ok,'COMMERCIAL_REFRESH_JOB_ENGINE_CHANGED')
     require(not snapshot.get('source_batch'),'COMMERCIAL_REFRESH_CANNOT_RECOVER_LIVE11')
 
 
@@ -232,6 +254,15 @@ def tick(scheduler,now):
                 FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.supplier_id=%s
                 AND j.settings_snapshot->'automation'->>'approval_sha256'=%s ORDER BY j.id DESC LIMIT 1''',(r['supplier_id'],session.sha))
             previous=q.fetchone()
+            if previous is None:
+                # A signed mixed-recovery parent job is the explicit previous
+                # occurrence for its source inside this window.
+                block=r.get('mixed_recovery') or {}
+                if block.get('format')=='commercial-mixed-recovery/v1' and type(block.get('parent_job_id')) is int:
+                    q.execute('''SELECT j.id,j.status,j.crawl_run_id,j.settings_snapshot,r.metadata,j.error_message
+                        FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
+                        WHERE j.id=%s AND j.supplier_id=%s''',(block['parent_job_id'],r['supplier_id']))
+                    previous=q.fetchone()
         resume=None
         if previous:
             jid,status,run,snapshot,metadata,error=previous
@@ -247,11 +278,17 @@ def tick(scheduler,now):
                 if hasattr(session,'pause_source'):session.pause_source(code,reason)
                 scheduler.blocked[code]=reason;continue
             explicit_stop_resume=explicit and str(reason).startswith('OPERATOR') and rt.get('resume_available') and not rt.get('resume_uncertain') and not rt.get('resume_failed')
-            if run is not None and failure_scope(reason,rt)=='system' and not explicit_stop_resume:
+            from . import automation_execution
+            recovery_reauth=automation_execution.reauthorized_uncertain(code,rt.get('owner_job_id'),rt.get('input_sha256')) \
+                if rt.get('owner_job_id') and rt.get('input_sha256') else set()
+            # Operator-signed mixed recovery: every UNCERTAIN url of this exact
+            # parent is reauthorized, so the resume is an explicit reviewed path.
+            whitelisted=bool(recovery_reauth) and set(rt.get('resume_uncertain') or [])<=recovery_reauth and not rt.get('resume_failed')
+            if run is not None and failure_scope(reason,rt)=='system' and not explicit_stop_resume and not whitelisted:
                 session.fail('AUTOMATION_CRITICAL_JOB:'+str(reason)[:180]);session.check()
             if run is None and explicit and status=='cancelled' and error in ('AUTOMATION_STOP','AUTOMATION_WINDOW_STOP'):
                 pass  # Never started: original frozen scope, same bounded occurrence.
-            elif run is None or not rt.get('resume_available') or rt.get('resume_uncertain') or rt.get('resume_failed') or str(reason).startswith(('SOURCE_BLOCKED','SOURCE_CARD_ERROR_THRESHOLD','SOURCE_IDENTITY_MASS_FAILURE','SOURCE_HTTP_CIRCUIT','SOURCE_NETWORK')) or (str(reason).startswith('OPERATOR') and not explicit):
+            elif run is None or (not whitelisted and (not rt.get('resume_available') or rt.get('resume_uncertain') or rt.get('resume_failed'))) or str(reason).startswith(('SOURCE_BLOCKED','SOURCE_CARD_ERROR_THRESHOLD','SOURCE_IDENTITY_MASS_FAILURE','SOURCE_HTTP_CIRCUIT','SOURCE_NETWORK')) or (str(reason).startswith('OPERATOR') and not explicit):
                 scheduler.blocked[code]=reason;continue
             else:scheduler.queue.source_resume_status(jid);resume=jid
         args={'trigger_type':'schedule','crawl_type':'full','scheduled_for':datetime.fromisoformat(session.value['not_before']),
