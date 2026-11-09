@@ -253,8 +253,27 @@ def inherited_jobs(old):
         require(file_sha(path)==p['previous_approval_sha256'],'CONTINUATION_ANCESTOR_APPROVAL_CHANGED')
         parent=json.loads(path.read_text(encoding='utf-8'))
         require(parent.get('commercial_only') is True and all(parent[k]==old[k] for k in
-            ('purpose','scope_sha256','target','suppliers','host_policies','mappings1282','matrix_sha256','protected_live11_batch_id')),
+            ('purpose','scope_sha256','target','mappings1282','protected_live11_batch_id')),
             'CONTINUATION_ANCESTOR_SCOPE_CHANGED')
+        # A NOT_REQUESTED source may have been re-signed (pacing, robots
+        # exception, mixed recovery) in this link of the chain; everything
+        # else stays byte-frozen down the lineage.
+        fresh={j['source'] for j in (p.get('jobs') or []) if j.get('disposition')=='NOT_REQUESTED'}
+        re_signable={'policy','rate_sha256','settings_sha256','settings_after',
+            'min_request_interval_seconds','robots_policy_exception','mixed_recovery'}
+        for code,rule in parent['suppliers'].items():
+            new=old['suppliers'][code]
+            if code not in fresh:
+                require(new==rule,'CONTINUATION_ANCESTOR_SCOPE_CHANGED');continue
+            require({k:v for k,v in rule.items() if k not in re_signable}==
+                {k:v for k,v in new.items() if k not in re_signable},'CONTINUATION_ANCESTOR_SCOPE_CHANGED')
+        for host,entries in parent['host_policies'].items():
+            for code,digest_value in entries.items():
+                if code not in fresh:
+                    require(old['host_policies'][host][code]==digest_value,'CONTINUATION_ANCESTOR_SCOPE_CHANGED')
+        if parent['matrix_sha256']!=old['matrix_sha256']:
+            from .commercial_refresh import matrix_pins
+            matrix_pins(parent,ROOT/'config/live11_approval_matrix.csv')
         for j in p['jobs']:
             folder=ROOT/'reports/source-runner-evidence'/j['source']/('job-'+str(j['job_id']))
             require(all(file_sha(folder/(n+'.json'))==j['files'][n] for n in ('input','checkpoint','result')),
