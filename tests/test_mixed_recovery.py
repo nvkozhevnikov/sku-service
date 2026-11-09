@@ -62,7 +62,10 @@ def check(tmp_path,value):
 
 def test_mixed_checkpoint_accounted_per_state(tmp_path):
     v=evidence(tmp_path);r=check(tmp_path,v)
-    assert r['disposition']=='RECOVER_RESUME' and (r['committed'],r['not_requested'],r['recover_pending'])==(2,1,2)
+    assert (r['committed'],r['not_requested'],r['recover_pending'])==(2,1,2)
+    def pending(v):v['cp']['terminal'][URLS[0]]['receipt']['matching_receipt']=None
+    r=evidence(tmp_path,pending);r=check(tmp_path,r)
+    assert r['matching_pending']==1
     assert r['offline_pending']==[URLS[2]] and r['reauthorized_uncertain']==[URLS[3]] and len(r['receipts'])==2
 
 
@@ -77,8 +80,10 @@ def test_missing_transport_evidence_rejects(tmp_path):
 
 
 def test_weak_commit_or_scope_drift_rejects(tmp_path):
-    def commit(v):v['cp']['terminal'][URLS[0]]['receipt']['matching_receipt']=None
+    def commit(v):v['cp']['terminal'][URLS[0]]['receipt']['matching_receipt']={'status':'succeeded','job_id':JID,'run_id':999,'external_id':'x1'}
     with pytest.raises(PermissionError,match='MIXED_COMMIT_NOT_DURABLE'):check(tmp_path,evidence(tmp_path,commit))
+    def unverified(v):v['cp']['terminal'][URLS[0]]['receipt']['sql_verified']=False
+    with pytest.raises(PermissionError,match='MIXED_COMMIT_NOT_DURABLE'):check(tmp_path,evidence(tmp_path,unverified))
     def counts(v):v['result']['sql_committed']=1
     with pytest.raises(PermissionError,match='MIXED_RESULT_COUNTS_CHANGED'):check(tmp_path,evidence(tmp_path,counts))
     def binding(v):v['block']['parent_job_id']=999
