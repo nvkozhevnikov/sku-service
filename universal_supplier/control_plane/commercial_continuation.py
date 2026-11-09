@@ -31,12 +31,18 @@ INTEGRATION_PATHS={
     'universal_supplier/control_plane/templates/competitor_news.html',
 }
 WINDOW_KIND='same-scope-commercial-window/v1'
-# The signed robots-exception engine change is pinned to its exact reviewed
-# commit; any further drift of these files still forces a review.
+# The signed robots-exception and mixed-recovery engine changes are pinned to
+# their exact reviewed commits; any further drift of these files still forces
+# a review.
 ROBOTS_EXCEPTION_PATHS={
     'universal_supplier/control_plane/source_runtime.py',
 }
-ROBOTS_EXCEPTION_HEAD='1ba40640d3a1c70b8cce3ea7c45e0980df3bd6e5'
+ROBOTS_EXCEPTION_HEAD='d032adfa2b7c1680ffefaba173cd044300f06958'
+MIXED_RECOVERY_CODE_PATHS={
+    'universal_supplier/control_plane/source_resume.py',
+    'universal_supplier/control_plane/source_controls.py',
+    'universal_supplier/control_plane/queue.py',
+}
 
 
 def file_sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -186,7 +192,8 @@ def quarantine_ids(value):
 def compatibility(old):
     changed=subprocess.check_output(['git','diff',old['head'],'--name-only','--',
         'universal_supplier','sterbrust_matching'],cwd=ROOT,text=True).splitlines()
-    require(set(changed)<=REUSE_CODE_PATHS|INTEGRATION_PATHS|ROBOTS_EXCEPTION_PATHS,'CONTINUATION_ENGINE_COMPATIBILITY_REQUIRES_REVIEW')
+    require(set(changed)<=REUSE_CODE_PATHS|INTEGRATION_PATHS|ROBOTS_EXCEPTION_PATHS|MIXED_RECOVERY_CODE_PATHS,
+        'CONTINUATION_ENGINE_COMPATIBILITY_REQUIRES_REVIEW')
     integrated=sorted(set(changed)&INTEGRATION_PATHS)
     if integrated:
         require(subprocess.call(['git','merge-base','--is-ancestor',INTEGRATION_HEAD,'HEAD'],cwd=ROOT)==0,
@@ -195,7 +202,7 @@ def compatibility(old):
         # file bytes remain pinned below and in the new exact engine SHA.
         require(subprocess.call(['git','diff','--quiet',INTEGRATION_HEAD,'--',*integrated],cwd=ROOT)==0,
             'CONTINUATION_INTEGRATION_CODE_CHANGED')
-    pinned=sorted(set(changed)&ROBOTS_EXCEPTION_PATHS)
+    pinned=sorted((set(changed)&ROBOTS_EXCEPTION_PATHS)|(set(changed)&MIXED_RECOVERY_CODE_PATHS))
     if pinned:
         require(subprocess.call(['git','merge-base','--is-ancestor',ROBOTS_EXCEPTION_HEAD,'HEAD'],cwd=ROOT)==0,
             'CONTINUATION_PINNED_ROBOTS_EXCEPTION_MISSING')
