@@ -37,7 +37,7 @@ WINDOW_KIND='same-scope-commercial-window/v1'
 ROBOTS_EXCEPTION_PATHS={
     'universal_supplier/control_plane/source_runtime.py',
 }
-ROBOTS_EXCEPTION_HEAD='d032adfa2b7c1680ffefaba173cd044300f06958'
+ROBOTS_EXCEPTION_HEAD='d086dec85f0d124b87bf9026920f91ffb7e5038c'
 MIXED_RECOVERY_CODE_PATHS={
     'universal_supplier/control_plane/source_resume.py',
     'universal_supplier/control_plane/source_controls.py',
