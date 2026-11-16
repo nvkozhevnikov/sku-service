@@ -1,5 +1,15 @@
 # Matching Policy V2 acceptance
 
+## Native canary16Nov — additional scoped contract
+
+release-commercial-canary/v1: exactly20Partner-ST confirmed cohort +20Optimum stable
+unlinked cohort, other9SAVED_ONLY. Source IDs/URLs/policy/target/mappings pinned;
+no continuation/retry/matching apply. Native transaction rejects mapping changes.
+479offline regressions and Linux SQL rollback PASS; actual accepted final dump
+Linux restore68tables/50sequence states and both ADMIN logins PASS. No LIVE performed.
+Current XML freshness/nonempty output remains NOT_READY until separately approved
+canary. Scheduled CLI fixture proof does not activate or prove real daily monitoring.
+
 ## Release continuation 2026-11-16 — additive scope
 
 LOCAL VERIFIED: existing1282links exact; additive accounts/schema; own password and

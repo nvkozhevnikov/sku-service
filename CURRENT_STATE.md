@@ -1,5 +1,23 @@
 # Current unified feature state — 2026-10-30 (Intervesp 5 s preparation)
 
+## Native canary continuation16Nov — WAITING_EXACT_LIVE_CONFIRMATION
+
+OPERATOR-CONFIRMED integrate native canary, offline QA only until exact LIVE approval.
+DONE/APPLIED code: release-commercial-canary/v1 reuses refresh Session/Scheduler/
+queue/worker/receipts/STOP.20Partner linked +20Optimum unlinked, positive saved prices/
+stock; other9empty/SAVED_ONLY. No retries/resume/activation/matching apply. Legacy1270
+guard remains exact.479offline PASS; isolated SQL link-change rollback PASS.
+LIVE-VERIFIED LOCAL: original1282 including Sterbrust IDs exact,0active jobs, primary
+writes0/sourceHTTP0. Actual final dump now restored on Linux17.11:68table hashes,
+50sequence value/is_called, both final ADMIN logins/forced change PASS. Scheduled
+monitoring CLI/detector/report/locks verified in isolated fixtures; real schedule not
+activated or changed. Content Studio remains separate SQLite/one-time auth/DPAPI;
+specific remainder in docs/unified-rc/CONTENT_STUDIO_INTEGRATION_REMAINDER.md.
+RELEASE_READY=NO pending exact LIVE permission, actual commercial/XML proof and operator
+acceptance. Old proposal-only artifacts remain historical, not runnable grants.
+New execution contract/run command: docs/unified-rc/CANARY_EXECUTION.md and external
+reports/UNIFIED_RC_CANARY_20261116 receipt. After LIVE regenerate dump/restore/packages.
+
 ## Release continuation 2026-11-16
 
 OPERATOR-CONFIRMED existing feature only, ordinary push permitted; Docker only

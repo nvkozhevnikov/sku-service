@@ -1,5 +1,11 @@
 # Unified RC architecture — 2026-10-30
 
+16Nov native canary: a purpose-specific policy in existing commercial_refresh and
+automation_execution; same queue/Orchestrator/SourceBackend/receipts, no second engine.
+Native source updates transactionally preserve signed source PK/catalog link; matching
+stays dry-run. Details: docs/unified-rc/CANARY_EXECUTION.md. Studio integration boundary
+and exact storage/auth remainder are documented separately; no SQLite/SSO migration.
+
 2026-11-16 REPOSITORY-VERIFIED delta: migration019 extends existing app_users with
 access profiles and mandatory password change; application roles do not create SQL
 roles. Release Compose contains app/explicit workers only; PostgreSQL17.11 remains

@@ -294,6 +294,8 @@ class Session:
                     'AUTOMATION_LIVE11_ACTIVE_REQUIRES_SEPARATE_RECOVERY')
                 if self.value.get('commercial_only'):
                     self.prior_jobs={r[0] for r in c.execute("SELECT id FROM crawl_jobs WHERE settings_snapshot->'automation'->>'approval_sha256'=%s",(self.sha,)).fetchall()}
+                    from .execution_canary import is_canary,require_unused
+                    if is_canary(self.value):require_unused(self.prior_jobs)
                 phases=c.execute('''SELECT DISTINCT ON (supplier_id,settings_snapshot->'source_batch'->>'phase') status
                     FROM crawl_jobs WHERE settings_snapshot->'source_batch'->>'id'=%s
                     ORDER BY supplier_id,settings_snapshot->'source_batch'->>'phase',id DESC''',

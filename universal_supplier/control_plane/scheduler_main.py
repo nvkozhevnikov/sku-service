@@ -33,7 +33,7 @@ def run_approved(config,approval_path,sha,confirm,*,folder=None,poll_seconds=2.0
     report=reporter or write
     values={'STERBRUST_SOURCE_RUNTIME_ENABLED':'YES','STERBRUST_ALLOW_SUPPLIER_HTTP':'YES',
         'STERBRUST_ALLOW_SOURCE_WRITES':'YES','STERBRUST_UNIFIED_RC':'YES',
-        'STERBRUST_RC_MATCHING_APPLY_APPROVED':'YES',
+        'STERBRUST_RC_MATCHING_APPLY_APPROVED':'NO' if value.get('matching_apply') is False else 'YES',
         'STERBRUST_APPROVED_HOST_POLICIES':json.dumps(value['host_policies']),
         'SOURCE_RUNNER_EVIDENCE_ROOT':str(execution.ROOT/'reports/source-runner-evidence'),
         'PGOPTIONS':os.environ.get('PGOPTIONS','')+' -c statement_timeout=60000 -c lock_timeout=15000'}

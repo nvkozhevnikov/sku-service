@@ -18,6 +18,11 @@ class SourceBackend:
         from universal_supplier.postgres import PostgresRepository
         self.repo=PostgresRepository(config);self.config=config;self.code=code;self.run_id=None;self.summary={};self.started=time.monotonic()
     def start(self,job,mode):
+        from .execution_canary import PURPOSE
+        self.release_canary=job.settings_snapshot.get('automation',{}).get('purpose')==PURPOSE
+        if self.release_canary:
+            from .automation_execution import validate_job
+            validate_job(job.settings_snapshot)
         self.is_batch = bool(job.settings_snapshot.get('source_batch'))
         self.commercial_only=bool(job.settings_snapshot.get('automation',{}).get('purpose')=='confirmed-commercial-refresh/v1')
         if self.commercial_only:
@@ -38,6 +43,9 @@ class SourceBackend:
             if q.rowcount!=1:raise RuntimeError('SOURCE_QUEUE_OWNER_LOST')
         return self.run_id
     def persist(self,product,capture):
+        if getattr(self,'release_canary',False):
+            from .execution_canary import authorize_native
+            authorize_native(product,capture)
         commercial_only=getattr(self,'commercial_only',False)
         if self.code in ('partner_st','optimum') and not commercial_only:return self.persist_native(product,capture)
         if self.run_id is None:raise RuntimeError('SOURCE_RUN_NOT_STARTED')
@@ -91,7 +99,16 @@ class SourceBackend:
             q.execute('''SELECT c.id FROM supplier_http_captures c JOIN suppliers s ON s.id=c.supplier_id
                          WHERE s.code=%s AND c.capture_fingerprint=%s''',(self.code,capture.fingerprint))
             if q.fetchone():raise RuntimeError('NATIVE_CAPTURE_ALREADY_EXISTS_RECONCILE')
+            target=None
+            if getattr(self,'release_canary',False):
+                from .execution_canary import authorize_native
+                target=authorize_native(card,capture)
+                q.execute('SELECT id,catalog_product_id FROM source_products WHERE id=%s FOR UPDATE',(target['source_product_id'],))
+                if q.fetchone()!=(target['source_product_id'],target['catalog_product_id']):raise RuntimeError('CANARY_LINK_CHANGED_BEFORE_INGEST')
             counts=self.repo.ingest([card],capture.observed_at.isoformat(),supplier_code=self.code,bounded=True)
+            if target is not None:
+                q.execute('SELECT id,catalog_product_id FROM source_products WHERE id=%s',(target['source_product_id'],))
+                if q.fetchone()!=(target['source_product_id'],target['catalog_product_id']):raise RuntimeError('CANARY_LINK_CHANGE_ROLLBACK')
             q.execute('''SELECT sp.id,sp.supplier_id,o.id FROM source_products sp
                          JOIN suppliers s ON s.id=sp.supplier_id JOIN offers o ON o.source_product_id=sp.id AND o.offer_kind='default'
                          WHERE s.code=%s AND sp.external_id=%s AND sp.external_id_is_stable''',(self.code,card.external_id))
@@ -151,6 +168,9 @@ class SourceBackend:
         sha,at,final,observation=rows[0]
         return 'COMMITTED' if (sha,at,final,observation)==(capture.evidence_sha256,capture.observed_at,capture.final_url,True) else 'UNKNOWN'
     def matching(self,external_ids):
+        if getattr(self,'release_canary',False):
+            import os
+            if os.environ.get('STERBRUST_RC_MATCHING_APPLY_APPROVED')!='NO':raise PermissionError('CANARY_MATCHING_APPLY_FORBIDDEN')
         from universal_supplier.automatic_matching import run_post_ingest
         return run_post_ingest(self.config,self.code,external_ids)
     def progress(self,summary):

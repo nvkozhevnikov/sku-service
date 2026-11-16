@@ -16,7 +16,9 @@ PURPOSE='confirmed-commercial-refresh/v1'
 ROOT=Path(__file__).resolve().parents[2]
 
 
-def is_refresh(value):return value.get('purpose')==PURPOSE
+def is_refresh(value):
+    from .execution_canary import is_canary
+    return value.get('purpose')==PURPOSE or is_canary(value)
 
 
 def matrix_pins(value,matrix):
@@ -47,6 +49,11 @@ def matrix_pins(value,matrix):
 
 
 def validate(value):
+    from .execution_canary import is_canary,validate as validate_canary
+    if is_canary(value):
+        validate_canary(value)
+        require(hashlib.sha256((ROOT/'config/live11_approval_matrix.csv').read_bytes()).hexdigest()==value['matrix_sha256'],'CANARY_MATRIX_CHANGED')
+        return
     rules=value['suppliers'];targets=[e for r in rules.values() for e in r['targets']]
     require(len(targets)==1270 and len({e['source_product_id'] for e in targets})==1270,'COMMERCIAL_REFRESH_EXACT_1270_REQUIRED')
     require(value['scope_sha256']==digest(targets),'COMMERCIAL_REFRESH_SCOPE_CHANGED')
@@ -80,7 +87,7 @@ def validate(value):
             'CONTINUATION_SCOPE_OR_PROOF_CHANGED')
 
 
-def scope_rows(config,targets,*,accounted_quarantine=()):
+def scope_rows(config,targets,*,accounted_quarantine=(),canary=False):
     from universal_supplier.preview_store import load
     from .runtime_config import guarded_connect
     state=load(config,connection_factory=guarded_connect)
@@ -90,13 +97,13 @@ def scope_rows(config,targets,*,accounted_quarantine=()):
     keys=('supplier_id','supplier_code','source_product_id','external_id','source_url','offer_id','confirmed_sterbrust_id','catalog_product_id')
     require(sorted(({k:r[k] for k in keys} for r in actual),key=lambda r:r['source_product_id'])==
         sorted(({k:r[k] for k in keys} for r in targets),key=lambda r:r['source_product_id']), 'COMMERCIAL_REFRESH_TARGETS_CHANGED')
-    require(all(r['identity_confirmed'] and (not r['blocking_quarantine'] or r['source_product_id'] in accounted_quarantine)
+    require(all((r['identity_confirmed'] or canary and r['external_id_is_stable'] and r['supplier_code'] in ('partner_st','optimum')) and (not r['blocking_quarantine'] or r['source_product_id'] in accounted_quarantine)
         and r['active'] for r in actual),
         'COMMERCIAL_REFRESH_IDENTITY_OR_QUARANTINE_CHANGED')
     return state,actual
 
 
-def prepare(config,path,not_before,execution_until):
+def prepare(config,path,not_before,execution_until,*,canary=False):
     from .source_canary import TARGET,validate_connection
     from .source_runtime import engine_fingerprint
     from .runtime_config import guarded_connect
@@ -105,7 +112,7 @@ def prepare(config,path,not_before,execution_until):
     from .rate_control import DomainRatePolicy
     from .source_jobs import RUNTIME_SOURCES
     targets=json.loads(Path(path).read_text(encoding='utf-8'))['targets']
-    state,actual=scope_rows(config,targets)
+    state,actual=scope_rows(config,targets,canary=canary)
     matrix_path=ROOT/'config/live11_approval_matrix.csv'
     matrix={r['SOURCE']:r for r in csv.DictReader(matrix_path.open(encoding='utf-8-sig',newline=''))}
     rules={};hosts={}
@@ -143,13 +150,25 @@ def prepare(config,path,not_before,execution_until):
         'matrix_sha256':hashlib.sha256(matrix_path.read_bytes()).hexdigest(),
         'protected_live11_batch_id':'3a69ca0d-b9d0-41f9-8f2a-49c4b43bc57d',
         'production':False,'esol':False,'requires_operator_confirmation':True}
+    if canary:
+        from .execution_canary import PURPOSE as CANARY
+        value.update(purpose=CANARY,matching_apply=False,explicit_safe_resume=False)
+        for code,r in rules.items():
+            r['max_queue_attempts']=1
+            if r['targets']:
+                r['policy']['max_attempts']=1
+                r['settings_after']['rate_settings']['max_attempts']=1
+                r['rate_sha256']=digest(r['policy'])
+                r['settings_sha256']=digest(settings_for(r['settings_after']))
+                from .rate_control import DomainRatePolicy
+                hosts[r['host']][code]=policy_digest(code,r['host'],DomainRatePolicy.from_mapping(r['policy']),r['settings_after']['crawl_settings']['host_policy_approval']['reference'])
     validate(value)
     return value
 
 
 def authorize_card(card,capture):
     from .automation_execution import require_active
-    session=require_active();require(is_refresh(session.value),'COMMERCIAL_REFRESH_APPROVAL_REQUIRED')
+    session=require_active();require(session.value.get('purpose')==PURPOSE,'COMMERCIAL_REFRESH_APPROVAL_REQUIRED')
     from .commercial_continuation import reused_sources
     require(card.supplier_code not in reused_sources(session.value),'CONTINUATION_ACCOUNTED_SOURCE_CANNOT_RUN')
     targets=session.value['suppliers'][card.supplier_code]['targets']
@@ -163,7 +182,10 @@ def validate_snapshot(snapshot,session):
     from .commercial_continuation import reused_sources
     require(snapshot['supplier_code'] not in reused_sources(session.value),'CONTINUATION_ACCOUNTED_SOURCE_CANNOT_RUN')
     marker=snapshot['automation'];rule=session.value['suppliers'][snapshot['supplier_code']]
-    require(marker.get('purpose')==PURPOSE and marker['phase']=='REFRESH','COMMERCIAL_REFRESH_JOB_PURPOSE_CHANGED')
+    from .execution_canary import is_canary
+    if is_canary(session.value):
+        require(not snapshot['crawl_settings'].get('resume_owner_job_id') and snapshot['crawl_settings'].get('collection_mode')=='REFRESH','CANARY_NO_RESUME')
+    require(marker.get('purpose')==session.value['purpose'] and marker['phase']=='REFRESH','COMMERCIAL_REFRESH_JOB_PURPOSE_CHANGED')
     expected=[{'source_product_id':r['source_product_id'],'source_external_id':r['external_id'],'url':r['source_url']} for r in rule['targets']]
     require(snapshot['source_input']['entries']==expected and snapshot['source_input']['mode']=='REFRESH',
         'COMMERCIAL_REFRESH_JOB_SCOPE_CHANGED')
@@ -199,7 +221,8 @@ def settings(session,connection):
     validate_connection(connection)
     from .commercial_continuation import validate_live,reused_sources,quarantine_ids
     validate_live(session.config,session.value)
-    scope_rows(session.config,[e for r in session.value['suppliers'].values() for e in r['targets']],
+    from .execution_canary import is_canary
+    scope_rows(session.config,[e for r in session.value['suppliers'].values() for e in r['targets']],**({'canary':True} if is_canary(session.value) else {}),
         **({'accounted_quarantine':quarantine_ids(session.value)} if session.value.get('continuation',{}).get('kind')=='commercial-receipt-continuation/v1' else {}))
     def check_protected():
         old=session.value['protected_jobs']
@@ -268,6 +291,9 @@ def tick(scheduler,now):
             jid,status,run,snapshot,metadata,error=previous
             if status=='succeeded':done+=1;continue
             if status in ('queued','running'):continue
+            from .execution_canary import is_canary
+            if is_canary(session.value):
+                scheduler.blocked[code]='CANARY_TERMINAL_NO_AUTOMATIC_RETRY';continue
             explicit=jid in getattr(session,'prior_jobs',set()) and getattr(session,'resume_safe',False)
             if jid in getattr(session,'prior_jobs',set()) and not explicit:
                 scheduler.blocked[code]='COMMERCIAL_REFRESH_EXPLICIT_RESUME_REQUIRED';continue

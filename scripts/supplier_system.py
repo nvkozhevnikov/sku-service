@@ -13,12 +13,15 @@ def main(argv=None):
     p.add_argument('--approval',type=Path);p.add_argument('--sha256');p.add_argument('--confirm')
     p.add_argument('--limits',type=Path);p.add_argument('--not-before');p.add_argument('--execution-until')
     p.add_argument('--confirmed-commercial-targets',type=Path)
+    p.add_argument('--release-canary',action='store_true',help='strict20 Partner +20 Optimum, no matching apply or resume')
     p.add_argument('--continue-approval',type=Path);p.add_argument('--previous-sha256')
     p.add_argument('--mixed-recovery',type=Path,help='operator mixed-recovery blocks {"<source>": block} for one mixed parent checkpoint')
     p.add_argument('--reuse-receipts',action='store_true',help='SELECT-only successor for a partially executed commercial grant; never replay COMMITTED/quarantine')
     p.add_argument('--output',type=Path);p.add_argument('--session',type=Path)
     p.add_argument('--resume-safe',action='store_true',help='explicit native safe resume within the SAME approved window; never UNKNOWN')
     args=p.parse_args(argv)
+    if args.release_canary and (args.action!='prepare' or not args.confirmed_commercial_targets or args.continue_approval or args.reuse_receipts or args.mixed_recovery):
+        p.error('release-canary requires fresh prepare/targets; continuation/recovery forbidden')
     cfg=runtime_config() if args.action!='stop' else None
     if args.action=='prepare':
         if args.reuse_receipts:
@@ -35,7 +38,7 @@ def main(argv=None):
                 not_before=args.not_before,execution_until=args.execution_until,mixed_recovery=mixed)
         elif args.confirmed_commercial_targets:
             from universal_supplier.control_plane.commercial_refresh import prepare
-            value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until)
+            value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until,canary=args.release_canary)
             if args.continue_approval:
                 if not args.previous_sha256:p.error('continuation requires exact previous-sha256')
                 from universal_supplier.control_plane.commercial_continuation import attach
@@ -61,7 +64,9 @@ def main(argv=None):
             from universal_supplier.control_plane.commercial_refresh import is_refresh,scope_rows
             from universal_supplier.control_plane.commercial_continuation import validate_live,quarantine_ids
             validate_live(cfg,value)
-            if is_refresh(value):scope_rows(cfg,[e for r in value['suppliers'].values() for e in r['targets']],accounted_quarantine=quarantine_ids(value))
+            if is_refresh(value):
+                from universal_supplier.control_plane.execution_canary import is_canary
+                scope_rows(cfg,[e for r in value['suppliers'].values() for e in r['targets']],accounted_quarantine=quarantine_ids(value),canary=is_canary(value))
             print(json.dumps({'head':value['head'],'sources':len(value['suppliers']),'active_jobs':active,
                 'window_end':value['execution_until'],'live_blocked':None if len(phases)==22 and all(r[0]=='succeeded' for r in phases)
                     or is_refresh(value) else 'AUTOMATION_LIVE11_UNFINISHED_REQUIRES_SEPARATE_RECOVERY','HTTP':0,'enqueue':0,'matching':0,
@@ -104,5 +109,5 @@ if __name__=='__main__':
     try:raise SystemExit(main())
     except Exception as error:
         message=str(error)
-        print(message if message.startswith(('AUTOMATION_','PREVIEW_','APPROVAL_')) else type(error).__name__,file=sys.stderr)
+        print(message if message.startswith(('AUTOMATION_','PREVIEW_','APPROVAL_','CANARY_')) else type(error).__name__,file=sys.stderr)
         raise SystemExit(1)

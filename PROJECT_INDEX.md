@@ -10,6 +10,11 @@ ARCHITECTURE_DECISIONS.md.
 
 ## Release continuation 2026-11-16
 
+- [Native canary execution](docs/unified-rc/CANARY_EXECUTION.md): strict20+20 on
+  existing queue/worker/receipts, waiting exact LIVE confirmation; old1270 unchanged.
+- [Content Studio integration remainder](docs/unified-rc/CONTENT_STUDIO_INTEGRATION_REMAINDER.md):
+  actual auth/storage boundaries, migration/security acceptance; not implemented SSO.
+
 - [Release accounts, applications boundary and Linux runbook](docs/unified-rc/RELEASE_20261116.md).
 - compose.release.yml / Dockerfile.server / requirements.lock: host PostgreSQL,
   no DB service; Dockerfile.release-qa / requirements-qa.lock: isolated QA only.
