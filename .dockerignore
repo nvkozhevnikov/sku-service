@@ -9,6 +9,10 @@ venv
 backups
 server-data
 reports
+competitor-data
+runtime-data
+runtime-secrets
+deployment-contract.json
 work
 release
 node_modules

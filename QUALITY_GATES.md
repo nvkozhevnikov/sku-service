@@ -2,6 +2,16 @@
 
 OPERATOR-CONFIRMED 2026-10-08. Scoped supplement to workspace qa/QUALITY_GATES.md.
 
+## Release accounts and portability — 2026-11-16
+
+Scope: existing feature only. Five application profiles/custom permissions must
+retain existing users/IDs; both ADMINs must change temporary passwords. Own password,
+mutual reset, session revocation, CSRF/origin, vertical/horizontal access and last
+ADMIN protection are required. Linux3.12 app startup must use actual restricted
+runtime logins on a verified restored PostgreSQL17.11. Packaging suffixes in version
+strings do not alter exact numeric17.11; all other target identity pins remain exact.
+See docs/unified-rc/RELEASE_20261116.md. Fixture/isolated QA is not production proof.
+
 ## Signed robots-policy exception gate — 2026-10-30
 
 Pacing below a source's robots-declared Crawl-delay/Request-rate is allowed

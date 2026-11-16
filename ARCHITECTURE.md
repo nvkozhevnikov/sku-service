@@ -1,5 +1,14 @@
 # Unified RC architecture — 2026-10-30
 
+2026-11-16 REPOSITORY-VERIFIED delta: migration019 extends existing app_users with
+access profiles and mandatory password change; application roles do not create SQL
+roles. Release Compose contains app/explicit workers only; PostgreSQL17.11 remains
+a separate host service55461. Confirmed hash-pinned deployment contract replaces
+machine-specific system ID/PGDATA only; host/port/database/version remain fixed.
+Content Studio is a separate SQLite/DPAPI application without a verified shared-auth
+contract; /applications is an honest integration boundary, not SSO. Details:
+docs/unified-rc/RELEASE_20261116.md. No production deployment performed.
+
 One repository, one PostgreSQL, one panel. This file is the map; exact
 operational commands live in RUNBOOK.md, acceptance terms in
 ACCEPTANCE_MATRIX.md, gate definitions in QUALITY_GATES.md.

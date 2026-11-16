@@ -8,7 +8,10 @@ LIVE supplier request, production write, push, merge or import.
 Cluster: PG 17.11, port 55461, database `rc_verify_vi_20261019`,
 system identifier **7698346631476390904**.
 PGDATA: `C:/Users/man503/.codex/visualizations/2026/10/19/01a153ff-dc7c-77b3-a6be-d05f81a86e5c/rc-pg-20261019`
-Binaries: `%LOCALAPPDATA%\Temp\universal_supplier_stage4_pg17_runtime\bin`
+Binaries: `D:\tools\pg17-runtime\bin` (PG17.11 including lib/plpgsql.dll).
+The historical temporary runtime is incomplete and must not be used for restore.
+This reduced local runtime lacks UTC/Europe-Moscow timezone aliases; use a fixed
++00:00 offset for canonical backup hashes. Linux needs a complete PG distribution.
 
 1. Check it is really down: port 55461 must not be listening and no
    `postgres.exe` holds it (`netstat -ano -p tcp | findstr :55461`).
@@ -19,7 +22,7 @@ Binaries: `%LOCALAPPDATA%\Temp\universal_supplier_stage4_pg17_runtime\bin`
 3. Start (PowerShell, from any directory):
 
 ```bash
-powershell -NoProfile -Command "& \"$env:LOCALAPPDATA\Temp\universal_supplier_stage4_pg17_runtime\bin\pg_ctl.exe\" start -D 'C:/Users/man503/.codex/visualizations/2026/10/19/01a153ff-dc7c-77b3-a6be-d05f81a86e5c/rc-pg-20261019' -l '<PGDATA>/restart-<date>.log' -w -t 60"
+powershell -NoProfile -Command "& 'D:\tools\pg17-runtime\bin\pg_ctl.exe' start -D 'C:/Users/man503/.codex/visualizations/2026/10/19/01a153ff-dc7c-77b3-a6be-d05f81a86e5c/rc-pg-20261019' -l '<PGDATA>/restart-<date>.log' -w -t 60"
 ```
 
 4. Verify identity before ANY further step (expected exactly):

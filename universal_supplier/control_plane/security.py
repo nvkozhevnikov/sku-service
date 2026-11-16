@@ -27,6 +27,9 @@ class AuthUser:
     role: str
     is_active: bool = True
     session_version: int = 1
+    must_change_password: bool = False
+    permissions: frozenset[str] | None = None
+    access_profile: str | None = None
 
 
 def normalize_username(value: str) -> str:

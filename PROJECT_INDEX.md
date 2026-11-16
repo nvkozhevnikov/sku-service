@@ -8,6 +8,13 @@ POSTGRESQL_SCHEMA.md, UPDATE_STATE_MACHINE.md, FALSE_MATCH_CASES.md,
 DATA_RETENTION_POLICY.md, INTEGRATION_STATUS.md,
 ARCHITECTURE_DECISIONS.md.
 
+## Release continuation 2026-11-16
+
+- [Release accounts, applications boundary and Linux runbook](docs/unified-rc/RELEASE_20261116.md).
+- compose.release.yml / Dockerfile.server / requirements.lock: host PostgreSQL,
+  no DB service; Dockerfile.release-qa / requirements-qa.lock: isolated QA only.
+- migration019: additive application profiles and mandatory initial password change.
+
 ## Code
 
 - `universal_supplier/control_plane/` — panel, queue, scheduler,

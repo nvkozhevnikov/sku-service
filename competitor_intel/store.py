@@ -64,7 +64,8 @@ class Store:
                     raise ValueError('Privileged competitor role forbidden')
                 if main:
                     c.execute("SELECT system_identifier::text system FROM pg_control_system()")
-                    if c.fetchone()['system'] != '7698346631476390904':
+                    from universal_supplier.partner_pilot import SYSTEM
+                    if c.fetchone()['system'] != SYSTEM:
                         raise ValueError('Main competitor cluster identity mismatch')
                     c.execute("SELECT 1 FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='competitor' AND t.relkind IN ('r','p') AND has_table_privilege(current_user,t.oid,'DELETE,TRUNCATE,REFERENCES,TRIGGER') LIMIT 1")
                     if c.fetchone():

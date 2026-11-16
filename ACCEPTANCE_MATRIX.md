@@ -1,5 +1,18 @@
 # Matching Policy V2 acceptance
 
+## Release continuation 2026-11-16 — additive scope
+
+LOCAL VERIFIED: existing1282links exact; additive accounts/schema; own password and
+mutual reset; forced initial change; revoked old sessions; Linux3.12/restricted SQL
+LOGIN and exact target pins. Legacy normalization/product IDs/source namespaces and
+matching guards retained. New proposal-only canary requires max20/source and220total,
+no discovery/apply/production/ESOL, no Intervesp/reference LIVE or disabled-source
+activation. It does not supersede existing execution guards or exact1270 contracts.
+Current XML0/0 and old competitor run61PARTIAL do not satisfy fresh-data acceptance.
+READY remains blocked until bounded current-source proof, capture portability,
+local operator acceptance and separately authorized deployment. Stage6 remains
+BLOCKED_IMPORT_CONTRACT_EVIDENCE. See docs/unified-rc/RELEASE_20261116.md.
+
 ## Intervesp 5 s robots exception — owner decision 2026-11-05: VARIANT A SIGNED PENDING
 
 Intervesp.ru robots.txt (captured 2026-10-29, SHA256 `a6862161f2c07c36f0ecc789bf7d31cd48ef41b02c142c41d7f7c4e861d53f51`)

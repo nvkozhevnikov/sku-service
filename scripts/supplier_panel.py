@@ -14,11 +14,14 @@ def inspect(config=None):
         identity=c.execute('SELECT current_user,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user').fetchone()
         if identity!=('rc_runtime',False,False):raise PermissionError('PANEL_RUNTIME_ROLE_INVALID')
         schema=c.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='login_failures' AND column_name='cleared_at')").fetchone()[0]
+        accounts=c.execute("SELECT to_regclass('public.app_access_profiles') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='app_users' AND column_name='must_change_password')").fetchone()[0]
         users=c.execute("SELECT count(*) FROM app_users WHERE role='ADMIN' AND is_active").fetchone()[0]
         active=c.execute("SELECT id,status FROM crawl_jobs WHERE status IN ('queued','running') ORDER BY id").fetchall()
-    return {'target':'127.0.0.1:55461/rc_verify_vi_20261019','system_identifier':'7698346631476390904',
-        'role':'rc_runtime','schema018_ready':schema,'existing_admin_count':users,'active_jobs':active,
+    from universal_supplier.partner_pilot import SYSTEM
+    return {'target':'127.0.0.1:55461/rc_verify_vi_20261019','system_identifier':SYSTEM,
+        'role':'rc_runtime','schema018_ready':schema,'schema019_ready':accounts,'existing_admin_count':users,'active_jobs':active,
         'blockers':([] if schema else ['AUTH_SCHEMA018_REQUIRED_FOR_RUNTIME_DML'])+
+            ([] if accounts else ['AUTH_SCHEMA019_REQUIRED_FOR_RELEASE'])+
             ([] if users else ['PANEL_EXISTING_ADMIN_REQUIRED']),
         'HTTP_supplier':0,'enqueue':0,'schema_changes':0,'worker_started':False}
 

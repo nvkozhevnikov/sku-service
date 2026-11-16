@@ -59,14 +59,16 @@ def _price(source: str, identity: str, url: str | None) -> PriceExtraction:
     # content attribute alone does not establish a currency.
     if not currencies and block and re.search(r'₽|\bруб\.?|\bRUB\b',block.get_text(' ',strip=True),re.I):currencies={'RUB'}
     values={n.get('content') for n in nodes}
+    source_path='#elPrice'
     if len(values)==1 and len(currencies)==1:
         synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"><span class="price-current">{escape(next(iter(values)))} {escape(next(iter(currencies)))}</span></main>'
         result = extract_public_price(synthetic, product_identity=identity, source_url=url)
+        source_path='#elPrice [itemprop=price]'
     else:
         synthetic = f'<main data-product-identity="{escape(identity, quote=True)}">{price_block}</main>'
         result = extract_public_price(synthetic, product_identity=identity, source_url=url)
-    result=replace(result,source_path='#elPrice',context_path='#elPrice')
-    return typed_extraction(result,block.get_text(' ',strip=True) if block else '',source_path='#elPrice',declared=block.get('data-price-type') if block else None)
+    result=replace(result,source_path=source_path,context_path='#elPrice')
+    return typed_extraction(result,block.get_text(' ',strip=True) if block else '',source_path=source_path,declared=block.get('data-price-type') if block else None)
 
 
 def parse_intervesp_detail(source: str, *, source_url: str | None = None) -> ReadOnlySupplierProduct:

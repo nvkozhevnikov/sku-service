@@ -1,5 +1,26 @@
 # Current unified feature state — 2026-10-30 (Intervesp 5 s preparation)
 
+## Release continuation 2026-11-16
+
+OPERATOR-CONFIRMED existing feature only, ordinary push permitted; Docker only
+isolated QA. DONE/APPLIED LOCAL migration019, same auth and five/custom profiles;
+stbr_admin_a/id2 and stbr_admin_b/id3 ADMIN, temporary passwords forced change.
+Existing rc-review retained. LIVE-VERIFIED LOCAL own-password/mutual-reset/session
+revocation; original1282link rows exact. Final dump tested in NEW QA database:
+68table hashes and50sequence last_value/is_called identical,0restore errors.
+Linux3.12:781PASS/2SKIP plus90guard and57canary/account/deployment tests;
+real Linux PG17.11 runtime LOGIN and7application pages PASS. Review8.5/8.5 local.
+
+Current SELECT-only feeds: updates0/new_products0; stale captures were not made
+fresh. Sources18959, twelve competitor sources,286pages/1579versions/2948observations/
+36781campaign items; latest run61 PARTIAL (28Oct). Daily task last result50 while DB
+was stopped: daily success is NOT verified. No supplier HTTP/matching apply/site writes.
+Separate <=20/source canary proposal authorized for preparation only; it is not a
+scheduler grant or permission to replay historical1270/Intervesp UNCERTAIN receipts.
+Content Studio shared auth/PG integration NOT implemented; Applications shows boundary.
+Release readiness remains PENDING current commercial canary and portable evidence
+completion. Instructions: docs/unified-rc/RELEASE_20261116.md.
+
 Base HEAD at session start: `59b3f563c851ec93364740dfd236392aa94ed8ed`
 (feature/sterbrust-autonomous-system-20261026, clean tree). New HEAD after the
 robots-exception change: see `git rev-parse HEAD`; engine fingerprint re-pinned

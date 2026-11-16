@@ -27,7 +27,7 @@ def validate_config(config):
 
 def validate_connection(connection):
     with connection.cursor() as q:
-        q.execute("SELECT current_database(),system_identifier::text,current_setting('server_version'),current_setting('data_directory'),host(inet_server_addr()),inet_server_port() FROM pg_control_system()")
+        q.execute("SELECT current_database(),system_identifier::text,split_part(current_setting('server_version'),' ',1),current_setting('data_directory'),host(inet_server_addr()),inet_server_port() FROM pg_control_system()")
         db,system,version,data,host,port=q.fetchone()
     if (db,system,version,host,port)!=(DATABASE[2],SYSTEM,'17.11',DATABASE[0],DATABASE[1]) or Path(data).resolve()!=PGDATA.resolve():
         raise PermissionError('CANARY_CLUSTER_IDENTITY_MISMATCH')

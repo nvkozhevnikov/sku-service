@@ -22,7 +22,8 @@ def test_permanent_runtime_clears_rehearsal_and_uses_own_config(monkeypatch):
     assert 'STERBRUST_COMPETITOR_REHEARSAL' not in os.environ
     _,collection=services()
     assert Path(collection.dev_config)==CONFIG and collection.runtime==RUNTIME
-    assert 'sku-service-autonomous-system-20261026' in str(CONFIG)
+    from competitor_intel.main_runtime import ROOT
+    assert CONFIG == ROOT/'competitor-data/main-config.json'
 
 def test_previous_source_partial_remains_visible_after_other_source_canary():
     from tests.test_competitor_monitoring_ui import fixture_state,service,client

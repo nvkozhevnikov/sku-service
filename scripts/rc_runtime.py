@@ -9,7 +9,14 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 os.environ['STERBRUST_UNIFIED_RC']='YES'
 os.environ['CONTROL_PLANE_SKIP_DEFAULT_APP']='YES'
-from rc_prepare_database import TARGET,PORT,OUT,connect
+# Legacy frozen-dispatch helpers are explicit; importing the permanent UI must
+# not import the Windows-only database preparation script on a Linux server.
+TARGET='sterbrust_unified_rc_20261019'
+PORT=55461
+OUT=ROOT/'reports/integration'
+def connect(*args,**kwargs):
+    from rc_prepare_database import connect as legacy_connect
+    return legacy_connect(*args,**kwargs)
 from universal_supplier.postgres import PostgresConfig
 from universal_supplier.control_plane.store import PostgresControlPlaneStore
 from universal_supplier.control_plane.admin_store import PostgresAdminStore

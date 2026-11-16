@@ -136,7 +136,10 @@ class PostgresAdminStore:
 
     @staticmethod
     def _user(row: dict | None) -> AuthUser | None:
-        return AuthUser(int(row["id"]), row["username"], row["display_name"], row["role"], row["is_active"], int(row["session_version"])) if row else None
+        return AuthUser(int(row["id"]), row["username"], row["display_name"], row["role"], row["is_active"], int(row.get("session_version",1)),
+                        bool(row.get("must_change_password",False)),
+                        frozenset(row["permissions"]) if row.get("permissions") is not None else None,
+                        row.get("access_profile")) if row else None
 
     def users_exist(self) -> bool:
         with self._connect() as c, c.cursor() as q:
@@ -145,13 +148,19 @@ class PostgresAdminStore:
 
     def user_by_username(self, username: str) -> tuple[AuthUser, str] | None:
         with self._connect() as c, c.cursor() as q:
-            q.execute("SELECT id,username,display_name,role,is_active,session_version,password_hash FROM app_users WHERE username=%s", (username.strip().lower(),))
+            q.execute("""SELECT u.id,u.username,u.display_name,u.role,u.is_active,u.session_version,u.password_hash,
+                                u.must_change_password,u.access_profile,p.permissions
+                         FROM app_users u LEFT JOIN app_access_profiles p ON p.code=u.access_profile
+                         WHERE u.username=%s""", (username.strip().lower(),))
             row = q.fetchone()
         return (self._user(row), row["password_hash"]) if row else None
 
     def user_by_id(self, user_id: int) -> AuthUser | None:
         with self._connect() as c, c.cursor() as q:
-            q.execute("SELECT id,username,display_name,role,is_active,session_version FROM app_users WHERE id=%s", (user_id,))
+            q.execute("""SELECT u.id,u.username,u.display_name,u.role,u.is_active,u.session_version,
+                                u.must_change_password,u.access_profile,p.permissions
+                         FROM app_users u LEFT JOIN app_access_profiles p ON p.code=u.access_profile
+                         WHERE u.id=%s""", (user_id,))
             return self._user(q.fetchone())
 
     def revoke_sessions(self, user_id: int, actor_id: int | None, reason: str) -> None:
@@ -169,15 +178,15 @@ class PostgresAdminStore:
 
     def list_users(self) -> list[dict]:
         with self._connect() as c, c.cursor() as q:
-            q.execute("SELECT id,username,display_name,role,is_active,created_at,last_login_at FROM app_users ORDER BY username")
+            q.execute("SELECT id,username,display_name,role,is_active,created_at,last_login_at,must_change_password,access_profile FROM app_users ORDER BY username")
             return list(q.fetchall())
 
-    def create_user(self, username: str, display_name: str, password_hash: str, role: str, *, actor_id: int | None = None) -> int:
+    def create_user(self, username: str, display_name: str, password_hash: str, role: str, *, actor_id: int | None = None, must_change_password: bool = False) -> int:
         username = normalize_username(username)
         if role not in {"ADMIN", "OPERATOR", "VIEWER"}:
             raise ValueError("Недопустимая роль")
         with self._connect() as c, c.transaction(), c.cursor() as q:
-            q.execute("INSERT INTO app_users(username,display_name,password_hash,role) VALUES (%s,%s,%s,%s) RETURNING id", (username, display_name.strip(), password_hash, role))
+            q.execute("INSERT INTO app_users(username,display_name,password_hash,role,must_change_password) VALUES (%s,%s,%s,%s,%s) RETURNING id", (username, display_name.strip(), password_hash, role, must_change_password))
             user_id = q.fetchone()["id"]
             self._audit(q, actor_id, "USER_CREATED", "user", user_id, None, {"username": username, "display_name": display_name.strip(), "role": role, "is_active": True}, None)
         return int(user_id)
@@ -186,10 +195,19 @@ class PostgresAdminStore:
         if user_id == actor_id and not active:
             raise ValueError("Нельзя отключить собственную учётную запись")
         with self._connect() as c, c.transaction(), c.cursor() as q:
+            q.execute("SELECT pg_advisory_xact_lock(%s)", (390012,))
+            q.execute("SELECT role,is_active FROM app_users WHERE id=%s", (actor_id,))
+            actor = q.fetchone()
+            if not actor or actor["role"] != "ADMIN" or not actor["is_active"]:
+                raise PermissionError("Требуются действующие права администратора")
             q.execute("SELECT username,display_name,role,is_active FROM app_users WHERE id=%s FOR UPDATE", (user_id,))
             before = q.fetchone()
             if not before:
                 raise KeyError("Пользователь не найден")
+            if not active and before["role"] == "ADMIN" and before["is_active"]:
+                q.execute("SELECT count(*) n FROM app_users WHERE role='ADMIN' AND is_active")
+                if q.fetchone()["n"] <= 1:
+                    raise ValueError("Нельзя отключить последнего главного администратора")
             q.execute("UPDATE app_users SET is_active=%s,session_version=session_version+(%s AND is_active)::int,updated_at=now() WHERE id=%s", (active, not active, user_id))
             after = dict(before); after["is_active"] = active
             self._audit(q, actor_id, "USER_ACTIVE_CHANGED", "user", user_id, dict(before), after, None)
@@ -513,18 +531,25 @@ class InMemoryAdminStore:
     def users_exist(self): return bool(self._users)
     def user_by_username(self, username):
         row = next((u for u in self._users if u["username"] == username.lower()), None)
-        return (AuthUser(row["id"], row["username"], row["display_name"], row["role"], row.get("is_active", True), row.get("session_version", 1)), row["password_hash"]) if row else None
+        return (PostgresAdminStore._user({"is_active":True, **row}), row["password_hash"]) if row else None
     def user_by_id(self, user_id):
         row = next((u for u in self._users if u["id"] == user_id), None)
-        return AuthUser(row["id"], row["username"], row["display_name"], row["role"], row.get("is_active", True), row.get("session_version", 1)) if row else None
+        return PostgresAdminStore._user({"is_active":True, **row}) if row else None
     def revoke_sessions(self, user_id, actor_id, reason):
         row=next(u for u in self._users if u["id"]==user_id); row["session_version"]=row.get("session_version",1)+1; self.audit(actor_id,"USER_SESSIONS_REVOKED","user",user_id,None,{"session_version":row["session_version"],"reason":reason})
     def touch_login(self, user_id): pass
     def list_users(self): return [{k:v for k,v in u.items() if k != "password_hash"} for u in self._users]
-    def create_user(self, username, display_name, password_hash, role, actor_id=None):
-        uid = max([u["id"] for u in self._users] or [0]) + 1; self._users.append({"id":uid,"username":normalize_username(username),"display_name":display_name,"password_hash":password_hash,"role":role,"is_active":True}); self.audit(actor_id,"USER_CREATED","user",uid,None,{"role":role}); return uid
+    def create_user(self, username, display_name, password_hash, role, actor_id=None, must_change_password=False):
+        uid = max([u["id"] for u in self._users] or [0]) + 1; self._users.append({"id":uid,"username":normalize_username(username),"display_name":display_name,"password_hash":password_hash,"role":role,"is_active":True,"must_change_password":must_change_password}); self.audit(actor_id,"USER_CREATED","user",uid,None,{"role":role}); return uid
     def set_user_active(self, user_id, active, actor_id):
+        actor=next((u for u in self._users if u["id"]==actor_id),None)
+        if not actor or actor["role"]!="ADMIN" or not actor.get("is_active",True):
+            raise PermissionError("Требуются действующие права администратора")
         row=next(u for u in self._users if u["id"]==user_id)
+        if not active and row["role"]=="ADMIN" and row.get("is_active",True) and sum(
+            u["role"]=="ADMIN" and u.get("is_active",True) for u in self._users
+        ) <= 1:
+            raise ValueError("Нельзя отключить последнего главного администратора")
         if row.get("is_active", True) and not active: row["session_version"]=row.get("session_version",1)+1
         row["is_active"]=active; self.audit(actor_id,"USER_ACTIVE_CHANGED","user",user_id,None,{"is_active":active})
     def audit(self,user_id,action,entity_type,entity_id,before,after,comment=None,correlation_id=None): self._audit_events.append({"id":len(self._audit_events)+1,"user_id":user_id,"action":action,"entity_type":entity_type,"entity_id":str(entity_id),"before_state":deepcopy(before),"after_state":deepcopy(after),"comment":comment})

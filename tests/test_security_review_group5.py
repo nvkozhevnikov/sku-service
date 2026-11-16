@@ -28,6 +28,7 @@ PATH_VALUES = {"supplier_id": "1", "case_id": "1", "rule_id": "1", "mapping_id":
                "canonical_property_id": "1", "user_id": "2", "preview_id": "1", "supplier_code": "partner_st",
                "external_id": "1", "identifier":"qa-session"}
 ADMIN_ONLY = {
+    "/roles", "/users", "/users/{user_id}/profile", "/users/{user_id}/reset-password",
     '/suppliers/{supplier_id}/parsing','/suppliers/{supplier_id}/parsing/approve-host',
     "/suppliers/{supplier_id}/enabled", "/suppliers/{supplier_id}/data-quality-policy",
     "/suppliers/{supplier_id}/missing-policy", "/scheduler/{supplier_id}", "/rules", "/rules/{rule_id}/active",
@@ -72,7 +73,7 @@ def _concrete(path: str) -> str:
 APP, _ = _app()
 POST_ROUTES = _post_routes(APP)
 CSRF_ROUTES = [path for path in POST_ROUTES if path != "/login"]
-MUTATING_ROUTES = [path for path in CSRF_ROUTES if path != "/logout"]
+MUTATING_ROUTES = [path for path in CSRF_ROUTES if path not in {"/logout", "/account/password"}]
 
 
 def test_route_inventory_is_what_this_suite_covers():

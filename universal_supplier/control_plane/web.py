@@ -284,12 +284,25 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         request.state.csp_nonce=secrets.token_urlsafe(24)
-        response=await call_next(request)
+        from .access_policy import allowed, request_permission
+        path = request.url.path
+        public = path in {"/login", "/health", "/ready", "/favicon.ico"} or path.startswith("/static/")
+        user = current_user(request) if auth_required and not public else None
+        if user and user.must_change_password and path not in {"/account/password", "/logout"}:
+            response = RedirectResponse("/account/password", 303)
+        elif user and path not in {"/account/password", "/logout"} and not allowed(user, request_permission(path, request.method)):
+            response = PlainTextResponse("Недостаточно прав для этого раздела", status_code=403)
+        else:
+            response=await call_next(request)
         response.headers.update({
             'X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff',
             'Referrer-Policy':'no-referrer','Cache-Control':'no-store',
             'Content-Security-Policy':"default-src 'self'; script-src 'self' 'nonce-"+request.state.csp_nonce+"'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
         return response
+
+    from .account_routes import register_accounts
+    register_accounts(app, templates, context, guard, check_csrf, signer,
+                      login_throttle, form_values, require_trusted_origin)
 
     def page_error(request: Request, message: str, status_code=400, details=""):
         user = current_user(request)
@@ -332,7 +345,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         login_throttle.reset(throttle_key)
         user, _ = found; admin_store.touch_login(user.id); token, _ = signer.issue(user)
         response = RedirectResponse(safe_next(values.get("next")), 303)
-        response.set_cookie(signer.cookie_name, token, httponly=True, samesite="lax", secure=os.environ.get('CONTROL_PLANE_INSECURE_HTTP')!='YES', max_age=signer.ttl_seconds, path="/")
+        response.set_cookie(signer.cookie_name, token, httponly=True, samesite="lax",
+                            secure=os.environ.get('HTTPS_ENABLED')=='YES' or os.environ.get('CONTROL_PLANE_INSECURE_HTTP')!='YES',
+                            max_age=signer.ttl_seconds, path="/")
         return response
 
     @app.post("/logout")
@@ -1131,7 +1146,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.post("/settings/users")
     async def create_user_route(request: Request):
         user = guard(request, {"ADMIN"}); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
-        try: admin_store.create_user(values.get("username", ""), values.get("display_name", ""), hash_password(values.get("password", "")), values.get("role", "VIEWER"), actor_id=user.id)
+        from .access_policy import validate_new_password
+        try: validate_new_password(values.get("password",""),values.get("password",""))
+        except ValueError as error: return page_error(request,str(error))
+        try: admin_store.create_user(values.get("username", ""), values.get("display_name", ""), hash_password(values.get("password", "")), values.get("role", "VIEWER"), actor_id=user.id, must_change_password=True)
         except (ValueError, KeyError) as error: return page_error(request, str(error))
         return RedirectResponse("/settings?user_saved=1", 303)
 
