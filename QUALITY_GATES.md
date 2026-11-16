@@ -1,5 +1,18 @@
 # Universal Supplier Matching V2.1 quality gates
 
+## All11 matching recall and preservation — 16Nov
+
+OPERATOR-CONFIRMED: freeze all18959cards/59427registry IDs (57405active,2022inactive
+review-only); full BEFORE/ACCEPTED native replay without persistence. Required RED/
+GREEN: missing title model, hidden duplicate, raw-model/property disagreement,
+generic descriptor series false match and unchanged hard CONFLICT. Existing LX20,
+TU2304V,HCV125,PP-13D,ETM-16U,Beka,F01/F03/namespace/manual and XML guards must pass.
+Every accepted proposal needs stable source ID, unique active target, native positive
+evidence, no critical contradiction/manual veto, frozen source/target hash and exact
+pair. Require no unexplained data/export regression plus identical protected SQL,
+manual/review/news and historical XML/LKG hashes. Offline proof does not authorize
+HTTP, matching apply, import or protected-branch changes.
+
 ## NO_UNEXPLAINED_DATA_OR_EXPORT_REGRESSION — 16Nov
 
 OPERATOR-CONFIRMED mandatory release/publication gate. REPOSITORY-VERIFIED: compare

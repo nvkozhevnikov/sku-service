@@ -1,5 +1,21 @@
 # Frozen Matching V2.1 regression cases
 
+## All11 title-model regression — 2026-11-16
+
+REPOSITORY-VERIFIED: a catalog row with empty model and visible own TU2304V must be
+retrieved, while another raw-model TU2304V row makes identity nonunique→REVIEW.
+Contradictory nonempty model/Модель property, PRO/NEW/V/CNC/+, voltage and accessory
+guards remain negative. PostgreSQL and CSV retrieval use the same title-model view.
+
+Confirmed intermediate false positives: Vekprom21608(Sahinler4R HC10-155),21609
+(4R HSS),21610(4RH) incorrectly proposed target145371(4R HC10-185) because
+`4х-валковый` was treated as model. None was persisted. Generic equipment counts
+are not positive identity; source/target raw fields stay unchanged and cases remain
+held. The negative guard also must NOT convert an actual voltage CONFLICT into
+REVIEW. tests/test_all11_candidate_coverage.py covers both defects and the hold.
+[Evidence/scope](docs/unified-rc/ALL11_MATCHING_COVERAGE.md). Intermediate66proposal
+list is superseded by accepted61; no evidence row or historical mapping deleted.
+
 ## F01/F03 converter regression supplement — 2026-10-19
 
 REPOSITORY-VERIFIED on isolated feature

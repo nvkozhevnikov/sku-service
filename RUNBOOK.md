@@ -1,5 +1,16 @@
 # RUNBOOK — Unified RC operator procedures (2026-10-30)
 
+## All11 matching proposals — STOP before mutation, 16Nov
+
+REPOSITORY-VERIFIED: accepted61pairs and source/target hashes are in workspace
+reports/MATCHING_ALL11_20261116/PROPOSED_61_LINKS_NOT_AUTHORIZED.json. Do not execute
+full-source reconcile/apply from an offline report or an old approval. Obtain exact
+operator approval for this file SHA and integrated code first. Recheck readonly
+DB identity/1282manual state/null links and hashes; drift stops. Use existing native
+review/audit transactions for the approved pairs only; no new canonical products,
+retargeting, ingestion, observations, news or XML/LKG replacement. Check expected
+additive result separately. [Detailed procedure](docs/unified-rc/ALL11_MATCHING_COVERAGE.md).
+
 ## XML continuity — current local view, 16Nov
 
 LIVE-VERIFIED LOCAL: http://127.0.0.1:58161/exports/previews has separate current

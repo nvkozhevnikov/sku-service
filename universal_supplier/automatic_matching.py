@@ -13,7 +13,7 @@ from functools import lru_cache
 
 from sterbrust_matching.matching import match_product
 from sterbrust_matching.product_identity import classify_model_role, REFERENCE_MODEL
-from .matching_service import RegistryContext, _candidate, _source, match_cards
+from .matching_service import RegistryContext, _candidate, _source, match_cards, nonidentifying_model
 
 POLICY_VERSION = "automatic-f01-f03-preserve-v1"
 BUCKETS = ("AUTO", "REVIEW", "CONFLICT", "NEW", "NOT_PROCESSED")
@@ -69,6 +69,7 @@ def hydrate_card(card, registry=None):
             if not pattern.search(title):
                 continue
             ids = set(registry.by_model.get(normalize_model(source.model, normalized), []))
+            ids.update(registry.by_title_model.get(normalize_model(source.model, normalized), []))
             if source.manufacturer_article:
                 ids.update(registry.manufacturer_identifier_index.get(article_lookup_key(source.manufacturer_article), []))
             for key in ids:
@@ -128,6 +129,9 @@ def plan_card(card, registry: RegistryContext, existing=None, *, active=True,
     if len(observed_brands) > 1:
         decision = {**decision, "status": "REVIEW", "match_method": "AMBIGUOUS_SAVED_BRAND",
                     "auto_accepted": "FALSE"}
+    if nonidentifying_model(source.model) and decision['status'] != 'CONFLICT':
+        decision = {**decision, "status": "REVIEW", "match_method": "NONIDENTIFYING_MODEL_DESCRIPTOR",
+                    "auto_accepted": "FALSE"}
     conflicts = json.loads(decision.get("conflicts") or "{}")
     if decision["status"] == "CONFLICT" and conflicts and all(
         isinstance(v, dict) and v.get("result") == "PROPERTY_AMBIGUOUS_DUPLICATE_VALUES"
@@ -152,7 +156,8 @@ def plan_card(card, registry: RegistryContext, existing=None, *, active=True,
         # Retrieval may have found the same model but no brand proof. That is
         # missing identity evidence, not evidence of absence from the catalogue.
         from sterbrust_matching.normalization import normalize_model
-        if registry.by_model.get(normalize_model(source.model)):
+        if (registry.by_model.get(normalize_model(source.model))
+                or registry.by_title_model.get(normalize_model(source.model))):
             bucket = "REVIEW"
             decision = {**decision, "status": "REVIEW", "match_method": "MISSING_BRAND_FOR_MODEL_CANDIDATE"}
     if timings is not None:timings['identity_guards_seconds']=timings.get('identity_guards_seconds',0.0)+time.perf_counter()-guard_started

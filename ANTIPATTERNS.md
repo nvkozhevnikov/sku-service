@@ -1,5 +1,15 @@
 # Matching V2.1 antipatterns
 
+## All11 candidate coverage — 16Nov
+
+REPOSITORY-VERIFIED NOT_ACCEPTED: index only the model column while ignoring visible
+own model titles; stop at one nonempty index and conceal duplicate canonical IDs;
+treat `4х-валковый`/axis count as a model; suppress a hard CONFLICT in a new review
+guard; invent brand from supplier/domain; call an old registry's NEW website absence;
+count product_matches events as products; apply an intermediate proposal list.
+The accepted61file is a review artifact, not execution permission. Existing1282
+links are not deleted due to revalidation flags. [Details](docs/unified-rc/ALL11_MATCHING_COVERAGE.md).
+
 ## Empty current feed must not erase accumulated results — 16Nov
 
 REPOSITORY-VERIFIED: explained TTL regression formerly advanced latest.json to0/0.

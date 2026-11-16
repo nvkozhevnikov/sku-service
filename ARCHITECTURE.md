@@ -1,5 +1,15 @@
 # Unified RC architecture — 2026-10-30
 
+## All11 model discovery boundary — 16Nov
+
+REPOSITORY-VERIFIED: RegistryContext adds by_title_model to the existing CSV/SQL
+loaders. Strong article/model retrieval is unioned; missing model comparison can
+use a visible OWN_MODEL title projection without changing database/raw fields.
+Same F01/F03 match_product is the positive authority. Native automatic planner adds
+only a negative generic-model guard, retaining hard CONFLICT/manual ID protection.
+No second matching engine or schema, supplier namespace merge or new ingestion.
+[Scope and offline proof](docs/unified-rc/ALL11_MATCHING_COVERAGE.md).
+
 16Nov native canary: a purpose-specific policy in existing commercial_refresh and
 automation_execution; same queue/Orchestrator/SourceBackend/receipts, no second engine.
 Native source updates transactionally preserve signed source PK/catalog link; matching

@@ -6,14 +6,15 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 
 from sterbrust_matching.matching import Product, match_product
 from sterbrust_matching.normalization import (
     article_lookup_key, brand_evidenced_by_name, model_identity_evidence, normalize_brand, normalize_model,
-    normalized_name, model_tokens,
+    normalized_name, model_tokens, normalize_model_strict,
 )
-from sterbrust_matching.product_identity import identity_properties, own_model_for_identity
+from sterbrust_matching.product_identity import identity_properties, own_model_for_identity, classify_model_role, OWN_MODEL, property_values
 
 from .models import ProductCard
 
@@ -26,6 +27,46 @@ class RegistryContext:
     by_brand: dict[str, list[str]]
     title_identifier_index: dict[tuple[str, str], list[str]]
     manufacturer_identifier_index: dict[str, list[str]] = field(default_factory=dict)
+    by_title_model: dict[str, list[str]] = field(default_factory=dict)
+
+
+@lru_cache(maxsize=100000)
+def _visible_own_model(name: str, category: str) -> str:
+    if classify_model_role(name, category).role != OWN_MODEL:
+        return ''
+    model = own_model_for_identity(name, category)
+    return '' if nonidentifying_model(model) else model
+
+
+def nonidentifying_model(model: str) -> bool:
+    """A roller/axis/spindle count describes equipment, not its execution ID."""
+    return bool(re.fullmatch(r'\d+\s*[xх×-]?\s*-?\s*(?:валков|осев|шпиндел|сторон|позицион|координат)\w*',
+                             str(model or '').strip(), re.I))
+
+
+def index_visible_models(registry: RegistryContext) -> RegistryContext:
+    """Discovery over actual catalog titles; never rewrite stored model facts."""
+    index: dict[str, list[str]] = defaultdict(list)
+    for key, row in registry.products.items():
+        model = _visible_own_model(row['name'], row['category'])
+        normalized = normalize_model(model, row['brand'])
+        if normalized:
+            index[normalized].append(key)
+    registry.by_title_model = dict(index)
+    return registry
+
+
+def _catalog_model(row: dict) -> str:
+    if row['model']:
+        return row['model']
+    visible = _visible_own_model(row['name'], row['category'])
+    # An explicit contradictory property must not be hidden by the title.
+    for name, values in row.get('properties', {}).items():
+        if str(name).strip().casefold() in {'model', 'модель'}:
+            if any(normalize_model_strict(value, row['brand']) != normalize_model_strict(visible, row['brand'])
+                   for value in property_values(values)):
+                return ''
+    return visible
 
 
 def load_registry_from_csv(path: str | Path) -> RegistryContext:
@@ -69,7 +110,7 @@ def load_registry_from_csv(path: str | Path) -> RegistryContext:
     for key, row in products.items():
         if article_lookup_key(row['article']):
             manufacturer_index[article_lookup_key(row['article'])].append(key)
-    return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index, manufacturer_index)
+    return index_visible_models(RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index, manufacturer_index))
 
 
 
@@ -145,7 +186,7 @@ def load_registry_from_postgres(connection, *, catalog_product_id=None) -> Regis
     for key, row in products.items():
         if article_lookup_key(row['article']):
             manufacturer_index[article_lookup_key(row['article'])].append(key)
-    return RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index, manufacturer_index)
+    return index_visible_models(RegistryContext(products, identifier_index, by_model, by_brand, title_identifier_index, manufacturer_index))
 
 
 def _id_order(key: object) -> tuple[int, int, str]:
@@ -155,7 +196,7 @@ def _id_order(key: object) -> tuple[int, int, str]:
 
 def _candidate(row: dict) -> Product:
     return Product(key=row["sterbrust_product_id"], name=row["name"], brand=row["brand"],
-                   model=row["model"], manufacturer_article=row["article"],
+                   model=_catalog_model(row), manufacturer_article=row["article"],
                    category=row["category"], properties=row.get("properties", {}),
                    supplier_identifiers={key: tuple(values) for key, values in row["supplier_identifiers"].items()})
 
@@ -174,25 +215,29 @@ def _source(card: ProductCard) -> Product:
 
 def _candidates(source: Product, registry: RegistryContext) -> list[dict]:
     article = article_lookup_key(source.supplier_article)
-    ids = sorted(set(registry.identifier_index.get((source.supplier_code, article), [])), key=int) if article else []
-    if not ids and article:
+    ids = set(registry.identifier_index.get((source.supplier_code, article), [])) if article else set()
+    if article:
         # Safe fallback for legacy Sterbrust cards where the supplier-specific
         # article is printed in the product title but the dedicated property is
         # empty.  Candidate discovery only: match_product still enforces
         # product-kind/model/property conflicts and does not treat this as a
         # persisted supplier identifier.
-        ids = sorted(set(registry.title_identifier_index.get((source.supplier_code, article), [])), key=int)
-    if not ids:
+        ids.update(registry.title_identifier_index.get((source.supplier_code, article), []))
+    if source.manufacturer_article:
         # Candidate discovery only. The existing matcher checks article syntax,
         # brand, model, execution and properties before any AUTO acceptance.
         manufacturer_article = article_lookup_key(source.manufacturer_article)
-        ids = list(registry.manufacturer_identifier_index.get(manufacturer_article, [])) if manufacturer_article else []
-    if not ids:
-        model = normalize_model(source.model, source.brand)
-        ids = list(registry.by_model.get(model, [])) if model else []
+        ids.update(registry.manufacturer_identifier_index.get(manufacturer_article, []))
+    model = normalize_model(source.model, source.brand)
+    if model:
+        ids.update(registry.by_model.get(model, []))
+        ids.update(registry.by_title_model.get(model, []))
     if not ids:
         base_model = str(model_identity_evidence(source.name).get("base_model") or "")
-        ids = list(registry.by_model.get(base_model, [])) if base_model else []
+        if base_model:
+            ids.update(registry.by_model.get(base_model, []))
+            ids.update(registry.by_title_model.get(base_model, []))
+    ids = sorted(ids, key=_id_order)
     if not ids and source.brand:
         scored = []
         for product_id in registry.by_brand.get(normalize_brand(source.brand), []):
@@ -229,6 +274,14 @@ def match_cards(cards: list[ProductCard] | tuple[ProductCard, ...], registry: Re
             # second event with a different method/fingerprint.
             result = match_product(source, candidates)
         flags = result.evidence.get("data_quality_flags", [])
+        evidence = dict(result.evidence)
+        chosen = registry.products.get(str(result.candidate_key))
+        if chosen and not chosen['model'] and _catalog_model(chosen):
+            evidence['catalog_model_projection'] = {
+                'origin': 'VISIBLE_OWN_TITLE', 'raw_model': '',
+                'title': chosen['name'], 'projected_model': _catalog_model(chosen),
+                'stored_fact_modified': False,
+            }
         rows.append({
             "source_external_id": card.external_id, "SKU": card.sku, "name": card.name,
             "brand": card.brand, "model": source.model, "status": result.status,
@@ -238,7 +291,7 @@ def match_cards(cards: list[ProductCard] | tuple[ProductCard, ...], registry: Re
             "warnings": json.dumps(result.warnings, ensure_ascii=False, sort_keys=True),
             "data_quality_flags": json.dumps(flags, ensure_ascii=False, sort_keys=True),
             "conflicts": json.dumps(result.conflicts, ensure_ascii=False, sort_keys=True),
-            "evidence": json.dumps(result.evidence, ensure_ascii=False, sort_keys=True),
+            "evidence": json.dumps(evidence, ensure_ascii=False, sort_keys=True),
             "auto_accepted": str(result.auto_accepted).upper(),
         })
     return rows

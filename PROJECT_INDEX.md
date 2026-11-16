@@ -10,6 +10,10 @@ ARCHITECTURE_DECISIONS.md.
 
 ## Release continuation 2026-11-16
 
+- [All11 matching coverage correction](docs/unified-rc/ALL11_MATCHING_COVERAGE.md):
+ 18959native offline replay, title-model index/projection, generic-descriptor hold,
+ stored-vs-proposed statistics,61pending pairs, old-registry and application limits.
+
 - [XML continuity / LAST KNOWN GOOD](docs/unified-rc/XML_CONTINUITY.md): canonical
   preservation gate,117/48/206 reconstruction,206enrichment cohort, authenticated
   downloads, current freshness separation and operational recovery. Current XML

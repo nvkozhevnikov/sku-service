@@ -1,5 +1,19 @@
 # Current unified feature state — 2026-10-30 (Intervesp 5 s preparation)
 
+## 16Nov — all11 matching correction, proposals only
+
+REPOSITORY-VERIFIED: full18959BEFORE/ACCEPTED native offline replay over frozen SQL;
+title-model retrieval/projection fixed, hidden duplicate canonical candidates exposed,
+generic roller/axis descriptors rejected without hiding hard CONFLICT.61new Vekprom
+proposals (61uniqueIDs/full titles match),57storedNEW+4REVIEW; no decisions applied.
+LIVE-VERIFIED LOCAL:1282links/1226uniqueIDs, current stored buckets6090REVIEW/
+1080CONFLICT/10503NEW+4inactiveunprocessed sum18959. Registry59427dated1Sep;
+current website completeness/NEW absence not proven, HTTP0. Existing484link audit
+flags remain visible, mappings/history preserved. SQL/news/XML/LKG before/after
+hashes verified. Canonical [implementation and boundary](docs/unified-rc/ALL11_MATCHING_COVERAGE.md);
+workspace reports/MATCHING_ALL11_20261116 contains accepted CSV/Excel/manifest.
+DONE/APPLIED CODE ONLY, VERIFIED OFFLINE; DB/matchingapply/import/deployment NOT_APPLIED.
+
 ## 16Nov — continuity restored locally; RELEASE_READY=NO
 
 LIVE-VERIFIED LOCAL SELECT:59427catalog/18959source products/18959offers/

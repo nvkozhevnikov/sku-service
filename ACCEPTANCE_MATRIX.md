@@ -1,5 +1,17 @@
 # Matching Policy V2 acceptance
 
+## All11 recall correction — 16Nov, offline-only acceptance
+
+OPERATOR-CONFIRMED: full18959saved products, no20-card offline cap; no HTTP or DB
+matching writes. REPOSITORY-VERIFIED: exact title-model discovery and projection of
+missing catalog model must retain raw facts, F01/F03, manual IDs, all strong duplicate
+candidates and semantic guards. Generic equipment descriptors cannot support AUTO;
+existing hard CONFLICT cannot be hidden. Cross-supplier same title/model is a lead,
+not positive authority. NEW against a76-day snapshot is only probable, not LIVE
+absence proof.61offlineproposals require separate operator approval and drift guards.
+Preserve1282mappings,18959products/offers,23475observations, news/history and LKG.
+[Canonical scope/results](docs/unified-rc/ALL11_MATCHING_COVERAGE.md).
+
 ## Accumulated-result continuity — 16Nov
 
 OPERATOR-CONFIRMED, scope: catalog/dual preview/release. Loss of achieved results
