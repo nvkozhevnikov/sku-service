@@ -11,7 +11,7 @@ BUILTINS = [
     ("ADMIN", "Главный администратор", "ADMIN", ["*"]),
     ("SUPPLIER_MANAGER", "Менеджер поставщиков", "OPERATOR",
      ["catalog.read", "supplier.manage", "matching.read", "matching.manage", "xml.read", "xml.generate", "reports.read", "settings.read", "applications.read"]),
-    ("CONTENT_MANAGER", "Контент-менеджер", "OPERATOR", ["competitor.read", "applications.read"]),
+    ("CONTENT_MANAGER", "Контент-менеджер", "OPERATOR", ["competitor.read", "applications.read","content.read","content.edit","content.media","content.export","content.rules.manage","content.ai.use","content.site.export"]),
     ("ANALYST", "Аналитик", "VIEWER", ["catalog.read", "matching.read", "xml.read", "competitor.read", "reports.read", "applications.read"]),
     ("OBSERVER", "Наблюдатель", "VIEWER", ["catalog.read"]),
 ]

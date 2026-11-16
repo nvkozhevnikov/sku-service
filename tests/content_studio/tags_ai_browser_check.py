@@ -1,0 +1,76 @@
+from pathlib import Path
+import json
+from playwright.sync_api import sync_playwright
+
+ROOT=Path(__file__).resolve().parents[1]
+OUT=ROOT.parents[1]/'reports/CONTENT_STUDIO_AI_GATEWAY_20261110'
+SOURCE=(ROOT/'tests/fixtures/belmash-b3499-source.html').read_text(encoding='utf-8')
+KEY='AI_BROWSER_FAKE_NEVER_EXTERNAL_123456789'
+checks=[]
+def ck(name,value):
+    checks.append({'name':name,'pass':bool(value)})
+    assert value,name
+
+with sync_playwright() as pw:
+    browser=pw.chromium.launch(executable_path='C:/Users/man503/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe',headless=True)
+    ctx=browser.new_context(viewport={'width':1440,'height':1050});page=ctx.new_page();errors=[];external=[]
+    page.on('pageerror',lambda e:errors.append(str(e)))
+    page.on('request',lambda r:external.append(r.url) if not r.url.startswith(('http://127.0.0.1:58207/','data:','about:')) else None)
+    page.goto('http://127.0.0.1:58207/');page.locator('#login-code').fill('qa-browser-local');page.locator('#login-submit').click();page.locator('#welcome-new').click();page.locator('#compose-source').fill(SOURCE)
+    page.wait_for_function("() => document.querySelector('#compose-tags').value.includes('#BELMASH')")
+    tags=page.locator('#compose-tags').input_value().split()
+    ck('automatic_2_to_5_relevant_tags',2<=len(tags)<=5 and '#Металлообработка' in tags and '#ТокарныйСтанок' in tags)
+    ck('evidence_visible','бренд' in page.locator('#compose-tag-candidates').inner_text() and 'BELMASH' in page.locator('#compose-tag-candidates').inner_text())
+    page.locator('#compose-tags').fill('#BELMASH #ТокарныйСтанок');page.locator('#compose-title').fill('BELMASH B3499 — тест ссылок');page.wait_for_timeout(650)
+    ck('manual_tags_not_overwritten',page.locator('#compose-tags').input_value()=='#BELMASH #ТокарныйСтанок')
+    page.locator('#compose-publication-url').fill('https://sterbrust.ru/catalog/qa-example/');page.screenshot(path=str(OUT/'compose-tags-desktop.png'),full_page=True)
+    page.locator('#compose-submit').click();page.locator('#compose-dialog').wait_for(state='hidden');page.locator('#plain-editor').wait_for(state='visible')
+    body=page.locator('#plain-editor').input_value();ck('text_then_link_then_tags',body.endswith('https://sterbrust.ru/catalog/qa-example/\n\n#BELMASH #ТокарныйСтанок'))
+    ck('preview_includes_exact_footer',page.locator('#vk-text').inner_text()==body)
+    page.locator('#publication-url').fill('sterbrust.ru/news/qa-example/');page.locator('#publication-tags').fill('#BELMASH #Резка');page.keyboard.press('Control+s');page.wait_for_function("() => document.querySelector('#save-status').textContent==='Сохранено'")
+    body=page.locator('#plain-editor').input_value();ck('edited_link_and_tags_replace_previous',body.endswith('https://sterbrust.ru/news/qa-example/\n\n#BELMASH #Резка') and '/catalog/qa-example/' not in body)
+    ck('single_footer',body.count('https://sterbrust.ru/news/qa-example/')==1)
+    page.locator('#save-button').click();page.wait_for_timeout(250);ck('repeat_save_no_footer_duplication',page.locator('#plain-editor').input_value().count('#Резка')==1)
+    page.screenshot(path=str(OUT/'vk-footer-desktop.png'),full_page=True)
+    for width in [390,768,1440]:
+        page.set_viewport_size({'width':width,'height':1050});ck('no_overflow_'+str(width),page.evaluate('() => document.documentElement.scrollWidth <= innerWidth+1'))
+        if width==390:page.screenshot(path=str(OUT/'vk-footer-mobile.png'),full_page=True)
+    page.locator('#ai-settings').click();page.locator('#ai-dialog').wait_for(state='visible');page.locator('#ai-add-profile').click();page.locator('#ai-preset').select_option('deepseek');page.locator('#ai-model').fill('example-chinese-model');page.locator('#ai-key').fill(KEY);page.locator('#ai-save').click();page.locator('#ai-status').get_by_text('Сохранено на этом компьютере',exact=False).wait_for()
+    ck('ai_key_field_cleared',page.locator('#ai-key').input_value()=='')
+    state=ctx.request.get('http://127.0.0.1:58207/api/ai/gateway').json();cfg=state['profiles'][0];ck('ai_status_never_exposes_key',KEY not in json.dumps(state) and 'key_ref' not in json.dumps(state))
+    ck('ai_saved_is_not_verified',cfg['configured'] and not cfg['checked'])
+    ck('ai_test_requires_ack',not page.locator('#ai-test').is_enabled())
+    page.screenshot(path=str(OUT/'ai-settings-mock.png'),full_page=True)
+    page.locator('#ai-test-ack').check();page.locator('#ai-test').click();page.locator('#ai-status').get_by_text('Тестовый ответ получен',exact=False).wait_for();ck('explicit_mock_test',True)
+    page.locator('#ai-add-profile').click();page.locator('#ai-preset').select_option('glm');page.locator('#ai-model').fill('glm-preview')
+    ck('glm_preset_general_api',page.locator('#ai-base-url').input_value()=='https://api.z.ai/api/paas/v4')
+    page.locator('#ai-save').click();page.locator('#ai-status').get_by_text('Сохранено на этом компьютере',exact=False).wait_for()
+    ck('two_independent_profiles',page.locator('#ai-profile-list .ai-card').count()==2)
+    page.locator('#ai-profile-cancel').click()
+    page.locator('#ai-dialog').screenshot(path=str(OUT/'ai-connections-test.png'))
+    page.locator('#ai-tab-tasks').click();task=page.locator('#ai-task-list .ai-card').filter(has_text='Статья для сайта')
+    task.get_by_role('button',name='Настроить задачу').click()
+    page.locator('#ai-task-profile').select_option(label='GLM / Z.AI · glm-preview')
+    page.locator('#ai-task-model').fill('glm-article-example');page.locator('#ai-task-limit').fill('6200')
+    page.locator('#ai-task-instructions').fill('Добавь раздел характеристик.')
+    page.locator('#ai-task-save').click();page.locator('#ai-task-status').get_by_text('Задача сохранена.').wait_for()
+    ck('article_route_saved', 'glm-article-example' in task.inner_text())
+    page.locator('#ai-task-cancel').click()
+    page.locator('#ai-dialog').screenshot(path=str(OUT/'ai-tasks-test.png'))
+    task.get_by_role('button',name='Проверить',exact=True).click();page.locator('#ai-check-result').wait_for(state='visible')
+    ck('offline_check_for_unconfigured_route','glm-article-example' in page.locator('#ai-check-route').inner_text() and '0 токенов' in page.locator('#ai-check-status').inner_text())
+    ck('offline_draft_and_routing_context','600 Вт' in page.locator('#ai-check-output').inner_text())
+    page.locator('#ai-dialog').screenshot(path=str(OUT/'ai-offline-test.png'))
+    page.set_viewport_size({'width':390,'height':844})
+    ck('ai_panel_mobile_width',page.locator('#ai-dialog').evaluate('(node) => node.scrollWidth <= node.clientWidth + 1'))
+    page.set_viewport_size({'width':1440,'height':1050})
+    page.locator('#ai-close').click();page.locator('#home-button').click();page.locator('#welcome-new').click();page.locator('#compose-source').fill(SOURCE);page.locator('[data-compose-channel="news"]').uncheck();page.locator('#compose-engine').select_option('ai')
+    ck('ai_destination_visible','api.deepseek.com' in page.locator('#compose-ai-target').inner_text() and 'example-chinese-model' in page.locator('#compose-ai-target').inner_text())
+    ck('ai_transmission_ack_not_preselected',not page.locator('#compose-ai-ack').is_checked())
+    page.locator('#compose-ai-ack').check();page.locator('#compose-reviewed').check();page.locator('#compose-submit').click();page.locator('#compose-dialog').wait_for(state='hidden')
+    ck('mock_ai_text_applied_as_draft','С установленной защитой' in page.locator('#plain-editor').input_value() and page.locator('#draft-state').inner_text()=='Черновик')
+    ck('ai_facts_require_review',not page.locator('#approve-button').is_enabled())
+    ck('no_external_requests',not external);ck('no_script_errors',not errors)
+    browser.close()
+(OUT/'BROWSER_QA.json').write_text(json.dumps({'pass':len(checks),'fail':0,'checks':checks,'scope':'isolated data; mock AI/VK only'},ensure_ascii=False,indent=2),encoding='utf-8')
+print(json.dumps({'pass':len(checks),'fail':0}))

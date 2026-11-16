@@ -1,6 +1,7 @@
 """Publication checks, not import permission. Identity and history do not expire."""
 from decimal import Decimal
 from xml.etree import ElementTree as ET
+from .export_eligibility import semantic_export_hold
 
 GATE='NO_UNEXPLAINED_DATA_OR_EXPORT_REGRESSION'
 
@@ -19,6 +20,7 @@ def validate_payload(data,manifest):
             if kind=='updates':
                 trace=traces.get(node.get('sterbrust_product_id'))
                 if not trace or any(c.tag not in ('price','currency','availability') for c in node):raise ValueError('PREVIEW_UPDATE_IDENTITY_OR_FIELD')
+                if semantic_export_hold(trace):raise ValueError('PREVIEW_SEMANTIC_EXPORT_HOLD')
                 freshness=trace['freshness'];price=node.find('price');stock=node.find('availability')
                 if price is None and stock is None:raise ValueError('PREVIEW_EMPTY_UPDATE')
                 if price is not None and (freshness['price']['state']!='fresh' or Decimal(price.text)<=0 or not node.findtext('currency')):raise ValueError('PREVIEW_STALE_PRICE')

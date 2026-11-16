@@ -81,7 +81,7 @@ def test_content_role_can_read_applications(setup):
     client,_ = signed(setup[0],"editor")
     response = client.get("/applications")
     assert response.status_code == 200
-    assert "ещё не подключён" in response.text
+    assert "Перенос прежней SQLite в PostgreSQL ожидает разрешения" in response.text
     assert "target=\"_blank\"" not in response.text
 
 

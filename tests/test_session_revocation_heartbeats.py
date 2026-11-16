@@ -111,10 +111,27 @@ def test_revoke_requires_csrf():
 
 
 def test_postgres_admin_store_reads_and_bumps_session_version():
-    source = (ROOT / "universal_supplier/control_plane/admin_store.py").read_text(encoding="utf-8")
-    assert "is_active,session_version FROM app_users WHERE id=%s" in source
-    assert "is_active,session_version,password_hash FROM app_users WHERE username=%s" in source
-    assert "session_version=session_version+1" in source and "session_version=session_version+(%s AND is_active)::int" in source
+    record=dict(id=42,username="qa",display_name="QA",role="VIEWER",is_active=True,
+                session_version=7,password_hash="synthetic-only",must_change_password=False,
+                access_profile="OBSERVER",permissions=["catalog.read"])
+    calls=[]
+    class Cursor:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def execute(self,query,params=()):
+            calls.append((query,params))
+            if query.startswith("UPDATE app_users SET session_version="):record['session_version']+=1
+        def fetchone(self):return dict(record)
+    class Connection(Cursor):
+        def cursor(self):return Cursor()
+        def transaction(self):return self
+    store=PostgresAdminStore(object(),connection_factory=lambda *a,**k:Connection())
+    assert store.user_by_id(42).session_version==7
+    user,password=store.user_by_username(" QA ")
+    assert user.id==42 and password=="synthetic-only" and user.permissions==frozenset({"catalog.read"})
+    store.revoke_sessions(42,1,"QA")
+    assert store.user_by_id(42).session_version==8
+    assert calls[0][1]==(42,) and calls[1][1]==("qa",)
 
 
 def test_migration_017_adds_session_version_throttle_and_heartbeats():

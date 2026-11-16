@@ -254,6 +254,8 @@ def selected_row_violations(rows: Iterable[FeedRow], policy: FeedPolicy,
         violations.append("MIXED_SELECTION_POLICY_VERSIONS:" + ",".join(sorted(selection_versions)))
     for row in rows:
         ref = f"catalog_product={row.catalog_product_id}"
+        from .export_eligibility import semantic_export_hold
+        if semantic_export_hold(row):violations.append(f"SEMANTIC_EXPORT_HOLD:{ref}")
         if row.selection_status != "selected":
             violations.append(f"NOT_SELECTED:{ref}:{row.selection_status}")
         if row.selected_offer_id is None:

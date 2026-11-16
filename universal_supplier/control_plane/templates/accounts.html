@@ -35,9 +35,10 @@
 {% for key,label in permissions.items() %}<label><input type="checkbox" name="permission:{{key}}"> {{label}}</label>{% endfor %}
 <label>Ваш пароль для подтверждения<input type="password" name="current_password" autocomplete="current-password" required></label><button>Сохранить роль</button></form></section>
 {% elif mode=='applications' %}
-<section class="panel"><h3>Content Studio — сайт и VK</h3>
-{% if content_studio_url %}<p><a href="{{content_studio_url}}" target="_blank" rel="noopener noreferrer">Открыть приложение в новой вкладке</a></p>
-{% else %}<p>Локальное приложение существует отдельно. Совместный серверный контракт авторизации и PostgreSQL ещё не подключён; отдельный вход или база здесь не создаются.</p>{% endif %}
-<p>Подключение разрешается после проверки единого входа, разделения прав и переносимости данных. Публикация на сайт/VK из этой панели выключена.</p></section>
+<section class="panel"><h3>Контент-студия — сайт и ВК</h3>
+<p><a href="/content-studio/">Открыть Контент-студию</a></p>
+{% if request.app.state.content_studio_available %}<p>Общая авторизация Unified RC, отдельные права на контент и PostgreSQL.</p>
+{% else %}<p>Раздел подготовлен. Перенос прежней SQLite в PostgreSQL ожидает разрешения; исходные материалы сохранены.</p>{% endif %}
+<p>Публикация требует проверки материала, нужных прав и отдельного подтверждения.</p></section>
 {% endif %}
 {% endblock %}

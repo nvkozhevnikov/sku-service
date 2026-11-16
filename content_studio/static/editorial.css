@@ -1,0 +1,34 @@
+.editorial-rule { padding: 12px 0; border-bottom: 1px solid var(--line); min-width: 0; overflow-wrap: anywhere; }
+.editorial-rule summary { cursor: pointer; font-size: 14px; overflow-wrap: anywhere; }
+.editorial-rule pre { max-height: 320px; overflow: auto; }
+.editorial-rule .ai-actions { gap: 7px; }
+#ai-dialog .editorial-rule .ai-checkline { margin: 0; padding: 0; }
+.editorial-rule button { font-size: 12px; padding: 7px 10px; }
+#ai-rule-text { min-height: 190px; }
+#ai-rule-form { margin: 14px 0; }
+#ai-rules-toolbar { align-items: end; }
+#ai-rules-toolbar label { flex: 1 1 180px; }
+#news-review-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tag-chip { position: relative; padding-right: 32px; }
+.tag-chip .tag-remove { position: absolute; top: 4px; right: 4px; width: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #37553a; font-size: 18px; line-height: 24px; }
+.tag-chip .tag-remove:hover { background: #d8e5ce; }
+
+#compose-dialog .compose-link-error { color:#ad442c; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+#compose-dialog input[aria-invalid="true"] { border-color:#ad442c; background:#fff8f5; }
+.generated-photo-choice{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.5}
+.generated-photo-choice input[type="checkbox"]{width:16px;min-width:16px;height:16px;margin:0}
+.preview-heading{flex-wrap:wrap;gap:8px}
+#open-preview-window{font-size:11px;padding:7px 9px;min-height:32px}
+#compose-news-explanation{display:block;margin-top:6px;line-height:1.5}
+#mark-generated-photos{margin-top:8px}
+
+.source-import-controls,.source-link-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 16px;min-width:0}
+.source-import-controls small,.source-link-controls small{flex:1 1 220px;overflow-wrap:anywhere;line-height:1.5}
+#compose-source-status[data-error="true"]{color:#ad442c}
+.source-import-controls button,.source-link-controls button{font-size:12px;padding:8px 10px}
+.source-browser-help{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:16px;font-size:12px;line-height:1.6}
+.source-browser-help summary{cursor:pointer}
+.source-browser-help li,.source-browser-help p{margin:8px 0}
+#compose-browser-folder{width:100%;font-size:11px;margin:6px 0}
+
+.integrated-nav{display:flex;gap:20px;align-items:center;padding:12px 24px;background:#eef3e9;border-bottom:1px solid #d9e3d5;flex-wrap:wrap}.integrated-nav a{color:#15684e}body[data-integrated="true"] #login{display:none}

@@ -1,0 +1,93 @@
+#ai-dialog {
+  width: min(960px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+  color: var(--ink, #172d25);
+  background: #fbfcf9;
+  border-radius: 22px;
+}
+
+#ai-dialog[open] { display: flex; flex-direction: column; }
+
+.ai-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 24px;
+  flex: 0 0 auto;
+  background: #eff4ea;
+  border-bottom: 1px solid #dce6db;
+}
+
+.ai-heading > div { min-width: 0; }
+.ai-heading > button { flex: 0 0 auto; }
+.ai-heading h2 { margin: 5px 0; font-size: clamp(21px, 3vw, 26px); }
+.ai-heading p, .ai-content p { margin: 7px 0; }
+.ai-heading p, .ai-content .muted { color: #50685a; }
+.ai-tabs { display: flex; gap: 8px; padding: 10px 24px; flex-wrap: wrap; flex: 0 0 auto; border-bottom: 1px solid var(--line); }
+.ai-tabs button[aria-selected="true"] { color: white; background: #185b41; border-color: #185b41; }
+.ai-content { padding: 8px 24px 22px; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.ai-content .section-title { gap: 12px; flex-wrap: wrap; }
+.ai-content .section-title > div { min-width: 0; }
+#ai-dialog .ai-content label { min-width: 0; margin: 10px 0; font-size: 12px; line-height: 1.5; }
+.ai-content h3, .ai-content h4 { margin: 0; }
+.ai-content [role="status"] { font-size: 13px; color: #34594a; }
+.ai-content #ai-global-status:empty { display: none; }
+.ai-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 12px; margin: 12px 0; }
+.ai-card, .ai-intro, .ai-form {
+  border: 1px solid #dbe5d8;
+  border-radius: 15px;
+  background: white;
+  padding: 16px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ai-intro { grid-column: 1 / -1; background: #f3f7ed; }
+.ai-form { margin-top: 14px; }
+.ai-card-title, .ai-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-actions { margin-top: 12px; }
+.ai-actions [role="status"] { flex: 1 1 180px; min-width: 0; }
+.ai-model-label, .ai-url { display: block; margin: 7px 0; }
+.ai-url { color: #526c5e; }
+.ai-badge { display: inline-flex; padding: 4px 8px; background: #edf1ec; border-radius: 99px; font-size: 11px; }
+.ai-badge.ready { background: #e3f1e5; color: #225e41; }
+#ai-dialog .ai-checkline { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 10px; padding: 4px 0; cursor: pointer; }
+#ai-dialog .ai-checkline input { width: 16px; height: 16px; margin: 2px 0 0; padding: 0; }
+#ai-dialog .ai-checkline span { min-width: 0; overflow-wrap: anywhere; }
+#ai-dialog textarea { width: 100%; resize: vertical; box-sizing: border-box; }
+#ai-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 10px; background: #eff4eb; padding: 12px; }
+.ai-example { margin: 12px 0; padding: 14px; border-radius: 10px; background: #eff4eb; }
+.ai-example h4 { font-size: 16px; }
+.ai-example h2 { font-size: 15px; margin: 12px 0 4px; }
+.ai-test-box { margin-top: 12px; border-top: 1px solid #dbe5d8; }
+.ai-provider-help { margin: 12px 0; padding: 12px; background: #eff4eb; border: 1px solid #dbe5d8; border-radius: 10px; font-size: 12px; line-height: 1.5; }
+.ai-provider-help p { line-height: 1.5; }
+.ai-content [role="status"][data-error="true"] { color: #9b4935; white-space: pre-line; overflow-wrap: anywhere; }
+.ai-error-card { border: 1px solid #e2c6b9; border-radius: 10px; padding: 14px; margin: 0 0 16px; background: #fff5ee; color: #7f3e2e; }
+.ai-error-card h3 { font-size: 15px; margin: 0 0 8px; }
+.ai-error-card p { font-size: 13px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
+.ai-error-card button { font-size: 12px; }
+#compose-ai-target { padding: 8px; border-radius: 8px; background: #eff4eb; }
+#compose-ai-target p { margin: 0 0 6px; }
+
+@media (max-width: 650px) {
+  #ai-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 14px; }
+  .ai-heading { padding: 14px; gap: 10px; }
+  .ai-heading p { font-size: 12px; line-height: 1.5; }
+  .ai-tabs { padding: 8px 14px; gap: 5px; }
+  .ai-tabs button { padding: 7px 9px; font-size: 12px; min-height: 38px; }
+  .ai-content { padding: 8px 14px 16px; }
+  .ai-card, .ai-intro, .ai-form { padding: 12px; border-radius: 10px; }
+  #ai-dialog .ai-checkline { font-size: 13px; }
+}
+
+@media (max-height: 600px) {
+  .ai-heading { padding: 10px 18px; }
+  .ai-heading h2 { font-size: 21px; }
+  .ai-heading p { margin: 3px 0; line-height: 1.4; }
+  .ai-heading .eyebrow { display: none; }
+  .ai-tabs { padding-top: 6px; padding-bottom: 6px; }
+}

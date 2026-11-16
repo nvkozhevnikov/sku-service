@@ -147,7 +147,7 @@ def filters_from_request(request: Request, *, forced_decision: str = "") -> Prod
 def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None,
                session_secret: str | None = None, auth_required: bool | None = None,
                commercial_qa_service=None, competitor_service=None, competitor_collection=None,
-               release_dispatch=None,cabinet_service=None) -> FastAPI:
+               release_dispatch=None,cabinet_service=None,content_studio_options=None) -> FastAPI:
     injected = store is not None; config = None
     if store is None:
         if os.environ.get("CONTROL_PLANE_DEMO_SNAPSHOT") == "YES":
@@ -273,7 +273,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             allowed_posts.add('/competitor-monitoring/runs')
         if release_dispatch is not None:
             allowed_posts.add('/release-jobs/enqueue')
-        if getattr(type(store), "read_only", False) and request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in allowed_posts:
+        if getattr(type(store), "read_only", False) and request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in allowed_posts and not request.url.path.startswith('/content-studio/'):
             if request.url.path.startswith("/suppliers/") and request.url.path.endswith("/start") and commercial_qa_service.enabled:
                 return HTMLResponse(
                     "<h1>Обычный запуск недоступен</h1>"
@@ -289,21 +289,31 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         path = request.url.path
         public = path in {"/login", "/health", "/ready", "/favicon.ico"} or path.startswith("/static/")
         user = current_user(request) if auth_required and not public else None
-        if user and user.must_change_password and path not in {"/account/password", "/logout"}:
+        if auth_required and path.startswith('/content-studio') and not user:
+            response=JSONResponse({'error':'Требуется вход Unified RC.'},401) if '/api/' in path else RedirectResponse('/login?next='+quote(path),303)
+        elif user and user.must_change_password and path not in {"/account/password", "/logout"}:
             response = RedirectResponse("/account/password", 303)
         elif user and path not in {"/account/password", "/logout"} and not allowed(user, request_permission(path, request.method)):
             response = PlainTextResponse("Недостаточно прав для этого раздела", status_code=403)
         else:
             response=await call_next(request)
+        studio_policy=response.headers.get('Content-Security-Policy') if path.startswith('/content-studio/') else None
         response.headers.update({
             'X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff',
             'Referrer-Policy':'no-referrer','Cache-Control':'no-store',
             'Content-Security-Policy':"default-src 'self'; script-src 'self' 'nonce-"+request.state.csp_nonce+"'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
+        if studio_policy:
+            response.headers['Content-Security-Policy']=studio_policy
+            if '/api/previews/' in path or '/preview-window/' in path:
+                response.headers['X-Frame-Options']='SAMEORIGIN'
         return response
 
     from .account_routes import register_accounts
     register_accounts(app, templates, context, guard, check_csrf, signer,
                       login_throttle, form_values, require_trusted_origin)
+    from .content_studio import attach as attach_content_studio
+    from .access_policy import allowed as content_allowed
+    attach_content_studio(app,current_user,payload,content_allowed,content_studio_options)
 
     def page_error(request: Request, message: str, status_code=400, details=""):
         user = current_user(request)

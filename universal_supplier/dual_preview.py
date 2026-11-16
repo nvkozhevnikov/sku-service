@@ -15,6 +15,7 @@ from .matching_policy_v2 import normalize_identity_model
 from .offer_selection import OfferSelectionPolicy,evaluate_offers
 from .commercial_freshness import assess
 from .price_semantics import observation_price_type
+from .export_eligibility import semantic_export_hold, VERSION as HOLD_VERSION
 from .control_plane.supplier_automation import settings_for,digest
 from .xml_export import _append,_product_element,FALSE_MATCH_GUARDS
 
@@ -60,6 +61,8 @@ def build(snapshot, *, as_of=None, baseline=None):
     eligible_by_catalog=defaultdict(list)
     for row in records:
         reasons=[];warnings=[];code=row['supplier_code'];candidate=selection_candidates.get(row['offer_id'])
+        hold=semantic_export_hold(row)
+        if hold:reasons.append(hold['code'])
         f=freshness.get(row['offer_id'],{})
         price=f.get('price',{}).get('state')=='fresh';stock=f.get('availability',{}).get('state')=='fresh'
         if code=='beka_mak_tr':reasons.append('REFERENCE_ONLY')
@@ -87,6 +90,7 @@ def build(snapshot, *, as_of=None, baseline=None):
                 reasons.append('SELECTION_'+native.upper())
             if single.selection_status=='review':reasons.append('SELECTION_'+single.evidence['selection_reason'].upper())
         item=trace(row,reasons,warnings=warnings);item['selection_eligible']=not item['reasons']
+        if hold:item['semantic_hold']=hold
         update_by_offer[row['offer_id']]=item;audit['updates'].append(item)
         if not reasons:eligible_by_catalog[candidate.catalog_product_id].append(projected)
     for catalog_id,eligible in sorted(eligible_by_catalog.items()):
@@ -103,6 +107,7 @@ def build(snapshot, *, as_of=None, baseline=None):
         if f['availability']['state']=='fresh':values['availability']=row['observed_availability']
         updates.append(values);update_by_offer[row['offer_id']]['selected']=True
         traces.append({'sterbrust_product_id':stb,'supplier':row['supplier_code'],'external_id':row['external_id'],
+            'source_product_id':row['source_product_id'],
             'capture_id':row['capture_id'],'fingerprint':row['capture_fingerprint'],
             'selection':decision.evidence,'selection_scope':'READ_ONLY_RECEIPT_PLAN_NOT_PERSISTED',
             'persisted_selection_at':row.get('last_selection_at'),
@@ -213,6 +218,7 @@ def build(snapshot, *, as_of=None, baseline=None):
     for kind,items in audit.items():
         rejected[kind]=[{**item,'reason':item['primary_reason']} for item in items if item['reasons']]
     manifest={'generated_at':now.isoformat(),'contract':NOTICE,'import_allowed':False,
+        'semantic_export_hold_policy':HOLD_VERSION,
         'counts':{'updates':len(updates),'new_products':len(new)},'considered_sources':len(suppliers),
         'considered_products':len(bysource),'considered_offers':len(records),
         'excluded':rejected,'exclusion_counts':{k:dict(Counter(r['reason'] for r in v)) for k,v in rejected.items()},

@@ -13,8 +13,16 @@ PERMISSIONS = {
     "reports.read": "История и отчёты",
     "settings.read": "Просмотр настроек",
     "applications.read": "Приложения",
+    "content.read": "Контент-студия: просмотр своих материалов",
+    "content.edit": "Контент-студия: создание и редактирование",
+    "content.media": "Контент-студия: загрузка фотографий",
+    "content.export": "Контент-студия: скачивание пакетов",
+    "content.rules.manage": "Контент-студия: редакционные правила",
+    "content.ai.use": "Контент-студия: явная генерация ИИ",
+    "content.vk.publish": "Контент-студия: подготовка и подтверждение ВК",
+    "content.site.export": "Контент-студия: HTML для сайта",
 }
-LEGACY_READ = frozenset(k for k in PERMISSIONS if k.endswith(".read"))
+LEGACY_READ = frozenset(k for k in PERMISSIONS if k.endswith(".read") and not k.startswith('content.'))
 
 
 def allowed(user, permission):
@@ -29,6 +37,8 @@ def allowed(user, permission):
 
 def request_permission(path, method):
     write = method not in {"GET", "HEAD", "OPTIONS"}
+    if path.startswith('/content-studio'):
+        return 'content.read'  # child adapter enforces exact action + project ACL
     if path.startswith(("/users", "/roles", "/settings/users")):
         return "accounts.admin"
     if path.startswith("/applications"):
