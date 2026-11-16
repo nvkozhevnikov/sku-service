@@ -1,5 +1,20 @@
 # Matching Policy V2 acceptance
 
+## Accumulated-result continuity — 16Nov
+
+OPERATOR-CONFIRMED, scope: catalog/dual preview/release. Loss of achieved results
+after TTL, failed collection or technical change is NOT_ACCEPTED. Required gate:
+NO_UNEXPLAINED_DATA_OR_EXPORT_REGRESSION. Existing1282identities and saved supplier/
+offer/observation rows must survive; positive XML cannot be replaced by zero.
+Every historical exclusion needs stable-ID/reason/field-date evidence. Historical
+117/48/206 remain separately accessible,206NEW retained for enrichment. These are
+overlapping cohorts, not additive product totals. Historical retention never grants
+import permission; price/stock freshness is independent; new import remains strict.
+REPOSITORY-VERIFIED implementation + LOCAL SQL/route evidence:
+[XML continuity](docs/unified-rc/XML_CONTINUITY.md). Continuity PASS is distinct from
+RELEASE_READY or business freshness acceptance; currently neither import nor release
+is ready. Existing matching guards/identity/manual contracts are not relaxed.
+
 ## Actual approved canary16Nov — NOT_READY
 
 Exact executed grant consumed on eb4adf0. jobs172/173,8unique product starts+2robots,

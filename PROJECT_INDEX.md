@@ -10,6 +10,11 @@ ARCHITECTURE_DECISIONS.md.
 
 ## Release continuation 2026-11-16
 
+- [XML continuity / LAST KNOWN GOOD](docs/unified-rc/XML_CONTINUITY.md): canonical
+  preservation gate,117/48/206 reconstruction,206enrichment cohort, authenticated
+  downloads, current freshness separation and operational recovery. Current XML
+  readiness differs from saved history; RELEASE_READY remains NO.
+
 - [Native canary execution](docs/unified-rc/CANARY_EXECUTION.md): strict20+20 on
   existing queue/worker/receipts, waiting exact LIVE confirmation; old1270 unchanged.
 - [Content Studio integration remainder](docs/unified-rc/CONTENT_STUDIO_INTEGRATION_REMAINDER.md):

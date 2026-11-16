@@ -118,6 +118,19 @@ def load(config,*,connection_factory=None):
         coverage=c.execute('''SELECT s.code,j.id,j.status,j.error_message,j.finished_at FROM suppliers s
             LEFT JOIN LATERAL (SELECT id,status,error_message,finished_at FROM crawl_jobs
                 WHERE supplier_id=s.id ORDER BY id DESC LIMIT 1) j ON true ORDER BY s.code''').fetchall()
-        return {'complete':True,'as_of':as_of,'suppliers':suppliers,'records':records,
+        inventory={key:c.execute('SELECT count(*) n FROM '+table).fetchone()['n'] for key,table in
+            [('source_products','source_products'),('offers','offers'),('commercial_observations','offer_commercial_observations'),('http_captures','supplier_http_captures')]}
+        inventory['suppliers']=[[s['id'],s['code']] for s in suppliers]
+        # Counts alone cannot detect deleting one identity and inserting another.
+        for key,query in (
+            ('source_identities','SELECT id,supplier_id,external_id FROM source_products ORDER BY id'),
+            ('offer_identities','SELECT id,source_product_id,supplier_id FROM offers ORDER BY id'),
+            ('observation_identities','SELECT id,offer_id,capture_id FROM offer_commercial_observations ORDER BY id'),
+            ('capture_identities','SELECT id FROM supplier_http_captures ORDER BY id')):
+            inventory[key]=[list(r.values()) for r in c.execute(query).fetchall()]
+        inventory['canonical_links']=[list(r.values()) for r in c.execute('''SELECT sp.id,sp.catalog_product_id,sb.sterbrust_product_id
+            FROM source_products sp JOIN sterbrust_products sb ON sb.catalog_product_id=sp.catalog_product_id
+            WHERE sp.catalog_product_id IS NOT NULL ORDER BY sp.id,sb.sterbrust_product_id''').fetchall()]
+        return {'data_inventory':inventory,'complete':True,'as_of':as_of,'suppliers':suppliers,'records':records,
                 'registry':registry,'offer_candidates':candidates,'details':details,
                 'coverage':{'sources':coverage,'external_catalog_completeness':'NOT_PROVEN'}}

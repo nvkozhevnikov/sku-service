@@ -30,9 +30,13 @@ def field_state(at, ttl, now):
 def assess(row, policy, now=None):
     now=now or datetime.now(timezone.utc)
     if now.tzinfo is None:raise ValueError('Freshness requires timezone-aware as_of')
-    receipt=bool(row.get('capture_id') and row.get('capture_fingerprint') and row.get('http_status')==200
-                 and row.get('receipt_identity_valid') is True
-                 and not synthetic_receipt([row.get('capture_diagnostics'),row.get('extraction_evidence')]))
+    receipt_issues=[]
+    if not row.get('capture_id'):receipt_issues.append('CAPTURE_MISSING')
+    if not row.get('capture_fingerprint'):receipt_issues.append('CAPTURE_FINGERPRINT_MISSING')
+    if row.get('http_status')!=200:receipt_issues.append('HTTP_200_NOT_PROVEN')
+    if row.get('receipt_identity_valid') is not True:receipt_issues.append('RECEIPT_IDENTITY_NOT_PROVEN')
+    if synthetic_receipt([row.get('capture_diagnostics'),row.get('extraction_evidence')]):receipt_issues.append('SYNTHETIC_NOT_LIVE_EVIDENCE')
+    receipt=not receipt_issues
     observed=timestamp(row.get('observed_at')) if receipt else None
     try:
         price=Decimal(str(row.get('observed_price')))
@@ -51,4 +55,4 @@ def assess(row, policy, now=None):
             'capture_id':row.get('capture_id') if receipt else None,
             'capture_fingerprint':row.get('capture_fingerprint') if receipt else None,
             'last_changed_at':row.get('last_changed_at'),
-            'price_source':row.get('price_source'), 'receipt_valid':receipt}
+            'price_source':row.get('price_source'), 'receipt_valid':receipt,'receipt_issues':receipt_issues}

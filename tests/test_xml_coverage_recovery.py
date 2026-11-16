@@ -123,13 +123,16 @@ def test_positive_to_zero_requires_per_record_explanation_and_not_ready(tmp_path
     value['records'][1]['observed_at']=NOW-timedelta(days=5)
     raw,without=build(value)
     assert without['quality_gate']['status']=='NOT_READY'
-    with pytest.raises(ValueError,match='COVERAGE_REGRESSION'):publish(tmp_path,raw,without)
+    # Publisher now loads its own baseline and derives row explanations, even if
+    # the caller omitted build(baseline=...). Empty attempts never replace it.
+    publish(tmp_path,raw,without)
     assert latest(tmp_path)['counts']=={'updates':1,'new_products':1}
     raw,m=build(value,baseline=baseline)
     assert len(m['quality_gate']['regressions'])==2 and m['quality_gate']['release_blocked']
     assert all(r['all_previous_records_explained'] for r in m['quality_gate']['regressions'])
     publish(tmp_path,raw,m)
-    assert latest(tmp_path)['quality_gate']['business_acceptance']=='NOT_READY'
+    assert latest(tmp_path)['counts']=={'updates':1,'new_products':1}
+    assert latest(tmp_path,attempt=True)['quality_gate']['business_acceptance']=='NOT_READY'
 
 
 def test_legacy_stage5_117_compatible_rows_are_not_reinterpreted_as_fresh_data():

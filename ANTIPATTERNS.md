@@ -1,5 +1,15 @@
 # Matching V2.1 antipatterns
 
+## Empty current feed must not erase accumulated results — 16Nov
+
+REPOSITORY-VERIFIED: explained TTL regression formerly advanced latest.json to0/0.
+NOT_ACCEPTED: treating stale fields as missing products/identity; hiding117/48/206
+historical results; losing206NEW work; using equal counts to conceal replaced IDs;
+freezing continuity inventory before subsequently added rows. Also NOT_ACCEPTED:
+substituting last-known prices as current, or using historical links for Bitrix
+import. Preserve original bytes, independent current fields, stable IDs and complete
+per-row reasons. [Rule, implementation and limitations](docs/unified-rc/XML_CONTINUITY.md).
+
 ## Release evidence — 2026-11-16
 
 - Do not treat SQL row counts or HTTP200 as proof that the monitoring projection

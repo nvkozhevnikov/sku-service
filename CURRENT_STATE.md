@@ -1,5 +1,20 @@
 # Current unified feature state — 2026-10-30 (Intervesp 5 s preparation)
 
+## 16Nov — continuity restored locally; RELEASE_READY=NO
+
+LIVE-VERIFIED LOCAL SELECT:59427catalog/18959source products/18959offers/
+23475observations/23475captures;1282original IDs exact. PACKAGED-EVIDENCE: actual
+117Stage5 and48/206preview bytes recovered;371cohort rows=323unique sources,
+all resolved.56Stage5latest receipts synthetic/non-HTTP200;61stale.48updates stale;
+206NEWcontent stale, retained for enrichment/review. No current import-ready fields
+fabricated. DONE/APPLIED LOCAL publisher/route fix retains48/206 when current0/0;
+history117/48/206 and per-record reasons available in loopback panel58161.
+NO_UNEXPLAINED_DATA_OR_EXPORT_REGRESSION protects saved identities and previous XML.
+PrimarySQLwrites/sourceHTTP/matchingapply0; production/scheduler unchanged.
+[Canonical continuity details](docs/unified-rc/XML_CONTINUITY.md), final QA/Git/package
+receipt in workspace reports/XML_CONTINUITY_20261116. Previous canary grant consumed;
+no new LIVE authorized. Prior entries below are dated historical checkpoints.
+
 ## Approved canary completed16Nov — NOT_READY, consumed grant
 
 LIVE-VERIFIED: exact SHA e75cb4d6615e4ce18f9bf1a5b3ea98f25d798db9be27bdb5d68989210bb637ce

@@ -1,5 +1,22 @@
 # RUNBOOK — Unified RC operator procedures (2026-10-30)
 
+## XML continuity — current local view, 16Nov
+
+LIVE-VERIFIED LOCAL: http://127.0.0.1:58161/exports/previews has separate current
+strict previews, preserved48/206, historical117/48/206, diagnostics and206candidate
+JSON. Login with existing account; initial password change still mandatory. These
+downloads grant no import permission. Stage6 contract remains blocked.
+
+REPOSITORY-VERIFIED: use the SAME publisher and reports/xml-previews (or explicit
+CONTROL_PLANE_EXPORT_ROOT). Preserve latest.json, latest_attempt.json, versions/,
+history/, history_index.json, last_known_good.json, inventory_baseline.json and
+historical_new_candidates.json with any file-only evidence backup. Do not reset
+baseline or steal publish.lock on error. Copy supplied evidence only into a new
+separately reviewed directory; never overwrite an installed runtime/export tree.
+[Recovery, limitations and fresh-evidence requirements](docs/unified-rc/XML_CONTINUITY.md).
+New code/engine invalidates old unconsumed contracts too; the executed canary grant
+is already consumed. No new HTTP, matching apply, import or schedule authorized.
+
 Every procedure below is local-machine only. No procedure here performs a
 LIVE supplier request, production write, push, merge or import.
 

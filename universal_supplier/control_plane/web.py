@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import secrets
 from pathlib import Path
@@ -800,13 +801,53 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.get('/exports/previews',response_class=HTMLResponse)
     def dual_previews_page(request: Request):
         guard(request)
-        from universal_supplier.dual_preview import latest
+        from universal_supplier.dual_preview import latest,publication_status
+        from universal_supplier.export_history import listing
         manifest=None;error=None
-        try:manifest=latest(preview_root)
+        try:manifest=latest(preview_root,attempt=(preview_root/'latest_attempt.json').exists())
         except FileNotFoundError:pass
         except (ValueError,KeyError,OSError):error='PREVIEW_INTEGRITY_ERROR: артефакт не выдан'
         return templates.TemplateResponse(request,'dual_previews.html',context(request,
-            preview=manifest,error=error,active='xml_export'))
+            preview=manifest,publication=publication_status(preview_root),history=listing(preview_root),error=error,active='xml_export'))
+
+    @app.get('/exports/previews/history/{artifact_id}')
+    def historical_preview(request: Request,artifact_id:str):
+        guard(request)
+        from universal_supplier.export_history import read
+        try:raw=read(preview_root,artifact_id)
+        except (ValueError,KeyError,OSError):raise HTTPException(404,'HISTORY_UNAVAILABLE')
+        return Response(raw,media_type='application/xml',headers={'Content-Disposition':'attachment; filename="historical-not-current.xml"','X-Sterbrust-Import-Allowed':'false','X-Sterbrust-Artifact-Status':'HISTORICAL_NOT_CURRENT'})
+
+    @app.get('/exports/previews/diagnostics/download')
+    def preview_diagnostics(request: Request):
+        guard(request)
+        from universal_supplier.dual_preview import latest
+        try:manifest=latest(preview_root,attempt=True)
+        except (ValueError,KeyError,OSError):raise HTTPException(409,'PREVIEW_DIAGNOSTICS_UNAVAILABLE')
+        return Response(json.dumps(manifest,ensure_ascii=False,default=str),media_type='application/json',headers={'Content-Disposition':'attachment; filename="current-preview-exclusions.json"','X-Sterbrust-Import-Allowed':'false'})
+
+    @app.get('/exports/previews/preserved/{kind}')
+    def preserved_preview(request: Request,kind:str):
+        guard(request)
+        from universal_supplier.dual_preview import latest,NAMES
+        if kind not in NAMES:raise HTTPException(404,'Неизвестный XML')
+        try:data=latest(preview_root,kind)
+        except (ValueError,KeyError,OSError):raise HTTPException(409,'PRESERVED_PREVIEW_UNAVAILABLE')
+        return Response(data,media_type='application/xml',headers={'Content-Disposition':'attachment; filename="preserved-not-current.xml"','X-Sterbrust-Import-Allowed':'false','X-Sterbrust-Artifact-Status':'HISTORICAL_NOT_CURRENT_REVALIDATION_REQUIRED'})
+
+    @app.get('/exports/previews/candidates/download')
+    def preserved_candidates(request: Request):
+        guard(request)
+        from universal_supplier.dual_preview import latest
+        try:
+            cohort=json.loads((preview_root/'historical_new_candidates.json').read_text(encoding='utf-8'))
+            current=latest(preview_root,attempt=True)
+            rows={r['source_product_id']:r for r in current['record_trace']['new_products']}
+            members=[{**member,'current':rows.get(member['source_product_id'],
+                {'selected':False,'reasons':['SOURCE_ROW_MISSING_REQUIRES_REVIEW']})} for member in cohort['members']]
+        except (ValueError,KeyError,OSError):raise HTTPException(409,'CANDIDATE_DIAGNOSTICS_UNAVAILABLE')
+        return Response(json.dumps({**cohort,'as_of':current['generated_at'],'members':members,'import_allowed':False},ensure_ascii=False),
+            media_type='application/json',headers={'Content-Disposition':'attachment; filename="preserved-new-candidates.json"','X-Sterbrust-Import-Allowed':'false'})
 
     @app.post('/exports/previews/generate')
     async def dual_previews_generate(request: Request):
@@ -823,10 +864,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         guard(request)
         from universal_supplier.dual_preview import latest,NAMES
         if kind not in NAMES:raise HTTPException(404,'Неизвестный XML-предпросмотр')
-        try:data=latest(preview_root,kind)
+        try:data=latest(preview_root,kind,attempt=(preview_root/'latest_attempt.json').exists(),require_continuity=True)
         except FileNotFoundError:raise HTTPException(404,'XML ещё не сформирован')
         except (ValueError,KeyError,OSError):raise HTTPException(409,'PREVIEW_INTEGRITY_ERROR')
-        return Response(data,media_type='application/xml',headers={'Content-Disposition':f'attachment; filename="{NAMES[kind]}"'})
+        return Response(data,media_type='application/xml',headers={'Content-Disposition':f'attachment; filename="{NAMES[kind]}"','X-Sterbrust-Import-Allowed':'false','X-Sterbrust-Artifact-Status':'LATEST_ATTEMPT_NOT_IMPORT_READY'})
 
     @app.get('/suppliers/{supplier_id}/freshness',response_class=HTMLResponse)
     def supplier_freshness(request: Request,supplier_id: int):

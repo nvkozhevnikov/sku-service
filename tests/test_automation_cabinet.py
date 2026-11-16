@@ -9,7 +9,8 @@ from universal_supplier.control_plane.web import create_app
 
 def test_reused_cabinet_and_new_routes_coexist_without_replacing_supplier_landing(monkeypatch):
     store=Store();commercial=DisabledCommercialQaService('OFFLINE')
-    cabinet=CabinetService(store,commercial)
+    # Inject this checkout: the default is an optional operator sibling worktree.
+    cabinet=CabinetService(store,commercial,feature=Path(__file__).resolve().parents[1])
     matrix=list(csv.DictReader((cabinet.feature/'config/live11_approval_matrix.csv').open(encoding='utf-8-sig')))
     monkeypatch.setattr(cabinet,'batch',lambda bid=None:{'connected':False,'reason':'OFFLINE_QA',
         'explanation':'OFFLINE_QA','matrix':matrix,'payload':None,'launch_allowed':False})

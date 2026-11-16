@@ -1,5 +1,21 @@
 # Universal Supplier Matching V2.1 quality gates
 
+## NO_UNEXPLAINED_DATA_OR_EXPORT_REGRESSION — 16Nov
+
+OPERATOR-CONFIRMED mandatory release/publication gate. REPOSITORY-VERIFIED: compare
+accepted inventory counts AND durable source/supplier/offer/observation/capture/
+canonical IDs; explain every disappearing exported identity; check both XML hashes,
+structure, unique identity, field freshness, immutable manifests and previous XML.
+On failure preserve published pointer and expose BLOCKED diagnostics. Explained
+positive-to-zero still retains previous pair with historical/revalidation labels.
+Inventory high-water mark advances on each continuity PASS, including empty attempts.
+Gate PASS does not permit import, release, HTTP or baseline edits. Fixtures and
+local route proof are separate from production proof. Regression evidence includes
+independent fresh price/unknown stock and fresh stock/unknown price, TTL, unexplained
+loss, equal-count identity replacement, bad checksum/second XML, locked publisher,
+newly added row loss and unauthorized historical downloads.
+[Canonical details and evidence routing](docs/unified-rc/XML_CONTINUITY.md).
+
 OPERATOR-CONFIRMED 2026-10-08. Scoped supplement to workspace qa/QUALITY_GATES.md.
 
 ## Release accounts and portability — 2026-11-16

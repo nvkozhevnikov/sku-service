@@ -217,6 +217,7 @@ def build(snapshot, *, as_of=None, baseline=None):
         'considered_products':len(bysource),'considered_offers':len(records),
         'excluded':rejected,'exclusion_counts':{k:dict(Counter(r['reason'] for r in v)) for k,v in rejected.items()},
         'freshness':freshness,'selection_trace':traces,'coverage':snapshot.get('coverage',{}),
+        'data_inventory':snapshot.get('data_inventory'),
         'record_trace':audit,'coverage_by_supplier':{kind:summarize(items,suppliers) for kind,items in audit.items()},
         'funnels_by_supplier':funnels(records,suppliers,cfg,now,audit['updates'],audit['new_products']),
         'selection_plan':{'scope':'READ_ONLY_NOT_PERSISTED','policy_version':policy.version,
@@ -232,16 +233,32 @@ def build(snapshot, *, as_of=None, baseline=None):
 
 
 def publish(folder, data, manifest):
+    # Single native publisher lock; a crash is fail-closed, never silently stolen.
+    from contextlib import contextmanager
+    @contextmanager
+    def locked():
+        root=Path(folder);root.mkdir(parents=True,exist_ok=True);lock=root/'publish.lock'
+        try:handle=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+        except FileExistsError:raise ValueError('PREVIEW_PUBLICATION_BUSY') from None
+        try:yield
+        finally:os.close(handle);lock.unlink()
+    with locked():return _publish_locked(folder,data,manifest)
+
+
+def _publish_locked(folder, data, manifest):
     """Validated immutable version directory + atomic latest pointer; no DB writes."""
     from .control_plane.source_hourly import atomic_text
     root=Path(folder);version=manifest['version']
-    if (root/'latest.json').exists():
-        previous=latest(root)
-        for kind in NAMES:
-            if previous['counts'][kind]>0 and manifest['counts'][kind]==0:
-                explained=any(r['kind']==kind and r['all_previous_records_explained'] for r in
-                    manifest.get('quality_gate',{}).get('regressions',[]))
-                if not explained:raise ValueError('PREVIEW_COVERAGE_REGRESSION_REQUIRES_EXPLANATION')
+    previous=latest(root) if (root/'latest.json').exists() else None
+    if previous:
+        for kind in NAMES:latest(root,kind)  # A preserved baseline must still be intact.
+    from .export_continuity import validate_payload,compare
+    # Parse BOTH streams before any immutable content write.
+    validate_payload(data,manifest)
+    baseline=deepcopy(previous) if previous else {}
+    inventory_file=root/'inventory_baseline.json'
+    if inventory_file.exists():baseline['data_inventory']=json.loads(inventory_file.read_text(encoding='utf-8'))
+    continuity=compare(baseline,manifest)
     if not re.fullmatch('[a-f0-9]{64}',version):raise ValueError('PREVIEW_VERSION_INVALID')
     if digest({k:v for k,v in manifest.items() if k!='version'})!=version:raise ValueError('PREVIEW_MANIFEST_VERSION_CHANGED')
     # Keep Windows paths bounded; the full immutable ID remains in the manifest.
@@ -256,13 +273,46 @@ def publish(folder, data, manifest):
         path=target/name
         if path.exists() and path.read_bytes()!=raw:raise ValueError('PREVIEW_IMMUTABLE_VERSION_CHANGED')
         if not path.exists():atomic_text(path,raw.decode('utf-8'))
-    atomic_text(target/'manifest.json',json.dumps(manifest,ensure_ascii=False,indent=2,default=str))
-    atomic_text(root/'latest.json',json.dumps({'version':version,'directory':directory,'manifest_sha256':hashlib.sha256((target/'manifest.json').read_bytes()).hexdigest()}))
+    manifest_text=json.dumps(manifest,ensure_ascii=False,indent=2,default=str)
+    manifest_path=target/'manifest.json'
+    if manifest_path.exists():
+        if json.loads(manifest_path.read_text(encoding='utf-8'))!=json.loads(manifest_text):
+            raise ValueError('PREVIEW_IMMUTABLE_MANIFEST_CHANGED')
+    else:atomic_text(manifest_path,manifest_text)
+    pointer={'version':version,'directory':directory,'manifest_sha256':hashlib.sha256((target/'manifest.json').read_bytes()).hexdigest()}
+    zero_drop=bool(previous and any(previous['counts'][k]>0 and manifest['counts'][k]==0 for k in NAMES))
+    promotion=not zero_drop and continuity['status']=='PASS'
+    atomic_text(root/'latest_attempt.json',json.dumps(pointer))
+    state={'attempt':pointer,'generated_at':manifest['generated_at'],'counts':manifest['counts'],
+           'promoted':promotion,'retained_previous':bool(previous and not promotion),'import_allowed':False,
+           'status':'LAST_KNOWN_GOOD_RETAINED_NOT_CURRENT' if previous and not promotion else 'PREVIEW_ONLY_NOT_IMPORT_READY',
+           'gate':continuity,'reason':'EMPTY_REPLACEMENT_BLOCKED' if zero_drop else continuity['status']}
+    atomic_text(root/'publication_status.json',json.dumps(state,ensure_ascii=False))
+    # Advance the accepted inventory even when an empty attempt retains old XML.
+    # Otherwise rows added after the first baseline could silently disappear.
+    if manifest.get('data_inventory') and continuity['status']=='PASS':
+        atomic_text(inventory_file,json.dumps(manifest['data_inventory']))
+    if promotion:
+        atomic_text(root/'latest.json',json.dumps(pointer))
+        good=json.loads((root/'last_known_good.json').read_text(encoding='utf-8')) if (root/'last_known_good.json').exists() else {}
+        for kind in NAMES:
+            if manifest['counts'][kind]>0:good[kind]={'pointer':pointer,'generated_at':manifest['generated_at'],'count':manifest['counts'][kind],'sha256':manifest['checksums'][kind],'import_allowed':False}
+        atomic_text(root/'last_known_good.json',json.dumps(good))
+    if continuity['status']!='PASS':raise ValueError('NO_UNEXPLAINED_DATA_OR_EXPORT_REGRESSION')
     return target
 
 
-def latest(folder, kind=None):
-    root=Path(folder);pointer=json.loads((root/'latest.json').read_text(encoding='utf-8'))
+def publication_status(folder):
+    path=Path(folder)/'publication_status.json'
+    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+
+
+def latest(folder, kind=None, *, attempt=False, require_continuity=False):
+    root=Path(folder);pointer=json.loads((root/('latest_attempt.json' if attempt else 'latest.json')).read_text(encoding='utf-8'))
+    if attempt and require_continuity:
+        state=publication_status(root)
+        if not state or state['attempt']!=pointer or state['gate']['status']!='PASS':
+            raise ValueError('PREVIEW_CONTINUITY_BLOCKED')
     version=pointer['version']
     if not re.fullmatch('[a-f0-9]{64}',version):raise ValueError('PREVIEW_VERSION_INVALID')
     directory=pointer.get('directory',version)
