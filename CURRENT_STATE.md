@@ -21,6 +21,17 @@ Content Studio shared auth/PG integration NOT implemented; Applications shows bo
 Release readiness remains PENDING current commercial canary and portable evidence
 completion. Instructions: docs/unified-rc/RELEASE_20261116.md.
 
+Later verification on16Nov: fixed historical coverage=null read-projection crash
+(no DB changes), RED1/3 then24Windows+24LinuxGREEN. Actual monitoring read model:
+13news/41blog/89promotions/4604products/2165events. Saved220URL smoke now resolves
+200HTML/.capture stable IDs and20Optimum pinned Git ID/URL records; no raw Optimum
+HTML reparse or LIVE freshness claim. Explicit historical-time generator scenario
+48updates/206new products is separate from current0/0 feeds. All4XML well formed.
+Both Dockerfile base digests pinned to the already tested Python3.12.16 image.
+Final portable evidence:23099/23099references resolved,20475archive members SHA256
+verified, no DB reference rewrites.63business tables identical to pre-change restore.
+Historical raw-attachment web-link integration still requires target verification.
+
 Base HEAD at session start: `59b3f563c851ec93364740dfd236392aa94ed8ed`
 (feature/sterbrust-autonomous-system-20261026, clean tree). New HEAD after the
 robots-exception change: see `git rev-parse HEAD`; engine fingerprint re-pinned

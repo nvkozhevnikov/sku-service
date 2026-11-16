@@ -1,5 +1,11 @@
 # Universal Supplier Stage 6E
 
+Unified RC release continuation16Nov2026: start with
+[accounts, boundaries and Linux installation](docs/unified-rc/RELEASE_20261116.md).
+This release uses compose.release.yml and PostgreSQL17.11 outside Compose; older
+Compose/server examples below are historical contracts. RELEASE_READY remains NO
+until current-price canary and operator acceptance. Stage6 import remains blocked.
+
 ## Current state
 
 The latest verified feature state is in [`CURRENT_STATE.md`](CURRENT_STATE.md); the stage sections below are history. Supported suppliers:

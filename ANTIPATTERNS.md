@@ -1,5 +1,16 @@
 # Matching V2.1 antipatterns
 
+## Release evidence — 2026-11-16
+
+- Do not treat SQL row counts or HTTP200 as proof that the monitoring projection
+  displays content. Historical coverage=null previously erased all projected data
+  behind a caught exception. Unknown coverage stays unknown, never complete.
+- Do not classify evidence missing from a .html-only index: raw HTML can use
+  .capture; git://commit/CATALOG.jsonl#ID fragments identify source_identity rather
+  than a line number. Resolve formats and preserve original references first.
+- Explicit historical-as-of XML scenarios are not current commercial freshness.
+  Archive byte deduplication by SHA256 must never merge source product identities.
+
 OPERATOR-CONFIRMED 2026-10-08. Supplement, not replacement of workspace antipatterns.
 
 1. Requiring N equal specs after strong full identity: missing/count differences

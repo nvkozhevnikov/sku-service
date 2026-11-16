@@ -13,6 +13,12 @@ READY remains blocked until bounded current-source proof, capture portability,
 local operator acceptance and separately authorized deployment. Stage6 remains
 BLOCKED_IMPORT_CONTRACT_EVIDENCE. See docs/unified-rc/RELEASE_20261116.md.
 
+Later16Nov: file portability gate verified23099references/20475archived members;
+63business tables unchanged. Historical generator scenario48updates/206new products
+does not pass current freshness gate (current0/0). Monitoring projection defect
+coverage=null fixed and tested; actual13news/41blog/89promotions now visible in the
+read model. No new complete-coverage evidence or detector events were fabricated.
+
 ## Intervesp 5 s robots exception — owner decision 2026-11-05: VARIANT A SIGNED PENDING
 
 Intervesp.ru robots.txt (captured 2026-10-29, SHA256 `a6862161f2c07c36f0ecc789bf7d31cd48ef41b02c142c41d7f7c4e861d53f51`)

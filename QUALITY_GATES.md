@@ -12,6 +12,12 @@ runtime logins on a verified restored PostgreSQL17.11. Packaging suffixes in ver
 strings do not alter exact numeric17.11; all other target identity pins remain exact.
 See docs/unified-rc/RELEASE_20261116.md. Fixture/isolated QA is not production proof.
 
+Read-model gate: null/missing historical coverage must preserve saved news/blog and
+must not grant complete-coverage evidence. Verify actual projection content in
+addition to SQL counts. tests/test_release_monitoring_null_coverage.py plus existing
+monitoring/news suites:24Windows/24Linux PASS. Evidence portability must resolve
+.html, .capture, manifest JSON and pinned Git catalog stable-ID fragments distinctly.
+
 ## Signed robots-policy exception gate — 2026-10-30
 
 Pacing below a source's robots-declared Crawl-delay/Request-rate is allowed

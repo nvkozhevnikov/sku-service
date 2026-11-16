@@ -95,7 +95,7 @@ def normalized_dataset(state):
             analysis.append({**a,'source':source_by_id[page['source_id']]['code'],'entity':page['canonical_url']})
     coverage=[]; codes={s['code'] for s in sources}
     for run in state.get('competitor_runs',[]):
-        for entry in (run.get('result') or {}).get('coverage',[]):
+        for entry in (run.get('result') or {}).get('coverage') or []:
             if isinstance(entry,dict) and entry.get('source') in codes and isinstance(entry.get('entities'),list) and entry.get('observed_at'):
                 coverage.append(entry)
     return {'sources':sources,'current':current,'history':history,'analysis':analysis,'coverage':coverage,
