@@ -46,6 +46,15 @@ def test_consumed_grant_never_resumes():
     require_unused(set())
     with pytest.raises(PermissionError,match='ALREADY_CONSUMED'):require_unused({42})
 
+def test_even_zero_job_activation_consumes_grant(tmp_path):
+    import json
+    from universal_supplier.control_plane.execution_canary import require_unused_session
+    folder=tmp_path/'reports/automation-runtime/one';folder.mkdir(parents=True)
+    require_unused_session(tmp_path,'sha',folder)
+    (folder/'SESSION.json').write_text(json.dumps({'sha256':'sha'}))
+    with pytest.raises(PermissionError,match='ALREADY_CONSUMED'):require_unused_session(tmp_path,'sha',folder)
+    with pytest.raises(PermissionError,match='DIRECTORY_REQUIRED'):require_unused_session(tmp_path,'other',tmp_path/'outside')
+
 def test_matching_apply_environment_drift_fails_closed(monkeypatch):
     from universal_supplier.control_plane.source_backend import SourceBackend
     backend=object.__new__(SourceBackend);backend.release_canary=True

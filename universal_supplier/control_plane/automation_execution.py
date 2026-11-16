@@ -288,6 +288,8 @@ class Session:
             self.lock=c
             try:
                 self.check();self.check_mappings(c)
+                from .execution_canary import is_canary,require_unused_session
+                if is_canary(self.value):require_unused_session(ROOT,self.sha,self.folder)
                 require(not c.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running') AND coalesce(settings_snapshot->'automation'->>'approval_sha256','')<>%s",(self.sha,)).fetchall(),
                     'AUTOMATION_FOREIGN_ACTIVE_JOB')
                 require(not c.execute("SELECT id FROM crawl_jobs WHERE status IN ('queued','running') AND settings_snapshot ? 'source_batch'").fetchall(),

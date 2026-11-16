@@ -8,6 +8,13 @@ LIVE={'partner_st','optimum'}
 
 def require_unused(prior_jobs):require(not prior_jobs,'CANARY_APPROVAL_ALREADY_CONSUMED')
 
+def require_unused_session(root,sha,folder):
+    import json
+    base=(root/'reports/automation-runtime').resolve()
+    require(folder.resolve().is_relative_to(base),'CANARY_NATIVE_SESSION_DIRECTORY_REQUIRED')
+    for receipt in base.glob('*/SESSION.json'):
+        require(json.loads(receipt.read_text(encoding='utf-8')).get('sha256')!=sha,'CANARY_APPROVAL_ALREADY_CONSUMED')
+
 def is_canary(value):return value.get('purpose')==PURPOSE
 
 def validate(value):

@@ -6,7 +6,7 @@ OPERATOR-CONFIRMED integrate native canary, offline QA only until exact LIVE app
 DONE/APPLIED code: release-commercial-canary/v1 reuses refresh Session/Scheduler/
 queue/worker/receipts/STOP.20Partner linked +20Optimum unlinked, positive saved prices/
 stock; other9empty/SAVED_ONLY. No retries/resume/activation/matching apply. Legacy1270
-guard remains exact.479offline PASS; isolated SQL link-change rollback PASS.
+guard remains exact.480offline PASS; isolated SQL link-change rollback PASS.
 LIVE-VERIFIED LOCAL: original1282 including Sterbrust IDs exact,0active jobs, primary
 writes0/sourceHTTP0. Actual final dump now restored on Linux17.11:68table hashes,
 50sequence value/is_called, both final ADMIN logins/forced change PASS. Scheduled
