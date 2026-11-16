@@ -1,5 +1,26 @@
 # Current unified feature state — 2026-10-30 (Intervesp 5 s preparation)
 
+## Approved canary completed16Nov — NOT_READY, consumed grant
+
+LIVE-VERIFIED: exact SHA e75cb4d6615e4ce18f9bf1a5b3ea98f25d798db9be27bdb5d68989210bb637ce
+on executed HEADeb4adf0, UTC11:02–11:03. Native jobs172Optimum/173Partner partial;
+10HTTPstarts(2robots+8unique products),retry0. Optimum6HTTP500; Partner1product200,
+next readTimeout UNKNOWN. Captured Partner PP-U3 id293:106083RUB/InStock/qty17,
+price_type unknown; NOT SQL committed because safety gate did not complete. No
+matching apply. FINAL UNKNOWN_HTTP_OUTCOME;0activejobs;CAS settings/protected old
+jobs/1282links SELECT-verified. Commercial/source/catalog/matching/capture tables
+unchanged. Only native runtime tracking/temporary settings activation/restoration
+were written. Current XML after canary0updates/0new, no historical substitution.
+
+New post-canary dump157884700bytes SHA256
+b2f16d08e9c0bbee3fe76dba228bdf24463a86a34e90817ee0ad68b52f370bd0 restored on Windows
+and Linux17.11:68table hashes/50sequence states/both ADMIN logins and forced change
+PASS. No further HTTP/retries authorized; old grant is consumed regardless of window.
+Evidence/report/packages: workspace reports/UNIFIED_RC_CANARY_20261116/post-canary.
+SQL-only revised cohort proposal excludes every dispatched URL and adds10machine
+Optimum rows; it has NO execution approval. Await operator recovery/source-availability
+review, not automatic rerun. Studio integration/scheduler activation remain separate.
+
 ## Native canary continuation16Nov — WAITING_EXACT_LIVE_CONFIRMATION
 
 OPERATOR-CONFIRMED integrate native canary, offline QA only until exact LIVE approval.

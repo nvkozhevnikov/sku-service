@@ -1,5 +1,14 @@
 # Matching Policy V2 acceptance
 
+## Actual approved canary16Nov — NOT_READY
+
+Exact executed grant consumed on eb4adf0. jobs172/173,8unique product starts+2robots,
+retry0; Optimum6HTTP500,Partnerone200+oneUNKNOWN readtimeout. Captured page price
+106083RUB/InStock/17units has unknown price type and incomplete safety gate; source
+SQL commits0/matching apply0/current XML0/0. Settings/oldjobs/1282 preserved,active0.
+No retry or reauthorization is implied by a still-open old window. Post-canary dump
+Linux17.11 restore68/50+twoADMIN logins verified. RELEASE_READY is not satisfied.
+
 ## Native canary16Nov — additional scoped contract
 
 release-commercial-canary/v1: exactly20Partner-ST confirmed cohort +20Optimum stable

@@ -1,6 +1,13 @@
 # Release canary on the native runtime — 16 November 2026
 
 OPERATOR-CONFIRMED preparation only; no LIVE without separate exact confirmation.
+Later16Nov operator confirmed exact grant e75cb4d6615e4ce18f9bf1a5b3ea98f25d798db9be27bdb5d68989210bb637ce.
+It was executed once on eb4adf0 and is now consumed. FINAL/SETTINGS_RESTORED prove
+safe stop/0active/1282exact. Optimum6HTTP500; Partnerone200 then timeout UNKNOWN;
+SQL0, matching apply0,currentXML0/0. No repeat authorized. Post-canary data dump
+SHA b2f16d08e9c0bbee3fe76dba228bdf24463a86a34e90817ee0ad68b52f370bd0 now has
+Windows+Linux17.11 restore68/50and both ADMIN logins proof. See newest post-canary
+report in workspace; pre-LIVE proposals/manifests below are historical preparation.
 Base5b57564. This adds purpose release-commercial-canary/v1 to the existing
 commercial refresh lifecycle: Session/advisory lock, Scheduler, PostgresJobQueue,
 Orchestrator, source_runtime/host gates, SourceBackend and checkpoint/SQL receipts.
