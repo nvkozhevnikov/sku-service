@@ -7,10 +7,15 @@ from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
 from dataclasses import dataclass
 from datetime import datetime,timezone
 from urllib.parse import urlsplit
+from contextvars import ContextVar
 import hashlib,json,math,os,threading
 from .rate_control import (DomainRatePolicy,DomainRateLimiter,RequestMetrics,
     CircuitBreaker,CircuitOpen,SystemClock,RequestAborted,request_with_resilience,retry_after_seconds)
 from universal_supplier.http_capture import has_blocking_interstitial
+
+# Request-local approval from an authenticated, audited manual launch. Never
+# mutate the serving process's environment or leak trust to another request.
+MANUAL_POLICIES = ContextVar('manual_collection_policies', default=None)
 
 
 def host_key(url):return (urlsplit(url).hostname or '').lower().removeprefix('www.')
@@ -39,7 +44,7 @@ def compile_policy(source,url,settings=None,*,approval=None,approved_digests=Non
     if requires_approval:
         approval=approval or {}
         if approval.get('host')!=host or not approval.get('reference'):raise PermissionError('HOST_PROFILE_NOT_APPROVED')
-        approved_digests=approved_digests if approved_digests is not None else json.loads(os.environ.get('STERBRUST_APPROVED_HOST_POLICIES','{}'))
+        approved_digests=approved_digests if approved_digests is not None else (MANUAL_POLICIES.get() if MANUAL_POLICIES.get() is not None else json.loads(os.environ.get('STERBRUST_APPROVED_HOST_POLICIES','{}')))
         approved=approved_digests.get(host)
         if isinstance(approved,dict):approved=approved.get(source)
         if approved!=policy_digest(source,host,rate,approval['reference']):raise PermissionError('HOST_PROFILE_DIGEST_NOT_APPROVED')

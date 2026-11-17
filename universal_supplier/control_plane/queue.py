@@ -177,7 +177,13 @@ class PostgresJobQueue:
         return True
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
-                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None, recovery_sha256: str | None = None, automation_sha256: str | None = None) -> EnqueueResult:
+                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None, recovery_sha256: str | None = None, automation_sha256: str | None = None, manual_request=None) -> EnqueueResult:
+        if manual_request is not None:
+            from .manual_collection import ManualRequest
+            if not isinstance(manual_request,ManualRequest):raise PermissionError('Неверное подтверждение запуска')
+            manual_request.validate(supplier_id,source_limit,trigger_type,source_mode)
+            if any(x is not None for x in (automation_sha256,recovery_sha256,pilot_limit,resume_job_id)):
+                raise PermissionError('Ручной запуск нельзя смешивать с другим допуском')
         if automation_sha256 is not None:
             from .automation_execution import require_active
             session=require_active(automation_sha256)
@@ -189,7 +195,7 @@ class PostgresJobQueue:
             limit_value(source_limit);validate_config(self.config)
             if source_mode not in ('REFRESH','DISCOVERY') or (trigger_type!='manual' and automation_sha256 is None) or crawl_type!='full' or pilot_limit is not None or resume_job_id is not None:
                 raise ValueError('CANARY_MANUAL_REFRESH_ONLY')
-            if not isinstance(source_preview_sha256,str) or len(source_preview_sha256)!=64:raise ValueError('Сначала просмотрите и подтвердите выбранную партию canary')
+            if manual_request is None and (not isinstance(source_preview_sha256,str) or len(source_preview_sha256)!=64):raise ValueError('Сначала просмотрите и подтвердите выбранную партию canary')
         elif source_preview_sha256 is not None:raise ValueError('CANARY_LIMIT_REQUIRED')
         from universal_supplier.partner_pilot import enabled,limit_value,validate_config
         if pilot_limit is not None:
@@ -210,6 +216,13 @@ class PostgresJobQueue:
             if supplier is None:
                 raise KeyError(f"unknown supplier_id={supplier_id}")
             code, adapter_name, base_url, enabled, crawl_settings, rate_settings = supplier
+            if manual_request is not None and not enabled:
+                if manual_request.actor.role!='ADMIN':raise PermissionError('Включить источник может только администратор')
+                cursor.execute("SELECT id FROM crawl_jobs WHERE supplier_id=%s AND status IN ('queued','running')",(supplier_id,))
+                if cursor.fetchone():raise PermissionError('У источника уже есть незавершённое задание')
+                cursor.execute('UPDATE suppliers SET enabled=true,updated_at=now() WHERE id=%s',(supplier_id,))
+                enabled=True
+                supplier=(code,adapter_name,base_url,enabled,crawl_settings,rate_settings)
             if not enabled:
                 raise ValueError(f"Поставщик {code} выключен (disabled); запуск заблокирован. Требуется отдельное подтверждение временного включения.")
             from .source_jobs import RUNTIME_SOURCES
@@ -227,8 +240,8 @@ class PostgresJobQueue:
                 "crawl_settings": crawl_settings or {}, "rate_settings": rate_settings or {},
             }
             if source_limit is not None:
-                preview=self._canary_preview(connection,cursor,supplier_id,supplier,source_limit,source_mode)
-                if preview['confirmation_sha256']!=source_preview_sha256:
+                preview=(manual_request.preview(self,connection,cursor,supplier_id,supplier,source_limit) if manual_request is not None else self._canary_preview(connection,cursor,supplier_id,supplier,source_limit,source_mode))
+                if manual_request is None and preview['confirmation_sha256']!=source_preview_sha256:
                     raise ValueError('Партия, количество, политика или target изменились; заново откройте preview canary')
                 snapshot=preview['snapshot']
                 if automation_sha256 is not None and source_mode=='REFRESH' and snapshot['source_input']['canary']['total_known']>source_limit:
@@ -304,6 +317,11 @@ class PostgresJobQueue:
                 cursor.execute("SELECT sp.id,sp.external_id,coalesce(sp.canonical_url,sp.source_url) FROM source_products sp WHERE sp.supplier_id=%s AND sp.active AND sp.external_id_is_stable ORDER BY sp.id LIMIT %s",(supplier_id,pilot_limit))
                 snapshot['partner_pilot']=__import__('universal_supplier.partner_pilot',fromlist=['snapshot']).snapshot(pilot_limit,cursor.fetchall(),pilot_profile)
                 snapshot['rate_settings']={**(rate_settings or {}),**rate_profile(pilot_profile)}
+            if manual_request is not None:
+                snapshot['manual_collection']=manual_request.seal(snapshot,cursor)
+                from .admin_store import PostgresAdminStore
+                PostgresAdminStore._audit(cursor,manual_request.actor.id,'MANUAL_COLLECTION_APPROVED','supplier',supplier_id,None,
+                    {'cards':source_limit,'nonce':snapshot['manual_collection']['nonce'],'profile':snapshot['rate_settings']},'Authenticated one-click manual start; no scheduler or matching apply')
             if active:
                 cursor.execute(
                     """INSERT INTO crawl_jobs
@@ -323,7 +341,9 @@ class PostgresJobQueue:
             )
             return EnqueueResult(cursor.fetchone()[0], "queued")
 
-    def claim_next(self) -> CrawlJob | None:
+    def claim_next(self, *, job_id=None, manual_validator=None) -> CrawlJob | None:
+        if job_id is not None and (type(job_id) is not int or job_id<1 or not callable(manual_validator)):
+            raise PermissionError('Нужен точный подтверждённый номер ручного задания')
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
             # Serialize claims across worker processes, not only each thread pool.
             # Existing host session lease remains the final network guard.
@@ -341,15 +361,15 @@ class PostgresJobQueue:
                 require_active(approved)
                 protected_batch = approved['batch_id']
                 protected_until = recovery.execution_deadline(approved)
-            cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),
-                error_message='BATCH_WINDOW_EXPIRED',updated_at=now()
-                WHERE status='queued' AND settings_snapshot ? 'source_batch'
-                  AND (settings_snapshot->'source_batch'->>'deadline')::timestamptz<=now()
-                  AND NOT coalesce(settings_snapshot->'source_batch'->>'id'=%s
-                                   AND %s::timestamptz>now(),false)""",
-                (protected_batch, protected_until))
-            cursor.execute(
-                """SELECT j.id,j.supplier_id,s.code,s.adapter_name,s.base_url,j.trigger_type,
+            if job_id is None:
+                cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),
+                    error_message='BATCH_WINDOW_EXPIRED',updated_at=now()
+                    WHERE status='queued' AND settings_snapshot ? 'source_batch'
+                      AND (settings_snapshot->'source_batch'->>'deadline')::timestamptz<=now()
+                      AND NOT coalesce(settings_snapshot->'source_batch'->>'id'=%s
+                                       AND %s::timestamptz>now(),false)""",
+                    (protected_batch, protected_until))
+            claim_sql = """SELECT j.id,j.supplier_id,s.code,s.adapter_name,s.base_url,j.trigger_type,
                           j.crawl_type,j.status,j.scheduled_for,j.settings_snapshot
                    FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
                    WHERE j.status='queued' AND j.scheduled_for<=now() AND s.enabled
@@ -366,10 +386,18 @@ class PostgresJobQueue:
                                AND a.entity_type='source_batch' AND a.entity_id=j.settings_snapshot->'source_batch'->>'id')))
                    ORDER BY coalesce((j.settings_snapshot->'automation'->>'priority')::integer,100),j.scheduled_for,j.requested_at,j.id
                    FOR UPDATE OF j SKIP LOCKED LIMIT 1"""
-            )
+            if job_id is not None:
+                claim_sql=claim_sql.replace("WHERE j.status='queued'", "WHERE j.id=%s AND j.status='queued'",1)
+                cursor.execute(claim_sql,(job_id,))
+            else:
+                claim_sql=claim_sql.replace("WHERE j.status='queued'", "WHERE j.status='queued' AND NOT (j.settings_snapshot ? 'manual_collection')",1)
+                cursor.execute(claim_sql)
             row = cursor.fetchone()
             if row is None:
                 return None
+            if job_id is not None:
+                if row[0]!=job_id or not row[9].get('manual_collection'):raise PermissionError('Чужое задание не запускается')
+                manual_validator(row[9])
             from . import automation_execution
             if automation_execution.ACTIVE is not None and not row[9].get('automation'):
                 raise PermissionError('AUTOMATION_FOREIGN_ACTIVE_JOB')

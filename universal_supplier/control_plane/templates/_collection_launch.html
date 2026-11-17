@@ -1,4 +1,4 @@
-{% set cfg=parsing.settings %}
+{% if manual_collection_enabled %}{% include '_manual_launch.html' %}{% else %}{% set cfg=parsing.settings %}
 {% set profile_ready=parsing.live_blocked_reason=='AUTOMATION_EXECUTION_APPROVAL_REQUIRED' %}
 <h3>Сбор товаров</h3>
 <p>Обновите цены, наличие и данные уже сохранённых карточек.</p>
@@ -27,4 +27,4 @@
 {% if not source_runtime_enabled %}<p><strong>Исполнитель сбора выключен.</strong> Администратору нужно включить его на этой установке.</p>{% endif %}
 </section>
 {% if source_runtime_enabled %}<details data-technical><summary>Поиск новых товаров и дополнительные режимы</summary><p>Поиск новых карточек обращается к страницам каталога сверх уже известных адресов. Его область нужно подтвердить отдельно.</p><form method="get" action="/suppliers/{{item.id}}/source-canary"><input type="hidden" name="collection_mode" value="DISCOVERY"><label>Не более новых карточек<input type="number" name="max_products" min="1" max="100000" required></label><button class="secondary" {% if not item.enabled or not source_runtime_enabled or not profile_ready %}disabled{% endif %}>Подготовить поиск</button></form></details>
-{% endif %}<p><a href="/suppliers/{{item.id}}/parsing">Все настройки и история</a></p>
+{% endif %}<p><a href="/suppliers/{{item.id}}/parsing">Все настройки и история</a></p>{% endif %}

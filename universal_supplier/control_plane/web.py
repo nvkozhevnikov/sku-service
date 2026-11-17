@@ -147,7 +147,7 @@ def filters_from_request(request: Request, *, forced_decision: str = "") -> Prod
 def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None,
                session_secret: str | None = None, auth_required: bool | None = None,
                commercial_qa_service=None, competitor_service=None, competitor_collection=None,
-               release_dispatch=None,cabinet_service=None,content_studio_options=None) -> FastAPI:
+               release_dispatch=None,cabinet_service=None,content_studio_options=None,manual_launcher=None) -> FastAPI:
     injected = store is not None; config = None
     if store is None:
         if os.environ.get("CONTROL_PLANE_DEMO_SNAPSHOT") == "YES":
@@ -223,6 +223,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             "partner_pilot_enabled":__import__('universal_supplier.partner_pilot',fromlist=['enabled']).enabled(),
             "manifest_sources":__import__('universal_supplier.control_plane.source_jobs',fromlist=['RUNTIME_SOURCES']).RUNTIME_SOURCES,
             "source_runtime_enabled":__import__('universal_supplier.control_plane.source_runtime',fromlist=['runtime_enabled']).runtime_enabled(),
+            "manual_collection_enabled":__import__('universal_supplier.control_plane.manual_collection',fromlist=['enabled']).enabled(),
             "source_wrappers":__import__('universal_supplier.control_plane.source_jobs',fromlist=['SOURCES']).SOURCES, **values}
 
     @app.get('/automatic-matching', response_class=HTMLResponse)
@@ -506,6 +507,30 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         from .supplier_automation import public_settings
         return templates.TemplateResponse(request, "supplier_detail.html", context(request, item=item,
             parsing=public_settings(item), policies=policies, active="suppliers"))
+
+    @app.post('/suppliers/{supplier_id}/manual-start')
+    async def manual_start(request: Request,supplier_id: int):
+        user=guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        raw=await form_values(request);check_csrf(request,raw)
+        if getattr(type(store),'read_only',False):raise HTTPException(403,'Источник доступен только для чтения')
+        from .manual_collection import ManualRequest, launch
+        result=None
+        try:
+            count=optional_int(raw.get('max_products'),'Количество карточек')
+            approval=ManualRequest(user,signer.secret.decode('utf-8'),raw.get('delay_min_seconds',''),raw.get('delay_max_seconds',''),int(raw.get('revision','-1')))
+            approval.validate(supplier_id,count,'manual','REFRESH')
+            result=queue.enqueue(supplier_id,trigger_type='manual',crawl_type='full',requested_by_user_id=user.id,
+                source_mode='REFRESH',source_limit=count,manual_request=approval)
+            if result.enqueued:
+                if manual_launcher is not None:manual_launcher(result.job_id)
+                else:launch(result.job_id,key=signer.secret.decode('utf-8'))
+        except (ValueError,PermissionError,KeyError,TypeError) as error:
+            return page_error(request,str(error))
+        except Exception:
+            if result and result.enqueued:queue.complete(result.job_id,'failed',error_message='Не удалось запустить исполнитель')
+            return page_error(request,'Не удалось запустить исполнитель. Повторите попытку или обратитесь к администратору',503)
+        target=result.job_id if result.enqueued else (result.deduplicated_job_id or result.job_id)
+        return RedirectResponse(f'/runs?job_id={target}&enqueue_status={result.status}',303)
 
     @app.post("/suppliers/{supplier_id}/enabled")
     async def supplier_enabled(request: Request, supplier_id: int):
