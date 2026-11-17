@@ -1,4 +1,39 @@
-# Portable partial RC restore
+# Portable RC restore — current17Nov2026
+
+PACKAGED-EVIDENCE / LIVE-VERIFIED ISOLATED LINUX17.11: latest post-Studio/post-ledger
+dump is STERBRUST_UNIFIED_RC_WITH_CONTENT_STUDIO_20261117.dump,157947428bytes,
+SHA256b11f45bcc4aa24891c49548bd15babbbde0a88be158dd15429c086515200efdc.
+Current metadata:81tables in public/competitor/content_studio,52sequence states,
+1282original mappings and20migration ledger entries, including020. Actual restore
+checks and existing-user login receipts are in the current handoff manifest.
+
+1. Verify the NEW database package manifest/hash; use a new empty PostgreSQL17.11
+   database. Never restore over primary, use --clean, or copy its PGDATA.
+2. Restore the new custom dump with --no-owner --no-acl --exit-on-error. Preserve
+   users/password hashes/history/IDs; no matching or VK replay.
+3. Restore the eight immutable Studio media files into the new configured persistent
+   media directory and verify SHA values. There is no SQLite fallback.
+4. Reapply the reviewed current runtime grants from DATABASE_METADATA.json using
+   separate owner/runtime roles (rc_runtime/competitor_runtime). Runtime must remain
+   NOSUPERUSER/NOCREATEDB/NOCREATEROLE and without CREATE in content_studio. Provision
+   actual credentials privately; passwords/master/API keys are excluded from code
+   and evidence ZIPs. API refs require separate reconnect; external calls stayNO.
+5. Existing supplier capture archives remain an immutable dependency. The current
+   data package identifies the previous capture/database ZIP by exact SHA; extract
+   its capture archives/relocation manifests only. Do NOT apply that ZIP's old dump
+   over the current dump. Current SQL source/capture rows remain unchanged.
+6. Compare all81table hashes/52sequence values+is_called,1282,20ledger hashes and
+   Studio6/25/4/8/ADMIN-only policy. Then verify shared login/media/history/preview/
+   ZIP/ACL. Preserve forced-change flags; do not reset passwords for a smoke test.
+
+Current primary020ledger was separately reconciled under exact operator approval;
+do not replay its DDL/import. For a NEW bootstrap, run the general migration runner
+before native data import and prepare a new plan with apply_schema=false.
+See [CONTENT_STUDIO.md](CONTENT_STUDIO.md) and [RELEASE_20261116.md](RELEASE_20261116.md).
+This is restore preparation/isolated QA evidence, not real-server deployment or
+fresh supplier-commerce proof. Schedulers/transport/Bitrix/ESOL remain unauthorized.
+
+## Historical19Oct partial RC guide — old dump/roles, not current delivery
 
 Scope: owner/administrator preparation, not production deployment permission.
 The dump contains all schemas/data in this RC, not PostgreSQL global roles or

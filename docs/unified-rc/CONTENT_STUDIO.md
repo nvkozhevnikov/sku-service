@@ -1,12 +1,47 @@
 # Content Studio в Unified RC
 
-17.11.2026. DONE CODE / VERIFIED ISOLATED QA; PRIMARY SWITCH NOT_APPLIED.
+17.11.2026. DONE / APPLIED LOCAL PRIMARY / VERIFIED LOCAL AND FINAL LINUX RESTORE.
+
+## Текущий локальный статус
+
+OPERATOR-CONFIRMED: proposal2ca2f8f31c34edafdcc9fd954e07dd879d9af0c131ef84b39f8fff85105aafeb,
+native PLAN b33cd4ff599ba51dd93270ea57736037664b861240c0c8611f6f215389180ed9.
+APPLIED на codeHEAD80ed48e: schema/import и включение общей панели
+http://127.0.0.1:58161/content-studio/. Runtime rc_runtime, source6/25/4/8 и9таблиц
+точны. Legacy ADMIN-only/project_access0; source SQLite/media не удалялись.
+Внешние вызовы NO; master/API keys не создавались, APIrefs не расшифровывались.
+
+LIVE-VERIFIED LOCAL:45smoke checks, оба существующих ADMIN проходят парольный вход
+с сохранённой forced-change policy. Для чтения Studio использована120секундная
+подписанная QA-сессия существующего rc-review; это не доказательство его парольного
+входа. Roles/passwords/session versions не менялись, пользователей не создавали.
+Шесть историй,4media SHA/ZIP/preview/CSRF/external-call denial/3viewport проверены;
+оригиналы не редактировались. Public business12/1282/monitoring11/XML-LKG19/proposals
+точны после switch. Обычный auth audit/last_login и Studio audit ожидаемы.
+
+Новый dump после switch восстановлен на LinuxPG17.11:81таблица/52sequence states/
+1282links точны, затем44HTTP/browserchecks и два настоящих ADMIN password login.
+Runtime не owner/superuser, legacyACL0. Старые dump/code/QA пакеты не перезаписаны.
+Code execution/QA HEAD80ed48e; последующее обновление документации не меняет engine.
+
+Выявленная разница native receipt/general ledger закрыта отдельно утверждённой
+reconciliation: proposaldf3fe8dfe18b9349526574240cfbbab35676b332d7b767c3f86df7488e90be04,
+ровно1INSERT в public.schema_migrations для020с неизменным
+SHA1fbbcc94c77c2f487ea8cec57080070947f745934d8bf45288c889e3e1e6f24e.
+DDL/import не повторялись; все20ledger hashes совпадают с файлами. В LinuxQA
+общий runner проверил20/20без повторного создания Studio;9таблиц/1282точны.
+Для будущего нового server bootstrap общий мигратор применяется до data import,
+а native importer использует уже созданную схему (новый plan с apply_schema=false).
+Автоматическая регистрация ledger в самостоятельном --apply-schema остаётся
+отдельным улучшением tooling, не незакрытым состоянием текущей БД.
+Реальный deployment и свежие коммерческие XML ещё не выполнены. Доказательства —
+workspace reports/CONTENT_STUDIO_INTEGRATION_XML_20261116/resume-20261117/.
 
 REPOSITORY-VERIFIED: native `/content-studio/`, общий SessionSigner/app_users/
 session_version/CSRF, action permissions и project ACL. До отдельной миграции
 основной БД — migration-required503, без пустой Studio или SQLite fallback.
 Исходная `work/content-studio` не меняется. Это функциональная интеграция,
-проверенная на QA, но ещё не активированная в основной панели.
+проверенная на QA и теперь активированная в основной локальной панели.
 
 ## Данные и права
 
@@ -73,5 +108,6 @@ same-origin; off-site referrer не передаётся, Origin:null/чужой
 Шесть Partner source IDs15/24/25/35/117/193 исключены из свежего экспорта по
 конкретному предложению. Другие поставщики того же Sterbrust ID допустимы;
 LKG/история не перезаписываются.52Vekprom не применены,9+478REVIEW сохранены.
-Primary migration/switch, свежие коммерческие XML, новые LIVE grants, реальный
-server/deployment/импорт NOT_APPLIED. RELEASE_READY=NO до этих отдельных gates.
+Primary migration/switch APPLIED LOCAL. Свежие коммерческие XML, новые LIVE grants,
+реальный server/deployment/импорт NOT_APPLIED. RELEASE_READY=NO до этих gates
+перед deployment. Учёт020в текущем primary general ledger уже согласован/проверен.
