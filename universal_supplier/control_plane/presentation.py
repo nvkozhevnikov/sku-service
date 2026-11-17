@@ -34,6 +34,62 @@ def supplier_status(value):
             'PACKAGED PASS':'Сохранённые данные'}.get(str(value or ''),'Не подтверждено')
 
 
+def compact_number(value):
+    """Format controls without exposing binary float tails; no stored changes."""
+    try:
+        return format(float(value), '.12g')
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def collection_notice(code):
+    notices = {
+        'HOST_REQUIRED': ('Не указан сайт источника',
+            'Администратору нужно проверить адрес сайта в настройках источника.'),
+        'HOST_PROFILE_NOT_APPROVED': ('Подтвердите настройки скорости',
+            'Администратор должен подтвердить выбранную нагрузку на сайт. Это не запускает сбор.'),
+        'HOST_PROFILE_DIGEST_NOT_APPROVED': ('Настройки нагрузки не разрешены исполнителю',
+            'Настройки скорости не переданы исполнителю. Администратору нужно однократно согласовать этот профиль в его конфигурации.'),
+        'EXPLICIT_HOST_PROFILE_REQUIRED': ('Не настроена скорость сбора',
+            'Для этого источника нужно задать и подтвердить параметры нагрузки.'),
+        'SOURCE_RUNTIME_NOT_ENABLED': ('Исполнитель сбора выключен',
+            'Администратору нужно включить штатный исполнитель заданий.'),
+        'SOURCE_WRITES_NOT_AUTHORIZED': ('Не разрешено сохранение результатов',
+            'Администратору нужно разрешить штатному исполнителю сохранять результаты в выбранную базу.'),
+        'SUPPLIER_HTTP_NOT_AUTHORIZED': ('Не разрешены запросы к сайту',
+            'Для нового сбора требуется действующее разрешение на запросы к этому источнику.'),
+        'AUTOMATION_EXECUTION_APPROVAL_REQUIRED': ('Настройки скорости проверены',
+            'Укажите количество карточек. Перед запуском проверьте выбранную партию и подтвердите действующий допуск.'),
+    }
+    title, explanation = notices.get(code, ('Сбор пока недоступен',
+        'Параметры не прошли проверку. Администратору нужно проверить настройки; техническая причина доступна ниже.'))
+    return {'title': title, 'explanation': explanation}
+
+
+def error_presentation(message, path):
+    """Deterministic same-site GET links, independent of history/Referer/JS."""
+    code = str(message)
+    supplier = re.fullmatch(r'/suppliers/([1-9][0-9]*)(?:/.*)?', path)
+    if supplier:
+        target = '/suppliers/' + supplier.group(1)
+        if code.startswith(('HOST_', 'EXPLICIT_HOST_')):
+            target += '/parsing'
+        label = 'К настройкам сбора' if target.endswith('/parsing') else 'К источнику'
+    else:
+        target = '/review' if path.startswith('/review') else '/suppliers'
+        label = 'К проверке товаров' if target == '/review' else 'К поставщикам'
+    if code in {'HOST_PROFILE_NOT_APPROVED', 'HOST_PROFILE_DIGEST_NOT_APPROVED',
+                'EXPLICIT_HOST_PROFILE_REQUIRED', 'SOURCE_RUNTIME_NOT_ENABLED',
+                'SOURCE_WRITES_NOT_AUTHORIZED', 'SUPPLIER_HTTP_NOT_AUTHORIZED'}:
+        notice = collection_notice(code)
+    elif re.fullmatch(r'[A-Z][A-Z0-9_ :;=.-]*', code):
+        notice = {'title': 'Действие заблокировано',
+                  'explanation': 'Проверка безопасности не пройдена. Сбор не запущен; обратитесь к администратору.'}
+    else:
+        notice = {'title': code, 'explanation': 'Действие не выполнено. Проверьте указанные данные.'}
+    return {**notice, 'back_url': target, 'back_label': label}
+
+
 def job_message(value):
     """Human summary; exact wire diagnostics remain in details and logs."""
     upper = str(value or '').upper()

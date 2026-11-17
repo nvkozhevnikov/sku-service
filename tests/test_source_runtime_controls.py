@@ -33,7 +33,7 @@ def test_panel_modes_only_when_enabled_and_no_unsupported_resume(monkeypatch):
     assert 'value="REFRESH"' in text and 'value="DISCOVERY"' in text and 'value="RESUME"' not in text
     monkeypatch.delenv('STERBRUST_SOURCE_RUNTIME_ENABLED')
     text=client.get('/suppliers/1').text
-    assert 'runtime выключен' in text and 'name="collection_mode"' not in text
+    assert 'Исполнитель сбора выключен' in text and 'name="collection_mode"' not in text
 
 def test_panel_route_passes_only_explicit_modes_to_same_queue():
     class Queue:

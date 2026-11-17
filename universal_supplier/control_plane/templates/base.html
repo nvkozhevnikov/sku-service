@@ -5,7 +5,7 @@
 <link rel="stylesheet" href="{{url_for('static',path='app.css')}}">
 <link rel="stylesheet" href="{{url_for('static',path='stage6e.css')}}">
 <link rel="stylesheet" href="{{url_for('static',path='rc_ui.css')}}">
-<link rel="stylesheet" href="{{url_for('static',path='workspace.css')}}?v=20261117">
+<link rel="stylesheet" href="{{url_for('static',path='workspace.css')}}?v=20261117-collection">
 </head>
 {% set section='monitoring' if active=='competitor_monitoring' else 'team' if active in ['users','roles','settings','applications'] else 'suppliers' %}
 <body class="workspace-shell {{'workspace-home' if active=='dashboard' or not current_user else ''}} {{'competitor-page' if active=='competitor_monitoring' else ''}}">

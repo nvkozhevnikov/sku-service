@@ -1,16 +1,21 @@
 {% extends 'base.html' %}{% block content %}
 {% set snap=preview.snapshot %}{% set data=snap.source_input %}{% set c=data.canary %}{% set p=snap.rate_settings %}
-<a href="/suppliers/{{supplier_id}}">← Поставщик</a><h2>Подготовка согласованного сбора {{snap.supplier_code}}</h2>
-<dl><dt>Режим</dt><dd>{{data.mode}}</dd>
-<dt>Всего известных URL</dt><dd>{{c.total_known}}</dd><dt>Выбрано для запуска</dt><dd>{{c.selected}}</dd>
-<dt>Safety gate / discovery pages / time</dt><dd>{{c.safety_gate_size}} / {{c.max_discovery_pages}} / {{c.max_run_duration_seconds}} сек.</dd><dt>max_products</dt><dd>{{c.max_products}}</dd><dt>Host policy</dt><dd>{{snap.domain}}: {{p.max_concurrency}} поток, минимум {{p.min_request_interval_seconds}} сек. + jitter {{p.jitter_min_seconds}}–{{p.jitter_max_seconds}} сек.; timeout {{p.request_timeout_seconds}} сек.; attempts {{p.max_attempts}}; задание до {{c.max_run_duration_seconds}} сек.</dd>
-<dt>Целевая PostgreSQL</dt><dd>{{c.database.host}}:{{c.database.port}}/{{c.database.dbname}}</dd></dl>
-<p>Общий cap: {{c.max_products}} карточек. Внутренняя проверка первых {{c.safety_gate_size}} карточек: HTTP, точные SQL receipts и host protections. После PASS тот же job продолжает snapshot без дополнительных запусков по пять. При ошибке или временном бюджете — STOP и checkpoint. RESUME требует SQL-сверки. Robots/Crawl-delay/Retry-After обязательны. HTTP/SQL требуют отдельного разрешения.</p>
-{% if data.mode=='DISCOVERY' %}<p>Discovery seeds фиксируются до enqueue; найденный manifest ограничен общим cap:</p><ul>{% for seed in data.seeds %}<li>{{seed}}</li>{% endfor %}</ul>{% endif %}<table><thead><tr><th>Порядок</th><th>Source Product ID</th><th>external_id</th><th>URL</th></tr></thead><tbody>
-{% for entry in data.entries %}<tr><td>{{loop.index}}</td><td>{{entry.source_product_id}}</td><td>{{entry.source_external_id}}</td><td>{{entry.url}}</td></tr>{% endfor %}</tbody></table>
-{% if not c.supplier_enabled %}<p role="alert">Поставщик выключен (disabled). Canary заблокирован. Временное включение требует отдельного подтверждения; preview ничего не включает.</p>{% endif %}
+<a class="back" href="/suppliers/{{supplier_id}}">← К источнику</a><h2>Проверьте запуск сбора</h2>
+<section class="panel"><dl><dt>Действие</dt><dd>{{'Обновить известные товары' if data.mode=='REFRESH' else 'Найти новые товары'}}</dd>
+<dt>Количество карточек</dt><dd>{{c.selected if data.mode=='REFRESH' else 'Не более ' ~ c.max_products}}</dd>
+<dt>Пауза между запросами</dt><dd>{{(p.min_request_interval_seconds+p.jitter_min_seconds)|number}}–{{(p.min_request_interval_seconds+p.jitter_max_seconds)|number}} сек.</dd>
+<dt>Одновременно запросов</dt><dd>{{p.max_concurrency}}</dd></dl>
+<p>Будет создано одно задание. Сначала система проверит сохранение первых карточек, затем продолжит выбранную партию. При ограничении доступа или ошибке безопасности сбор остановится.</p>
+{% if not c.supplier_enabled %}<p role="alert">Источник выключен. Вернитесь в карточку источника и разрешите сбор.</p>{% endif %}
 <form method="post" action="/suppliers/{{supplier_id}}/start"><input type="hidden" name="csrf_token" value="{{csrf_token}}">
 <input type="hidden" name="launch_mode" value="source_canary"><input type="hidden" name="collection_mode" value="{{data.mode}}">
 <input type="hidden" name="max_products" value="{{c.max_products}}"><input type="hidden" name="source_preview_sha256" value="{{preview.confirmation_sha256}}">
-<button {% if not c.supplier_enabled %}disabled{% endif %}>Подтвердить выбранную партию и поставить одно задание</button></form>
+<button {% if not c.supplier_enabled %}disabled{% endif %}>Подтвердить запуск</button><a href="/suppliers/{{supplier_id}}">Отмена</a></form>
+<p class="form-hint">Исполнитель проверит действующее разрешение на запросы и сохранение данных. Запуск не означает импорт на сайт.</p></section>
+<details data-technical><summary>Выбранные адреса и технические сведения</summary>
+<p>Сайт: {{snap.domain}}. Известных адресов: {{c.total_known}}. Лимит: {{c.max_products}} карточек. Время задания: до {{c.max_run_duration_seconds|number}} сек.</p>
+<dl><dt>Первые карточки для проверки</dt><dd>{{c.safety_gate_size}}</dd><dt>Не более страниц каталога</dt><dd>{{c.max_discovery_pages}}</dd><dt>Время ожидания ответа</dt><dd>{{p.request_timeout_seconds|number}} сек.</dd><dt>Попыток запроса</dt><dd>{{p.max_attempts}}</dd><dt>База сохранения</dt><dd>{{c.database.host}}:{{c.database.port}}/{{c.database.dbname}}</dd></dl>
+{% if data.mode=='DISCOVERY' %}<ul>{% for seed in data.seeds %}<li>{{seed}}</li>{% endfor %}</ul>{% endif %}
+<div class="tablewrap"><table><thead><tr><th>№</th><th>Товар источника</th><th>Код источника</th><th>Адрес</th></tr></thead><tbody>
+{% for entry in data.entries %}<tr><td>{{loop.index}}</td><td>{{entry.source_product_id}}</td><td>{{entry.source_external_id}}</td><td>{{entry.url}}</td></tr>{% endfor %}</tbody></table></div></details>
 {% endblock %}

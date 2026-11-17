@@ -117,13 +117,16 @@ def public_settings(supplier, now=None):
     try:
         from .host_fetch import compile_policy,policy_digest,host_key
         rate=DomainRatePolicy.from_mapping(rate_for(cfg,supplier.get('rate_settings')))
-        host=host_key(supplier['base_url']);reference=f"ADMIN:{supplier['code']}:REV:{cfg['revision']}"
+        host=host_key(supplier.get('base_url') or '')
+        if not host:raise ValueError('HOST_REQUIRED')
+        reference=f"ADMIN:{supplier['code']}:REV:{cfg['revision']}"
         result.update(host_reference=reference,host_policy_sha256=policy_digest(supplier['code'],host,rate,reference))
         saved=(supplier.get('crawl_settings') or {}).get('host_policy_approval') or {}
-        approved=None
-        if saved.get('approved_rate_sha256')==digest(rate.snapshot()) and saved.get('host')==host:
-            approved={host:{supplier['code']:policy_digest(supplier['code'],host,rate,saved['reference'])}}
+        result['host_confirmation_saved']=bool(saved.get('approved_rate_sha256')==digest(rate.snapshot())
+            and saved.get('host')==host and saved.get('reference'))
+        # Report the same trusted executor allowlist as the queue/worker.
+        # A panel database receipt must not manufacture that trust.
         compile_policy(supplier['code'],supplier['base_url'],rate_for(cfg,supplier.get('rate_settings')),
-                       approval=saved,approved_digests=approved)
+                       approval=saved)
     except (PermissionError,ValueError) as error:result['live_blocked_reason']=str(error)
     return result

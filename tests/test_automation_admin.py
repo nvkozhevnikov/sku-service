@@ -52,7 +52,7 @@ def test_all11_authenticated_settings_and_cas_do_not_enqueue(tmp_path,monkeypatc
     assert c.get('/suppliers').status_code==200
     for supplier in store.suppliers():
         response=c.get(f"/suppliers/{supplier['id']}/parsing")
-        assert response.status_code==200 and 'Настройки парсинга' in response.text and 'REFRESH' in response.text
+        assert response.status_code==200 and 'Настройки парсинга' in response.text and 'Обновлять известные карточки' in response.text
     form={'csrf_token':csrf(response),'revision':'0','delay_min_seconds':'1','delay_max_seconds':'3',
           'refresh_enabled':'true','refresh_interval':'21600','discovery_enabled':'true','discovery_interval':'86400',
           'start_time':'09:30','timezone':'Europe/Moscow'}

@@ -186,6 +186,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     from .presentation import phase_summary, price_label, duration_label, mark_quality_repeats, display_timestamp, moscow_datetime, supplier_display_name, supplier_status, job_message
     templates.env.globals.update(phase_summary=phase_summary,price_label=price_label,duration_label=duration_label)
     templates.env.filters['msk'] = display_timestamp
+    from .presentation import compact_number, collection_notice, error_presentation
+    templates.env.filters['number'] = compact_number
+    templates.env.globals['collection_notice'] = collection_notice
     templates.env.globals.update(supplier_display_name=supplier_display_name, supplier_status=supplier_status, moscow_datetime=moscow_datetime, job_message=job_message)
     templates.env.filters["relation_ru"] = relation_type_label
 
@@ -321,8 +324,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     def page_error(request: Request, message: str, status_code=400, details=""):
         user = current_user(request)
-        return templates.TemplateResponse(request, "error.html", context(request, message=message,
-            details=details if user and user.role == "ADMIN" else "", active=""), status_code=status_code)
+        error = error_presentation(message, request.url.path)
+        return templates.TemplateResponse(request, "error.html", context(request, message=error['title'], error=error,
+            details=(details or message) if user and user.role == "ADMIN" else "", active="suppliers"), status_code=status_code)
 
     @app.exception_handler(HTTPException)
     async def http_error(request, exc):
@@ -499,14 +503,17 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         guard(request); item = next((x for x in store.suppliers() if int(x["id"]) == supplier_id), None)
         if not item: raise HTTPException(404, "Поставщик не найден")
         policies = effective_crawl_settings(item.get("crawl_settings"))
-        return templates.TemplateResponse(request, "supplier_detail.html", context(request, item=item, policies=policies, active="suppliers"))
+        from .supplier_automation import public_settings
+        return templates.TemplateResponse(request, "supplier_detail.html", context(request, item=item,
+            parsing=public_settings(item), policies=policies, active="suppliers"))
 
     @app.post("/suppliers/{supplier_id}/enabled")
     async def supplier_enabled(request: Request, supplier_id: int):
         user = guard(request, {"ADMIN"}); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
+        if getattr(type(store), 'read_only', False):raise HTTPException(403, 'Источник доступен только для чтения')
         before = next((x for x in store.suppliers() if int(x["id"]) == supplier_id), None); enabled = values.get("enabled") == "true"
         store.set_supplier_enabled(supplier_id, enabled); admin_store.audit(user.id, "SUPPLIER_ENABLED_CHANGED", "supplier", supplier_id, {"enabled": before.get("enabled") if before else None}, {"enabled": enabled}, values.get("comment") or None)
-        return RedirectResponse("/suppliers", 303)
+        return RedirectResponse(f"/suppliers/{supplier_id}" if values.get('return_to')=='source' else '/suppliers', 303)
 
     @app.get('/suppliers/{supplier_id}/parsing',response_class=HTMLResponse)
     def parsing_settings_page(request: Request,supplier_id: int):
@@ -530,7 +537,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             store.save_parsing_settings(supplier_id,values,int(raw['revision']),user.id or None)
         except (KeyError,ValueError,TypeError) as error:
             return page_error(request,'Настройки не сохранены: '+str(error))
-        return RedirectResponse(f'/suppliers/{supplier_id}/parsing?saved=1',303)
+        target=f'/suppliers/{supplier_id}' if raw.get('return_to')=='source' else f'/suppliers/{supplier_id}/parsing'
+        return RedirectResponse(target+'?saved=1',303)
 
     @app.post("/suppliers/{supplier_id}/data-quality-policy")
     async def supplier_data_quality_policy(request: Request,supplier_id:int):
@@ -778,7 +786,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         if getattr(store,'read_only',False) or not hasattr(store,'approve_parsing_host'):raise HTTPException(403,'Read-only источник')
         try:store.approve_parsing_host(supplier_id,int(raw['revision']),raw['policy_sha256'],user.id or None)
         except (KeyError,ValueError) as error:return page_error(request,'Профиль не утверждён: '+str(error))
-        return RedirectResponse(f'/suppliers/{supplier_id}/parsing?host_saved=1',303)
+        target=f'/suppliers/{supplier_id}' if raw.get('return_to')=='source' else f'/suppliers/{supplier_id}/parsing'
+        return RedirectResponse(target+'?host_saved=1',303)
 
     @app.post("/scheduler/{supplier_id}")
     async def scheduler_save(request: Request, supplier_id: int):

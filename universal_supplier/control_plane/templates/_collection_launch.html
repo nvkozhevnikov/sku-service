@@ -1,0 +1,30 @@
+{% set cfg=parsing.settings %}
+{% set profile_ready=parsing.live_blocked_reason=='AUTOMATION_EXECUTION_APPROVAL_REQUIRED' %}
+<h3>Сбор товаров</h3>
+<p>Обновите цены, наличие и данные уже сохранённых карточек.</p>
+{% if request.query_params.get('saved') %}<p class="notice">Скорость сохранена. Проверьте подтверждение настроек ниже.</p>{% endif %}
+{% if request.query_params.get('host_saved') %}<p class="notice">Подтверждение сохранено. Это не запускает сбор и не включает источник.</p>{% endif %}
+{% if current_user.role=='ADMIN' and not control_plane_read_only %}
+<form method="post" action="/suppliers/{{item.id}}/parsing" class="collection-speed">
+<input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="revision" value="{{cfg.revision}}"><input type="hidden" name="return_to" value="source">
+{% for key in ['schedule_enabled','refresh_enabled','discovery_enabled','export_updates','export_new_products'] %}<input type="hidden" name="{{key}}" value="{{'true' if cfg[key] else 'false'}}">{% endfor %}
+<fieldset><legend>Пауза между запросами, сек.</legend><div class="collection-range"><label>От<input type="number" name="delay_min_seconds" min="0.001" max="86400" step="0.001" value="{{cfg.delay_min_seconds|number}}" required></label><label>До<input type="number" name="delay_max_seconds" min="0.001" max="86400" step="0.001" value="{{cfg.delay_max_seconds|number}}" required></label></div></fieldset>
+<p class="form-hint">Меньше пауза — быстрее сбор. Ограничения сайта могут увеличить паузу. Это не обещание времени завершения.</p>
+<button class="secondary">Сохранить скорость</button></form>
+{% else %}<p>Пауза между запросами: <strong>{{cfg.delay_min_seconds|number}}–{{cfg.delay_max_seconds|number}} сек.</strong></p>{% endif %}
+
+{% if source_runtime_enabled %}<form method="get" action="/suppliers/{{item.id}}/source-canary" class="collection-prepare">
+<label>Количество карточек<input type="number" name="max_products" min="1" max="100000" required placeholder="Например, 20"></label>
+<input type="hidden" name="collection_mode" value="REFRESH">
+<button {% if not item.enabled or not source_runtime_enabled or not profile_ready %}disabled aria-describedby="collection-blocked"{% endif %}>Подготовить запуск</button>
+{% if not item.enabled or not source_runtime_enabled or not profile_ready %}<p id="collection-blocked" class="form-hint">Причины блокировки указаны ниже. Задание ещё не создано.</p>{% else %}<p class="form-hint">Следующий экран покажет выбранные карточки. Сбор начнётся только после подтверждения и проверки действующего допуска исполнителем.</p>{% endif %}
+</form>{% endif %}
+<section class="collection-readiness" aria-label="Готовность к сбору">
+{% if not item.enabled %}<p><strong>Источник выключен</strong></p><p>Включение разрешит подготовку задания, но не запустит сбор.</p>
+{% if current_user.role=='ADMIN' and not control_plane_read_only %}<form method="post" action="/suppliers/{{item.id}}/enabled"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="enabled" value="true"><input type="hidden" name="return_to" value="source"><button class="secondary">Включить источник</button></form>{% else %}<p>Включение доступно администратору.</p>{% endif %}{% endif %}
+{% if not profile_ready %}{% set notice=collection_notice(parsing.live_blocked_reason) %}<p><strong>{{notice.title}}</strong></p><p>{{notice.explanation}}</p>
+{% if current_user.role=='ADMIN' and not control_plane_read_only and parsing.host_policy_sha256 and not parsing.host_confirmation_saved %}<form method="post" action="/suppliers/{{item.id}}/parsing/approve-host"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="revision" value="{{cfg.revision}}"><input type="hidden" name="policy_sha256" value="{{parsing.host_policy_sha256}}"><input type="hidden" name="return_to" value="source"><button class="secondary">Подтвердить сохранённую скорость</button></form>{% endif %}{% endif %}
+{% if not source_runtime_enabled %}<p><strong>Исполнитель сбора выключен.</strong> Администратору нужно включить его на этой установке.</p>{% endif %}
+</section>
+{% if source_runtime_enabled %}<details data-technical><summary>Поиск новых товаров и дополнительные режимы</summary><p>Поиск новых карточек обращается к страницам каталога сверх уже известных адресов. Его область нужно подтвердить отдельно.</p><form method="get" action="/suppliers/{{item.id}}/source-canary"><input type="hidden" name="collection_mode" value="DISCOVERY"><label>Не более новых карточек<input type="number" name="max_products" min="1" max="100000" required></label><button class="secondary" {% if not item.enabled or not source_runtime_enabled or not profile_ready %}disabled{% endif %}>Подготовить поиск</button></form></details>
+{% endif %}<p><a href="/suppliers/{{item.id}}/parsing">Все настройки и история</a></p>

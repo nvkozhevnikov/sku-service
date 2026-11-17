@@ -102,7 +102,7 @@ def test_all_nine_ui_queue_snapshot_runtime_five_from_109(monkeypatch,code):
     db=FakeDB(code);queue=db.queue();client=TestClient(create_app(store=store_for(db),queue=queue,auth_required=False))
     page=client.get(f'/suppliers/{db.supplier_id}/source-canary?max_products=5')
     assert page.status_code==200
-    for text in ('109','REFRESH','max_products','55461','rc_verify_vi_20261019','300','20.0'):assert text in page.text
+    for text in ('109','REFRESH','max_products','55461','rc_verify_vi_20261019','300','Пауза между запросами'):assert text in page.text
     preview=queue.preview_source_canary(db.supplier_id,5)
     assert confirm(client,db,preview).status_code==303
     assert len(db.snapshots)==1
