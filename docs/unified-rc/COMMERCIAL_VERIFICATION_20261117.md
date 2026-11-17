@@ -1,5 +1,41 @@
 # Минимальная коммерческая проверка — подготовка без запуска
 
+## Выполнено по отдельному подтверждению
+
+OPERATOR-CONFIRMED SHA55008390a6a0d5815123a58d2b0f02d7ccaeee55a5623509f55a08fb6bbcf3bc,
+executionHEADd5fe127edc50571e4c5cec59e689495accb0f991. Допуск израсходован один раз:
+4HTTP200 (две карточки+дваrobots),retry0. Jobs174/175succeeded,SQLcommitted1+1,
+оба safetygatePASS,active0,settingsrestored/oldjobs/1282exact. Старые запросы не повторялись.
+
+LIVE-VERIFIED:17.11.2026,15:21 PartnerPP-800F339940RUB/в наличии;
+15:20 OptimumCS275208153RUB/под заказ. Наблюдения связаны с новыми capture и SQLoffer;
+это свежие source prices, без доказанного розничного/RRP типа. Сохранённый PP-U3
+16Nov остаётся историческим и не переносился в SQL под новым временем.
+
+Штатное diagnosticmatching обработало ровно1+1: PartnerCONFLICT EXISTING_LINK_CONFLICT,
+OptimumREVIEW AMBIGUOUS_CRITICAL_OBSERVATIONS,apply0. Прямой read-only check только
+Partner target88585 подтверждает: заголовок и supplierarticle508002 соответствуют
+PP-800F, но сохранённое свойство модели PP-600F и неоднозначное напряжение конфликтуют.
+Это не доказанная неправильность ProductID и не повод переназначать его. Причина
+вынесена на проверку данных реестра; весь каталог повторно не анализировался.
+
+Оба XML well-formed,updates1/new0,import_allowed=false. Это диагностические файлы,
+не разрешённая выгрузка для импорта: Partnerстрока требует проверки противоречивых
+свойств,OptimumREVIEWне превращён в NEW. Прежние19XML/LKG и52proposal files сохранены.
+RELEASE_READY=NO. Исторические117/48/206необнулены и не подменяются новыми1/0.
+
+Новый post-canarydump157958385bytes,SHA256
+62b6e91b518ee615bd28a48089f6ac2eb8c77f4b46cc95392d8f9e185756793a восстановлен на LinuxPG17.11:
+81tables/52sequence states/1282/20migration hashes exact,Studio6материалов иruntime
+leastprivilege сохранены. Это обновление переносимого снимка после разрешённых
+новых наблюдений, не повторная миграция/интеграция Studio. Новыйdumpзаменяет старый
+только как рекомендуемый снимок передачи; прежние файлы не удаляются.
+
+Команды и JSON ниже описывают историческую подготовку уже израсходованного допуска.
+Повторный запуск запрещён. Новый LIVEпотребует нового exactSHA/HEAD/window решения.
+
+## Историческая подготовка
+
 17.11.2026. Base090cc682. DONE разбор сохранённых ответов; LIVE NOT_APPLIED,
 новые запросы только после отдельного подтверждения точного SHA/окна/HEAD.
 
