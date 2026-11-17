@@ -7,6 +7,7 @@ COPY stage6e_migration_baseline_sha256.json ./
 COPY universal_supplier ./universal_supplier
 COPY sterbrust_matching ./sterbrust_matching
 COPY competitor_intel ./competitor_intel
+COPY content_studio ./content_studio
 COPY scripts ./scripts
 COPY migrations ./migrations
 COPY config ./config

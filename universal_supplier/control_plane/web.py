@@ -300,7 +300,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         studio_policy=response.headers.get('Content-Security-Policy') if path.startswith('/content-studio/') else None
         response.headers.update({
             'X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff',
-            'Referrer-Policy':'no-referrer','Cache-Control':'no-store',
+            # Chromium otherwise sends Origin:null on same-origin form POSTs.
+            # Keep the origin guard strict and suppress referrers off-site.
+            'Referrer-Policy':'same-origin','Cache-Control':'no-store',
             'Content-Security-Policy':"default-src 'self'; script-src 'self' 'nonce-"+request.state.csp_nonce+"'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
         if studio_policy:
             response.headers['Content-Security-Policy']=studio_policy

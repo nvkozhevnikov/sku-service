@@ -7,10 +7,40 @@ from fastapi.templating import Jinja2Templates
 from universal_supplier.control_plane.competitor_ui import register_monitoring
 from competitor_intel.execution import CollectionService
 
+def owned_windows_job():
+    """Create the UI-owned job being tested instead of assuming a venv redirector.
+
+    A directly installed Python runtime has no implicit UI Job Object. Keep the
+    handle alive until this isolated UI exits; an un-detached worker would die.
+    """
+    if os.name!='nt':return None
+    import ctypes
+    from ctypes import wintypes as w
+    class Basic(ctypes.Structure):
+        _fields_=[('process_time',ctypes.c_int64),('job_time',ctypes.c_int64),('flags',w.DWORD),
+                  ('min_ws',ctypes.c_size_t),('max_ws',ctypes.c_size_t),('active',w.DWORD),
+                  ('affinity',ctypes.c_size_t),('priority',w.DWORD),('scheduling',w.DWORD)]
+    class Io(ctypes.Structure):
+        _fields_=[(name,ctypes.c_uint64) for name in ('read_ops','write_ops','other_ops','read_bytes','write_bytes','other_bytes')]
+    class Extended(ctypes.Structure):
+        _fields_=[('basic',Basic),('io',Io),('process_memory',ctypes.c_size_t),('job_memory',ctypes.c_size_t),
+                  ('peak_process',ctypes.c_size_t),('peak_job',ctypes.c_size_t)]
+    k=ctypes.WinDLL('kernel32',use_last_error=True)
+    k.CreateJobObjectW.argtypes=[ctypes.c_void_p,w.LPCWSTR];k.CreateJobObjectW.restype=w.HANDLE
+    k.SetInformationJobObject.argtypes=[w.HANDLE,ctypes.c_int,ctypes.c_void_p,w.DWORD]
+    k.AssignProcessToJobObject.argtypes=[w.HANDLE,w.HANDLE]
+    k.GetCurrentProcess.restype=w.HANDLE
+    handle=k.CreateJobObjectW(None,None);limits=Extended()
+    limits.basic.flags=0x2000|0x0800 # KILL_ON_JOB_CLOSE | BREAKAWAY_OK
+    if not handle or not k.SetInformationJobObject(handle,9,ctypes.byref(limits),ctypes.sizeof(limits)) or not k.AssignProcessToJobObject(handle,k.GetCurrentProcess()):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return handle
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--runtime',type=Path,required=True);p.add_argument('--port',type=int,required=True);args=p.parse_args()
     service=CollectionService(None,args.runtime/'schedule.json',args.runtime,fixture_spec=args.runtime/'fixture.json')
     app=FastAPI();app.state.local_operator_collection=True
+    app.state.qa_ui_job=owned_windows_job()
     @app.get('/qa-identity')
     def identity():
         members=None
@@ -19,7 +49,8 @@ def main():
             class JobPids(ctypes.Structure):
                 _fields_=[('assigned',ctypes.c_uint32),('count',ctypes.c_uint32),('pids',ctypes.c_size_t*1024)]
             data=JobPids();k=ctypes.WinDLL('kernel32',use_last_error=True)
-            if k.QueryInformationJobObject(None,3,ctypes.byref(data),ctypes.sizeof(data),None):members=list(data.pids)[:data.count]
+            k.QueryInformationJobObject.argtypes=[ctypes.c_void_p,ctypes.c_int,ctypes.c_void_p,ctypes.c_uint32,ctypes.c_void_p]
+            if k.QueryInformationJobObject(app.state.qa_ui_job,3,ctypes.byref(data),ctypes.sizeof(data),None):members=list(data.pids)[:data.count]
         return {'ui_pid':os.getpid(),'ui_job_members':members,'fixture_only':True}
     @app.get('/qa')
     def fixture_page():

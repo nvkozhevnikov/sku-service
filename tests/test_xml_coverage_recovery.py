@@ -142,7 +142,8 @@ def test_legacy_stage5_117_compatible_rows_are_not_reinterpreted_as_fresh_data()
     for i in range(117):
         rows.append(legacy_row(str(88585+i),catalog_product_id=100+i,selected_offer_id=200+i,
             offer_id=200+i,source_product_id=300+i,source_catalog_product_id=100+i,
-            current_match_catalog_product_id=100+i,supplier_external_id=str(297+i)))
+            # Synthetic cohort must not alias a real Partner-ST source identity.
+            current_match_catalog_product_id=100+i,supplier_external_id='synthetic-'+str(297+i)))
     artifact=build_yml(legacy_snapshot(*rows),POLICY)
     assert len(ET.fromstring(artifact.data).findall('.//offers/offer'))==117
     assert artifact.manifest['exported_offer_count']==117

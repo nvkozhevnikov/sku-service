@@ -94,7 +94,7 @@ def create_app(directory, login_code=None, *, store=None, ai_vault=None, vk_vaul
             await asyncio.to_thread(app.state.store.audit,actor,request.method+' '+path)
         if 'content-security-policy' not in response.headers:
             response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-src 'self' about:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-        response.headers.update({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store'})
+        response.headers.update({'X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','Cache-Control':'no-store'})
         return response
 
     for typ,status in ((ValueError,400),(KeyError,404),(Conflict,409)):
@@ -119,6 +119,7 @@ def create_app(directory, login_code=None, *, store=None, ai_vault=None, vk_vaul
         source=source.replace('href="/static/','href="'+base_path+'/static/').replace('src="/static/','src="'+base_path+'/static/').replace('href="/api/','href="'+base_path+'/api/')
         source=source.replace('<head>','<head><meta name="studio-base" content="'+base_path+'">')
         source=source.replace('<body>','<body><nav class="integrated-nav"><a href="/">← Unified RC</a><a href="/applications">Приложения</a><strong>Контент-студия</strong></nav>')
+        source=source.replace('Локальная мастерская','Общая панель').replace('Черновики сохраняются на компьютере.','Черновики сохраняются в общей панели.')
         return HTMLResponse(source)
 
     @app.post('/api/login')

@@ -143,7 +143,7 @@ async function home(){await flush();$('workspace').hidden=true;$('welcome').hidd
 $('home-button').onclick=guarded(home);$('back-home').onclick=guarded(home);
 function syncFocus(){const on=document.body.classList.contains('focus-mode');$('focus-button').setAttribute('aria-pressed',String(on));$('focus-button').textContent=on?'Выйти из фокуса ↙':'Фокус ⤢';}
 $('focus-button').onclick=()=>{document.body.classList.toggle('focus-mode');syncFocus();};
-async function manualSave(){if(!project)return;await flush();message('Все изменения сохранены на компьютере.');readiness();}
+async function manualSave(){if(!project)return;await flush();message('Все изменения сохранены.');readiness();}
 $('save-button').onclick=guarded(manualSave);
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();guarded(manualSave)();}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();document.body.classList.remove('focus-mode');syncFocus();$('search').focus();$('search').select();}if(e.key==='Escape'&&!document.querySelector('dialog[open]')){document.body.classList.remove('focus-mode');syncFocus();}});
 new MutationObserver(()=>{const text=$('save-status').textContent;$('save-status').dataset.state=text==='Не сохранено'?'error':(/Сохраняется|новые правки|Обрабатываем|Готовим/.test(text)?'pending':'saved');}).observe($('save-status'),{childList:true,characterData:true,subtree:true});

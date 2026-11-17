@@ -10,7 +10,9 @@ function validPage(value){
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   let origin;
   try {origin=new URL(sender.url);} catch {return;}
-  if(origin.protocol!=='http:'||origin.hostname!=='127.0.0.1'||origin.pathname!=='/'||!['58206','58207'].includes(origin.port)||!sender.tab||message?.action!=='read-sterbrust-page')return;
+  const studio=(origin.pathname==='/'&&['58206','58207'].includes(origin.port))||
+    (origin.pathname==='/content-studio/'&&['58161','58162'].includes(origin.port));
+  if(origin.protocol!=='http:'||origin.hostname!=='127.0.0.1'||!studio||!sender.tab||message?.action!=='read-sterbrust-page')return;
   if(busy){respond({error:'Дождитесь завершения предыдущего импорта.'});return;}
   busy=true;
   (async()=>{
