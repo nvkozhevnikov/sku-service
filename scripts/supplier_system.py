@@ -14,6 +14,7 @@ def main(argv=None):
     p.add_argument('--limits',type=Path);p.add_argument('--not-before');p.add_argument('--execution-until')
     p.add_argument('--confirmed-commercial-targets',type=Path)
     p.add_argument('--release-canary',action='store_true',help='strict20 Partner +20 Optimum, no matching apply or resume')
+    p.add_argument('--release-verification',action='store_true',help='одна новая карточка на источник; прежние запросы исключены')
     p.add_argument('--continue-approval',type=Path);p.add_argument('--previous-sha256')
     p.add_argument('--mixed-recovery',type=Path,help='operator mixed-recovery blocks {"<source>": block} for one mixed parent checkpoint')
     p.add_argument('--reuse-receipts',action='store_true',help='SELECT-only successor for a partially executed commercial grant; never replay COMMITTED/quarantine')
@@ -38,7 +39,8 @@ def main(argv=None):
                 not_before=args.not_before,execution_until=args.execution_until,mixed_recovery=mixed)
         elif args.confirmed_commercial_targets:
             from universal_supplier.control_plane.commercial_refresh import prepare
-            value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until,canary=args.release_canary)
+            value=prepare(cfg,args.confirmed_commercial_targets,args.not_before,args.execution_until,
+                          canary=args.release_canary or args.release_verification,verification=args.release_verification)
             if args.continue_approval:
                 if not args.previous_sha256:p.error('continuation requires exact previous-sha256')
                 from universal_supplier.control_plane.commercial_continuation import attach

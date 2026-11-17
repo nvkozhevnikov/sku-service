@@ -20,7 +20,7 @@ def test_reused_cabinet_and_new_routes_coexist_without_replacing_supplier_landin
         'launch_allowed':False,'write_session_enabled':False})
     c=TestClient(create_app(store=store,auth_required=False,commercial_qa_service=commercial,cabinet_service=cabinet))
     page=c.get('/suppliers');assert page.status_code==200
-    assert page.text.count('Настройки REFRESH / DISCOVERY')==11
+    assert page.text.count('Открыть источник')==11
     for row in store.suppliers():
         assert c.get(f"/suppliers/{row['id']}/parsing").status_code==200
         assert c.get('/cabinet/sources/'+row['code']).status_code==200

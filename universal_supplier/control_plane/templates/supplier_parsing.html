@@ -35,5 +35,5 @@
 <table><thead><tr><th>Фаза</th><th>Job</th><th>Статус</th><th>COMMITTED</th><th>HTTP</th><th>Причина</th></tr></thead><tbody>
 {% for p in parsing.phases %}<tr><td>{{p.phase or 'legacy'}}</td><td>{{p.id}}</td><td>{{p.status|ru}}</td><td>{{p.runtime.get('sql_committed','нет подтверждения')}}</td><td>{{p.runtime.get('request_metrics',{}).get('requests_total','нет данных')}}</td><td>{{p.error_message or p.runtime.get('termination_reason') or '—'}}</td></tr>{% else %}<tr><td colspan="6">Заданий нет</td></tr>{% endfor %}
 </tbody></table></article>
-<article class="panel"><h3>История настроек</h3>{% for h in parsing.history %}<details><summary>{{h.created_at}} · {{h.action}}</summary><pre>{{h.before_state}}</pre><pre>{{h.after_state}}</pre></details>{% else %}<p>Изменений настроек ещё нет.</p>{% endfor %}</article>
+<article class="panel"><h3>История настроек</h3>{% for h in parsing.history %}<details><summary>{{(h.created_at)|msk}} · {{h.action}}</summary><pre>{{h.before_state}}</pre><pre>{{h.after_state}}</pre></details>{% else %}<p>Изменений настроек ещё нет.</p>{% endfor %}</article>
 {% endblock %}

@@ -183,8 +183,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     templates.env.filters["ru"] = russian_label
     templates.env.globals['safe_http_url']=safe_http_url
     templates.env.filters["product_kind_ru"] = product_kind_label
-    from .presentation import phase_summary, price_label, duration_label, mark_quality_repeats
+    from .presentation import phase_summary, price_label, duration_label, mark_quality_repeats, display_timestamp, moscow_datetime, supplier_display_name, supplier_status, job_message
     templates.env.globals.update(phase_summary=phase_summary,price_label=price_label,duration_label=duration_label)
+    templates.env.filters['msk'] = display_timestamp
+    templates.env.globals.update(supplier_display_name=supplier_display_name, supplier_status=supplier_status, moscow_datetime=moscow_datetime, job_message=job_message)
     templates.env.filters["relation_ru"] = relation_type_label
 
     def payload(request: Request):

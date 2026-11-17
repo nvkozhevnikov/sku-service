@@ -18,8 +18,8 @@ class SourceBackend:
         from universal_supplier.postgres import PostgresRepository
         self.repo=PostgresRepository(config);self.config=config;self.code=code;self.run_id=None;self.summary={};self.started=time.monotonic()
     def start(self,job,mode):
-        from .execution_canary import PURPOSE
-        self.release_canary=job.settings_snapshot.get('automation',{}).get('purpose')==PURPOSE
+        from .execution_canary import is_canary
+        self.release_canary=is_canary(job.settings_snapshot.get('automation',{}))
         if self.release_canary:
             from .automation_execution import validate_job
             validate_job(job.settings_snapshot)

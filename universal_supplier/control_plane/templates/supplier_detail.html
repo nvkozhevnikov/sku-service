@@ -6,7 +6,7 @@
 <section class="grid2">
   <article class="panel"><h3>Состояние</h3><dl>
     <dt>Товары источника</dt><dd>{{item.products}}</dd>
-    <dt>Последний успешный сбор</dt><dd>{{item.last_successful_crawl or "нет данных"}}</dd><dt>Последний job</dt><dd>{% if item.job_id %}<a href="{% if item.job_run_id %}/runs/{{item.job_run_id}}{% else %}/runs#job-{{item.job_id}}{% endif %}">job {{item.job_id}}</a> · {{item.job_status|ru}} · {{item.job_created_at or "нет данных"}}<p>{{item.job_error_message or "сообщение не записано"}}</p>{% else %}нет данных{% endif %}</dd><dt>Последний сбор</dt><dd>{{item.last_crawl or 'нет данных'}}</dd>
+    <dt>Последний успешный сбор</dt><dd>{{(item.last_successful_crawl or "нет данных")|msk}}</dd><dt>Последнее задание</dt><dd>{% if item.job_id %}<a href="{% if item.job_run_id %}/runs/{{item.job_run_id}}{% else %}/runs#job-{{item.job_id}}{% endif %}">Задание {{item.job_id}}</a> · {{item.job_status|ru}} · {{(item.job_created_at or "нет данных")|msk}}<p>{{job_message(item.job_error_message)}}</p>{% else %}нет данных{% endif %}</dd><dt>Последний сбор</dt><dd>{{(item.last_crawl or 'нет данных')|msk}}</dd>
     <dt>Статус</dt><dd>{{item.last_status|ru if item.last_status else 'нет данных'}}</dd>
     <dt>Найдено</dt><dd>{{item.last_discovered_count if item.last_discovered_count is not none else 'нет данных'}}</dd>
     <dt>Ошибок</dt><dd>{{item.last_error_count if item.last_error_count is not none else 'нет данных'}}</dd>

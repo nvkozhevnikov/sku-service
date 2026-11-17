@@ -103,7 +103,8 @@ def scope_rows(config,targets,*,accounted_quarantine=(),canary=False):
     return state,actual
 
 
-def prepare(config,path,not_before,execution_until,*,canary=False):
+def prepare(config,path,not_before,execution_until,*,canary=False,verification=False):
+    require(not verification or canary,'VERIFICATION_REQUIRES_CANARY_GUARDS')
     from .source_canary import TARGET,validate_connection
     from .source_runtime import engine_fingerprint
     from .runtime_config import guarded_connect
@@ -153,6 +154,12 @@ def prepare(config,path,not_before,execution_until,*,canary=False):
     if canary:
         from .execution_canary import PURPOSE as CANARY
         value.update(purpose=CANARY,matching_apply=False,explicit_safe_resume=False)
+        if verification:
+            from .execution_canary import VERIFICATION_PURPOSE
+            value['purpose']=VERIFICATION_PURPOSE
+            value['prior_checkpoints']={code:{'job_id':jid,'sha256':hashlib.sha256(
+                (ROOT/f'reports/source-runner-evidence/{code}/job-{jid}/checkpoint.json').read_bytes()).hexdigest()}
+                for code,jid in [('partner_st',173),('optimum',172)]}
         for code,r in rules.items():
             r['max_queue_attempts']=1
             if r['targets']:

@@ -1,6 +1,53 @@
 """Read-only presentation of recorded facts; missing phases remain unknown."""
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+import re
+
+MOSCOW = timezone(timedelta(hours=3))
+_STAMP = re.compile(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}')
+
+
+def moscow_datetime(value):
+    """Display recorded instants without changing storage or API values."""
+    if not value:
+        return 'Нет данных'
+    try:
+        stamp = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp.astimezone(MOSCOW).strftime('%d.%m.%Y, %H:%M')
+    except (ValueError, TypeError, OverflowError):
+        return 'Нет данных'
+
+
+def display_timestamp(value):
+    return moscow_datetime(value) if isinstance(value, datetime) or isinstance(value, str) and _STAMP.match(value) else value
+
+
+def supplier_display_name(row):
+    return 'Bekamak · справочник' if row.get('code') == 'beka_mak_tr' else row.get('name') or 'Источник'
+
+
+def supplier_status(value):
+    return {'succeeded':'Успешно','partial':'Частично','failed':'Ошибка','running':'Выполняется',
+            'queued':'В очереди','cancelled':'Остановлен','stale_failed':'Прерван после сбоя',
+            'PACKAGED PASS':'Сохранённые данные'}.get(str(value or ''),'Не подтверждено')
+
+
+def job_message(value):
+    """Human summary; exact wire diagnostics remain in details and logs."""
+    upper = str(value or '').upper()
+    if 'UNKNOWN' in upper or 'UNCERTAIN' in upper:
+        return 'Исход запроса не подтверждён'
+    if re.search(r'HTTP[_ :]*5\d\d', upper):
+        return 'Поставщик вернул ошибку'
+    if 'TIMEOUT' in upper:
+        return 'Превышено время ожидания ответа'
+    if 'STOP' in upper:
+        return 'Сбор остановлен'
+    if 'ERROR' in upper or 'FAILED' in upper:
+        return 'Сбор завершился с ошибкой'
+    return ''
 
 def phase_summary(row):
     if not hasattr(row,'get'):row=vars(row)

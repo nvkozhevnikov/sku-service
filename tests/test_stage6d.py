@@ -123,7 +123,7 @@ def test_authenticated_main_pages_are_available(path):
 
 def test_russian_navigation_and_no_qa_suppliers_in_working_ui():
     client, _, _, _ = client_for(); text = client.get("/").text
-    for label in ("Главная","Товары","Требует проверки","Поставщики","Запуски","Планировщик","Настройки"):
+    for label in ("Рабочие разделы","Товары","Требуют проверки","Поставщики","Сбор и запуски","Контент-студия","Настройки"):
         assert label in text
     assert "Supplier A" not in text and "Supplier B" not in text and "Supplier C" not in text
 

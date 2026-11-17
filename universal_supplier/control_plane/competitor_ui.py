@@ -8,7 +8,8 @@ TABS=[('overview','Обзор'),('changes','Изменения'),('prices','Це
 
 def register_monitoring(app,templates,context,guard,service,collection=None,check_csrf=None):
     templates.env.filters['monitor_money']=money_display
-    templates.env.filters['monitor_time']=lambda v:stamp(v).strftime('%d.%m.%Y %H:%M') if v else '—'
+    from .presentation import moscow_datetime
+    templates.env.filters['monitor_time']=lambda v:moscow_datetime(v) if v else '—'
     def render(request,tab):
         guard(request)
         if tab not in dict(TABS):raise HTTPException(404,'Раздел не найден')
