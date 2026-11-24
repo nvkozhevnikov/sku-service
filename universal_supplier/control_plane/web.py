@@ -517,10 +517,11 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         result=None
         try:
             count=optional_int(raw.get('max_products'),'Количество карточек')
-            approval=ManualRequest(user,signer.secret.decode('utf-8'),raw.get('delay_min_seconds',''),raw.get('delay_max_seconds',''),int(raw.get('revision','-1')))
-            approval.validate(supplier_id,count,'manual','REFRESH')
+            mode=raw.get('collection_mode','REFRESH')
+            approval=ManualRequest(user,signer.secret.decode('utf-8'),raw.get('delay_min_seconds',''),raw.get('delay_max_seconds',''),int(raw.get('revision','-1')),mode)
+            approval.validate(supplier_id,count,'manual',mode)
             result=queue.enqueue(supplier_id,trigger_type='manual',crawl_type='full',requested_by_user_id=user.id,
-                source_mode='REFRESH',source_limit=count,manual_request=approval)
+                source_mode=mode,source_limit=count,manual_request=approval)
             if result.enqueued:
                 if manual_launcher is not None:manual_launcher(result.job_id)
                 else:launch(result.job_id,key=signer.secret.decode('utf-8'))

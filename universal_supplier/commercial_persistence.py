@@ -264,7 +264,7 @@ def product_card_from_snapshot(product: ReadOnlySupplierProduct, capture: HttpCa
         canonical_url=canonical_url, http_status=capture.http_status,
         redirect_urls=capture.redirects, price=price, old_price=old_price,
         currency=extraction.currency or "", availability_raw=product.availability or "",
-        availability_normalized=availability, quantity=None, description_text=product.description_text, description_html="",
+        availability_normalized=availability, quantity=product.source_quantity, description_text=product.description_text, description_html="",
         brand=product.source_brand, manufacturer="", raw_data=raw_data,
         price_type=raw_data['price_extraction']['business_price_type']['classification'] if price is not None else 'unknown', price_raw=extraction.raw_text,
         price_source=extraction.source_path or "",

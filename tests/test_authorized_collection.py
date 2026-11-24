@@ -12,7 +12,7 @@ from test_source_jobs import saved_case
 from test_source_runtime import Backend,setup
 from test_host_fetch import Clock
 from test_partner_pilot import CFG
-from universal_supplier.control_plane.source_jobs import RUNTIME_SOURCES,SOURCES,parse_existing
+from universal_supplier.control_plane.source_jobs import FROZEN_LIVE11_SOURCES as RUNTIME_SOURCES, SOURCES, parse_existing
 from universal_supplier.control_plane.source_discovery import HOSTS,root_urls
 from universal_supplier.control_plane.source_runtime import run_source,LEASED_HOST
 from universal_supplier.control_plane.source_canary import build_preview

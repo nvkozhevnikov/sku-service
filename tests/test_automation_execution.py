@@ -8,7 +8,7 @@ import hashlib,json
 import pytest
 from universal_supplier.control_plane import automation_execution as ex
 from universal_supplier.control_plane.source_canary import TARGET
-from universal_supplier.control_plane.source_jobs import RUNTIME_SOURCES
+from universal_supplier.control_plane.source_jobs import FROZEN_LIVE11_SOURCES as RUNTIME_SOURCES
 from universal_supplier.control_plane.supplier_automation import settings_for,digest
 from universal_supplier.control_plane.queue import EnqueueResult
 

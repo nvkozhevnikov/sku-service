@@ -41,7 +41,8 @@ class DB:
             def fetchall(self):
                 if 'catalog_product_id IS NOT NULL' in self.sql:return [(900,800)]
                 if 'WITH known AS' in self.sql:
-                    path={'beka_mak':'/product/test-{i}/','beka_mak_tr':'/urun/model-{i}/en','vekprom':'/catalog/test/model-{i}/'}.get(db.code,'/catalog/test-{i}/')
+                    path={'beka_mak':'/product/test-{i}/','beka_mak_tr':'/urun/model-{i}/en',
+                          'vekprom':'/catalog/test/model-{i}/','ivstankomaster':'/item/test-{i}/'}.get(db.code,'/catalog/test-{i}/')
                     return [(i,str(1000+i),'https://'+HOSTS[db.code]+path.format(i=i),100) for i in range(1,self.args[1]+1)]
                 raise AssertionError(self.sql)
         return C()
@@ -148,3 +149,18 @@ def test_operator_cannot_change_admin_speed_and_disabled_source_requires_admin()
     db=DB('uss_stanko');q=db.queue();r=ManualRequest(AuthUser(2,'qa','QA','OPERATOR'),KEY,'2','3',0)
     with pytest.raises(PermissionError):q.enqueue(1,trigger_type='manual',crawl_type='full',source_mode='REFRESH',source_limit=2,manual_request=r)
     assert not db.snapshots and MANUAL_POLICIES.get() is None
+
+
+def test_ivstankomaster_one_click_freezes_full_catalog_mode():
+    db=DB('ivstankomaster')
+    queue=db.queue()
+    request=ManualRequest(AuthUser(1,'qa','QA','ADMIN'),KEY,'2','3',0,'DISCOVERY')
+    result=queue.enqueue(1,trigger_type='manual',crawl_type='full',source_mode='DISCOVERY',
+        source_limit=50,manual_request=request)
+    assert result.enqueued
+    snapshot=db.snapshots[0]
+    assert snapshot['source_input']['mode']=='DISCOVERY'
+    assert snapshot['source_input']['seeds']==['https://ivstankomaster.ru/category']
+    assert snapshot['source_input']['entries']==[]
+    assert snapshot['source_input']['canary']['max_products']==50
+    assert verify(snapshot,KEY)['matching_apply'] is False

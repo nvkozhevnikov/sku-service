@@ -220,7 +220,8 @@ class PostgresControlPlaneStore:
               sp.external_id,sp.external_id_is_stable,sp.sku,sp.name,sp.brand_raw,sp.manufacturer_raw,
               sp.source_url,sp.canonical_url,sp.description_text,sp.description_html,sp.active,
               sp.first_seen_at,sp.last_seen_at,sp.last_success_at,sp.last_changed_at,sp.last_http_status,
-              pid.own_model,pid.reference_model,pid.product_kind,coalesce(pid.decision,accepted.match_status) AS decision,
+              coalesce(pid.own_model, CASE WHEN s.code='ivstankomaster' THEN sp.raw_data->'source_identity'->>'raw_model' END) AS own_model,
+              pid.reference_model,pid.product_kind,coalesce(pid.decision,accepted.match_status) AS decision,
               coalesce(pid.decision_reason,accepted.match_method) AS decision_reason,
               CASE WHEN pid.decision = 'REVIEW_EXISTING' THEN pid.best_sterbrust_id END AS proposed_sterbrust_id,
               coalesce(manual.sterbrust_product_id,accepted.sterbrust_product_id) AS confirmed_sterbrust_id,
@@ -244,7 +245,11 @@ class PostgresControlPlaneStore:
                 FROM sterbrust_products sb WHERE sb.catalog_product_id=sp.catalog_product_id AND sb.active
                   AND {effective_manual_mapping_sql('sp.id','sp.catalog_product_id')}
                 ORDER BY sb.sterbrust_product_id LIMIT 1) manual ON true
-              LEFT JOIN LATERAL(SELECT availability_raw,availability_normalized,price,old_price,currency,price_type,price_raw,price_source,quantity FROM offers WHERE source_product_id=sp.id AND active ORDER BY id LIMIT 1)o ON true
+              LEFT JOIN LATERAL(
+                SELECT availability_raw,availability_normalized,price,old_price,currency,price_type,price_raw,price_source,quantity
+                FROM offers WHERE source_product_id=sp.id AND (active OR s.code='ivstankomaster')
+                ORDER BY active DESC,id LIMIT 1
+              )o ON true
               LEFT JOIN LATERAL(SELECT count(*) AS property_count FROM product_properties WHERE source_product_id=sp.id)prop ON true
               LEFT JOIN LATERAL(SELECT count(*) FILTER(WHERE media_type='image') AS image_count,count(*) FILTER(WHERE media_type='document') AS document_count FROM product_media WHERE source_product_id=sp.id)media ON true
               LEFT JOIN LATERAL(SELECT count(*) AS relation_count FROM source_product_relations WHERE from_source_product_id=sp.id)rel ON true

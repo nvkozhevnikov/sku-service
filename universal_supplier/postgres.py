@@ -43,9 +43,10 @@ SUPPLIER_CONFIGS = {
     "ltt_sib": ("LTT Сибирь", "https://lttsib.ru/", "ltt_sib"),
     "ltt_yug": ("LTT Юг", "https://ltt-yug.ru/", "ltt_yug"),
     "uss_stanko": ("USS-Stanko", "https://uss-stanko.com/", "uss_stanko"),
+    "ivstankomaster": ("Ивстанкомастер", "https://ivstankomaster.ru/", "ivstankomaster"),
 }
 PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr", "kami", "vekprom",
-                                           "ltt_msk", "ltt_sib", "ltt_yug", "uss_stanko"})
+                                           "ltt_msk", "ltt_sib", "ltt_yug", "uss_stanko", "ivstankomaster"})
 
 
 def should_quarantine_automatic_link(previous_auto_accepted: bool, new_status: str) -> bool:
@@ -170,7 +171,7 @@ class PostgresRepository:
     def _ensure_passive_commercial_supplier(cursor, supplier_code: str) -> int:
         """Create only the isolated namespace; never touch Sterbrust identifiers."""
         name, base_url, adapter_name = SUPPLIER_CONFIGS[supplier_code]
-        if supplier_code in {'kami', 'ltt_msk', 'ltt_sib', 'ltt_yug', 'uss_stanko'}:
+        if supplier_code in {'kami', 'ltt_msk', 'ltt_sib', 'ltt_yug', 'uss_stanko', 'ivstankomaster'}:
             # Exact KAMI capture replay must not consume the supplier sequence.
             cursor.execute('SELECT id FROM suppliers WHERE code=%s FOR UPDATE', (supplier_code,))
             existing = cursor.fetchone()

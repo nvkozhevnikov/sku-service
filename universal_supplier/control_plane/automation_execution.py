@@ -4,7 +4,7 @@ from datetime import datetime,timezone
 import hashlib,json,os,shutil,subprocess,threading,time
 from pathlib import Path
 from .supplier_automation import digest,settings_for,rate_for
-from .source_jobs import RUNTIME_SOURCES
+from .source_jobs import FROZEN_LIVE11_SOURCES
 
 ACTIVE=None
 ROOT=Path(__file__).resolve().parents[2]
@@ -29,7 +29,7 @@ def load(path,sha,confirm=None,*,for_execution=False):
     if value.get('transport_tls'):
         from universal_supplier.public_connection import public_tls_identity
         require(value['transport_tls']==public_tls_identity(),'AUTOMATION_TLS_POLICY_CHANGED')
-    require(set(value['suppliers'])==set(RUNTIME_SOURCES) and value['max_parallel']==2,
+    require(set(value['suppliers'])==set(FROZEN_LIVE11_SOURCES) and value['max_parallel']==2,
             'AUTOMATION_EXACT_11_AND_MAX2_REQUIRED')
     require(value.get('production') is False and value.get('esol') is False and
         value.get('protected_live11_batch_id')=='3a69ca0d-b9d0-41f9-8f2a-49c4b43bc57d','AUTOMATION_PROTECTED_SCOPE_CHANGED')
@@ -165,8 +165,8 @@ def prepare(config,limits,not_before,execution_until):
     validate_config(config)
     with psycopg.connect(**config.kwargs(),autocommit=True,options='-c default_transaction_read_only=on') as c:
         validate_connection(c)
-        rows=c.execute('SELECT id,code,enabled,base_url,rate_settings,crawl_settings FROM suppliers ORDER BY code').fetchall()
-        require({r[1] for r in rows}==set(RUNTIME_SOURCES),'AUTOMATION_SOURCE_SET_CHANGED')
+        rows=c.execute('SELECT id,code,enabled,base_url,rate_settings,crawl_settings FROM suppliers WHERE code=ANY(%s) ORDER BY code',(list(FROZEN_LIVE11_SOURCES),)).fetchall()
+        require({r[1] for r in rows}==set(FROZEN_LIVE11_SOURCES),'AUTOMATION_SOURCE_SET_CHANGED')
         from .source_batch import normalized_domain
         rules={};hosts={}
         for sid,code,enabled,url,rate,crawl in rows:

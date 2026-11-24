@@ -9,16 +9,22 @@ from bs4 import BeautifulSoup
 from .source_jobs import validate_url
 from universal_supplier.full_supplier_collection import ROOT_SITEMAPS, _safe_source_url
 from universal_supplier.ltt_uss_capture import SOURCE_HOSTS, safe_source_url, is_product_candidate
+from universal_supplier.adapters.ivstankomaster import (
+    CODE as IVSTANKOMASTER, HOST as IV_HOST, BASE as IV_BASE, CATEGORY as IV_CATEGORY,
+    checked_url as checked_iv_url, decode_catalog as decode_iv_catalog,
+)
 
 HOSTS={**{k:urlsplit(v).hostname for k,v in ROOT_SITEMAPS.items()},
        **{k:next(iter(v)) for k,v in SOURCE_HOSTS.items()}, 'kami':'www.stanki.ru',
-       'partner_st':'partner-st.ru','optimum':'optimum.su'}
+       'partner_st':'partner-st.ru','optimum':'optimum.su', IVSTANKOMASTER:IV_HOST}
 
 def root_urls(code):
+    if code==IVSTANKOMASTER:return [IV_BASE+'/category']
     if code=='kami':return ['https://www.stanki.ru/catalog/','https://www.stanki.ru/bu/']
     return [ROOT_SITEMAPS.get(code,'https://'+HOSTS[code]+'/sitemap.xml')]
 
 def validate_node(code,url):
+    if code==IVSTANKOMASTER:return checked_iv_url(url, IV_CATEGORY)
     p=urlsplit(url)
     if p.port not in (None,443) or p.fragment:raise ValueError('UNSAFE_DISCOVERY_URL')
     if code in ('partner_st','optimum'):
@@ -34,6 +40,7 @@ def validate_node(code,url):
 
 def decode_node(code,url,body):
     """Return (child discovery nodes, provisional product entries)."""
+    if code==IVSTANKOMASTER:return decode_iv_catalog(url,body)
     if code=='kami':
         from universal_supplier.adapters.kami import parse_listing
         text=body.decode('utf-8');soup=BeautifulSoup(text,'html.parser')

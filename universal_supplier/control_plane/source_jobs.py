@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from universal_supplier.models import FetchRecord
+from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
 from universal_supplier.http_capture import MAX_RESPONSE_BYTES,has_blocking_interstitial,sanitise_html
 from universal_supplier.commercial_persistence import HttpCapture,product_card_from_snapshot
 from universal_supplier.full_supplier_collection import _safe_source_url
@@ -19,9 +20,13 @@ from universal_supplier.http_capture import CaptureStatus
 
 SOURCES=('beka_mak','beka_mak_tr','intervesp','vekprom','kami','ltt_msk','ltt_sib','ltt_yug','uss_stanko')
 NATIVE_SOURCES=('partner_st','optimum')
-RUNTIME_SOURCES=SOURCES+NATIVE_SOURCES
+FROZEN_LIVE11_SOURCES=SOURCES+NATIVE_SOURCES
+RUNTIME_SOURCES=FROZEN_LIVE11_SOURCES+(IVSTANKOMASTER,)
 
 def validate_url(code,url):
+    if code==IVSTANKOMASTER:
+        from universal_supplier.adapters.ivstankomaster import checked_url, DETAIL
+        return checked_url(url, DETAIL)
     parsed=urlsplit(url)
     if code in NATIVE_SOURCES:
         from universal_supplier.url_safety import validate_public_http_url
@@ -45,6 +50,9 @@ def validate_url(code,url):
     return url
 
 def parse_existing(code,text,url,status=200):
+    if code==IVSTANKOMASTER:
+        from universal_supplier.adapters.ivstankomaster import parse_detail
+        return parse_detail(text,source_url=url)
     if code=='partner_st':
         from universal_supplier.adapters.partner_st import PartnerStAdapter
         return PartnerStAdapter().parse_product(FetchRecord(url,url,status,(),1,0,text))
@@ -109,7 +117,7 @@ def load_manifest(settings,code,*,deadline,clock):
     return path,data
 
 def make_source_runner(code,*,repository_factory=None,transport_factory=None,clock=time.monotonic,runtime_backend_factory=None,runtime_clock=None):
-    if code not in SOURCES:raise ValueError('UNKNOWN_SOURCE_RUNNER')
+    if code not in (*SOURCES,IVSTANKOMASTER):raise ValueError('UNKNOWN_SOURCE_RUNNER')
     def run(job,config):
         if job.supplier_code!=code or job.adapter_name!=code:raise ValueError('SOURCE_JOB_NAMESPACE_MISMATCH')
         settings=job.settings_snapshot.get('crawl_settings') or {}
@@ -200,4 +208,5 @@ def make_source_runner(code,*,repository_factory=None,transport_factory=None,clo
     return run
 
 def register_source_jobs(registry):
-    for code in SOURCES:registry.register(code,make_source_runner(code),supported_crawl_types={'full'})
+    for code in (*SOURCES,IVSTANKOMASTER):
+        registry.register(code,make_source_runner(code),supported_crawl_types={'full'})

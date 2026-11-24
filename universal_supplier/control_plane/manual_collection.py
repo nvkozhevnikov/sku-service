@@ -37,6 +37,7 @@ class ManualRequest:
     minimum: str
     maximum: str
     revision: int
+    mode: str = 'REFRESH'
 
     def validate(self, supplier_id, limit, trigger, mode):
         from .source_canary import limit_value
@@ -44,13 +45,16 @@ class ManualRequest:
         require(enabled(), 'Ручной запуск на этой установке выключен')
         require(self.actor.id > 0 and self.actor.is_active and not self.actor.must_change_password
                 and self.actor.role in ('ADMIN','OPERATOR') and allowed(self.actor,'supplier.manage'), 'Нет прав на запуск сбора')
-        require(type(supplier_id) is int and supplier_id>0 and trigger=='manual' and mode=='REFRESH', 'Нужен ручной сбор известных карточек')
+        require(type(supplier_id) is int and supplier_id>0 and trigger=='manual'
+                and mode==self.mode and mode in ('REFRESH','DISCOVERY'), 'Недопустимый режим ручного сбора')
         limit_value(limit)
 
     def preview(self, queue, connection, cursor, sid, supplier, limit):
         code, adapter, base, is_enabled, crawl, old_rate = supplier
         from .source_jobs import RUNTIME_SOURCES
+        from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
         require(code in RUNTIME_SOURCES and code == adapter, 'Сбор для этого источника не поддерживается')
+        require(self.mode=='REFRESH' or code==IVSTANKOMASTER, 'Поиск по всему каталогу доступен только для Ивстанкомастер')
         cfg=settings_for({'rate_settings':old_rate,'crawl_settings':crawl})
         require(cfg['revision']==self.revision, 'Настройки изменились. Обновите страницу')
         changed=validate_settings({'delay_min_seconds':self.minimum,'delay_max_seconds':self.maximum},cfg)
@@ -59,6 +63,9 @@ class ManualRequest:
             saved=(crawl or {}).get('host_policy_approval') or {}
             require(saved.get('approved_rate_sha256')==digest(rate_for(cfg,old_rate)), 'Скорость должен сначала подтвердить администратор')
         rate=rate_for(changed,old_rate)
+        if code==IVSTANKOMASTER:
+            require(rate['min_request_interval_seconds']>=2 and rate['max_concurrency']==1,
+                    'Для Ивстанкомастер нужна пауза от двух секунд и один поток')
         self.nonce=secrets.token_hex(16)
         self.supplier_id=sid
         modified=deepcopy(crawl or {})
@@ -67,7 +74,7 @@ class ManualRequest:
         self.policy={host_key(base):{code:policy_digest(code,host_key(base),DomainRatePolicy.from_mapping(rate),modified['host_policy_approval']['reference'])}}
         token=MANUAL_POLICIES.set(self.policy)
         try:
-            return queue._canary_preview(connection,cursor,sid,(code,adapter,base,is_enabled,modified,rate),limit,'REFRESH')
+            return queue._canary_preview(connection,cursor,sid,(code,adapter,base,is_enabled,modified,rate),limit,self.mode)
         finally:MANUAL_POLICIES.reset(token)
 
     def seal(self, snapshot, cursor):
@@ -89,6 +96,7 @@ def verify(snapshot, key, *, now=None):
     from .source_canary import TARGET, validate_input
     from .source_runtime import engine_fingerprint
     from .source_jobs import RUNTIME_SOURCES
+    from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
     marker=deepcopy(snapshot.get('manual_collection') or {})
     signed=marker.pop('signature', '')
     require(marker.get('format')==KIND and hmac.compare_digest(signed,signature(marker,key)), 'Подтверждение запуска повреждено')
@@ -99,7 +107,8 @@ def verify(snapshot, key, *, now=None):
     clock=now or datetime.now(timezone.utc)
     require(clock < datetime.fromisoformat(marker['expires_at']), 'Время запуска истекло')
     code=snapshot['supplier_code'];canary=snapshot['source_input']['canary']
-    require(code in RUNTIME_SOURCES and snapshot['source_input']['mode']=='REFRESH'
+    mode=snapshot['source_input']['mode']
+    require(code in RUNTIME_SOURCES and (mode=='REFRESH' or (code==IVSTANKOMASTER and mode=='DISCOVERY'))
             and snapshot['source_input']['supplier_code']==code and snapshot['adapter_name']==code
             and type(canary['max_products']) is int and 1<=canary['max_products']<=100000,'Область запуска изменилась')
     host=snapshot['domain'];rate=DomainRatePolicy.from_mapping(snapshot['rate_settings'])

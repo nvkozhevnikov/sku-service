@@ -111,14 +111,16 @@ def prepare(config,path,not_before,execution_until,*,canary=False,verification=F
     from .source_recovery import normal
     from .host_fetch import compile_policy,policy_digest
     from .rate_control import DomainRatePolicy
-    from .source_jobs import RUNTIME_SOURCES
+    from .source_jobs import FROZEN_LIVE11_SOURCES
     targets=json.loads(Path(path).read_text(encoding='utf-8'))['targets']
     state,actual=scope_rows(config,targets,canary=canary)
     matrix_path=ROOT/'config/live11_approval_matrix.csv'
     matrix={r['SOURCE']:r for r in csv.DictReader(matrix_path.open(encoding='utf-8-sig',newline=''))}
     rules={};hosts={}
     for s in state['suppliers']:
-        code=s['code'];m=matrix[code];rate=json.loads(m['RATE_POLICY_JSON'])
+        code=s['code']
+        if code not in FROZEN_LIVE11_SOURCES:continue
+        m=matrix[code];rate=json.loads(m['RATE_POLICY_JSON'])
         approval={'host':m['APPROVAL_HOST'],'reference':m['APPROVAL_REFERENCE']}
         host=approval['host'];hosts.setdefault(host,{})[code]=policy_digest(code,host,DomainRatePolicy.from_mapping(rate),approval['reference'])
         require(hosts[host][code]==m['APPROVAL_DIGEST_SHA256'],'COMMERCIAL_REFRESH_MATRIX_POLICY_INVALID')
@@ -136,7 +138,7 @@ def prepare(config,path,not_before,execution_until,*,canary=False,verification=F
             'rate_sha256':digest(policy),'limits':{'REFRESH':len(entries),'DISCOVERY':0},
             'targets':entries,'max_queue_attempts':3,'min_request_interval_seconds':policy['min_request_interval_seconds'],
             'max_run_duration_seconds':int(m['REFRESH_JOB_SECONDS']),'max_discovery_pages':1,'policy':policy}
-    require(set(rules)==set(RUNTIME_SOURCES),'COMMERCIAL_REFRESH_EXACT_11_REQUIRED')
+    require(set(rules)==set(FROZEN_LIVE11_SOURCES),'COMMERCIAL_REFRESH_EXACT_11_REQUIRED')
     baseline=ROOT.parent.parent/'reports/RC_LIVE11_AUTONOMOUS_24H_20261026/AUTONOMOUS_APPROVAL.json'
     original=json.loads(baseline.read_text(encoding='utf-8'))['continuation']['mappings1282']
     with guarded_connect(config,autocommit=True,options='-c default_transaction_read_only=on') as c:

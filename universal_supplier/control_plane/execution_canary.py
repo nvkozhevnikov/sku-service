@@ -45,8 +45,8 @@ def prior_attempt_urls(value):
 def validate(value):
     verification=value.get('purpose')==VERIFICATION_PURPOSE
     if verification:
-        from .source_jobs import RUNTIME_SOURCES
-        require(set(value['suppliers'])==set(RUNTIME_SOURCES),'VERIFICATION_EXACT_ELEVEN')
+        from .source_jobs import FROZEN_LIVE11_SOURCES
+        require(set(value['suppliers'])==set(FROZEN_LIVE11_SOURCES),'VERIFICATION_EXACT_ELEVEN')
         blocked=prior_attempt_urls(value)
     require(value.get('matching_apply') is False and value.get('continuation') is None and value.get('explicit_safe_resume') is False,'CANARY_NO_APPLY_OR_RESUME')
     require(value.get('commercial_only') is True and value.get('discovery') is False,'CANARY_REFRESH_ONLY')

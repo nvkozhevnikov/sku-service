@@ -80,6 +80,7 @@ class ReadOnlySupplierProduct:
     listing_evidence: dict | None = None
     source_documents: tuple[tuple[str, str], ...] = ()
     enrichment_evidence: dict | None = None
+    source_quantity: int | None = None
 
 
 @dataclass(frozen=True)

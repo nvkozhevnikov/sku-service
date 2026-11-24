@@ -14,7 +14,7 @@ from uuid import UUID
 
 from .source_resume import digest
 from .source_canary import build_preview, validate_config, validate_connection, TARGET
-from .source_jobs import RUNTIME_SOURCES
+from .source_jobs import FROZEN_LIVE11_SOURCES
 from .queue import normalized_domain
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,7 +47,7 @@ def matrix_rows():
     if hashlib.sha256(raw).hexdigest() != MATRIX_SHA:
         raise ValueError('BATCH_MATRIX_CHANGED_REQUIRES_APPROVAL')
     rows = list(csv.DictReader(raw.decode('utf-8-sig').splitlines()))
-    if len(rows) != 11 or {r['SOURCE'] for r in rows} != set(RUNTIME_SOURCES):
+    if len(rows) != 11 or {r['SOURCE'] for r in rows} != set(FROZEN_LIVE11_SOURCES):
         raise ValueError('BATCH_EXPECTS_EXACT_ELEVEN')
     return rows
 
@@ -197,7 +197,7 @@ def enqueue(queue, *, confirmation_sha256, batch_id, operator, approved_at, star
         if cursor.fetchone():
             raise PermissionError('BATCH_ALREADY_EXISTS_USE_STATUS_OR_RESUME')
         cursor.execute('SELECT id FROM suppliers WHERE code=ANY(%s) ORDER BY id FOR UPDATE',
-                       (list(RUNTIME_SOURCES),))
+                       (list(FROZEN_LIVE11_SOURCES),))
         cursor.fetchall()
         result = prepare(queue, connection, cursor)
         if result['confirmation_sha256'] != confirmation_sha256 or result['package']['head'] != head:

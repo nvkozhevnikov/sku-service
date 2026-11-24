@@ -8,7 +8,7 @@ from datetime import datetime,timezone
 import hashlib,json,re,subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
-from .source_jobs import RUNTIME_SOURCES,validate_url
+from .source_jobs import FROZEN_LIVE11_SOURCES,validate_url
 from .source_canary import TARGET
 from .source_runtime import engine_fingerprint
 from .supplier_automation import digest
@@ -26,7 +26,7 @@ def validate(value):
     require(HEX.fullmatch(str(value.get('mappings1282_sha256',''))) is not None,'CANARY_MAPPING_PIN')
     require(value.get('matching_apply') is False and value.get('discovery') is False and value.get('production') is False and value.get('esol') is False,'CANARY_WRITE_SCOPE')
     rules=value.get('sources',{})
-    require(set(rules)==set(RUNTIME_SOURCES),'CANARY_EXACT_11')
+    require(set(rules)==set(FROZEN_LIVE11_SOURCES),'CANARY_EXACT_11')
     total=0;ids=set()
     for code,rule in rules.items():
         entries=rule.get('entries',[]);total+=len(entries)

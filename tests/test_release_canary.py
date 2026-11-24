@@ -2,7 +2,7 @@
 from copy import deepcopy
 import pytest
 from universal_supplier.control_plane.release_canary import validate,FORMAT,TARGET
-from universal_supplier.control_plane.source_jobs import RUNTIME_SOURCES
+from universal_supplier.control_plane.source_jobs import FROZEN_LIVE11_SOURCES as RUNTIME_SOURCES
 from universal_supplier.control_plane.supplier_automation import digest
 
 def sample():
