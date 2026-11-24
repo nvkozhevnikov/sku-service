@@ -1,0 +1,35 @@
+{
+  "supplier_code": "ivstankomaster",
+  "supplier_capture_date": "2026-11-24",
+  "sterbrust_registry_date": "2026-11-20",
+  "scope": "operator-handoff",
+  "verified_in": "isolated-qa",
+  "applied_in_working_database": false,
+  "import_allowed": false,
+  "qa_linked_xml_sha256": "e7c930793809a6d1183d794e1777b6be871e0c7bee58bfa1891b7d8257369dbc",
+  "manual_confirmation": [
+    {"supplier_external_id": "1", "sterbrust_product_id": "18041", "model": "СЗТП 600Т"},
+    {"supplier_external_id": "2", "sterbrust_product_id": "18042", "model": "СЗТП 600Тл"},
+    {"supplier_external_id": "4", "sterbrust_product_id": "18040", "model": "СЗТП 600А"}
+  ],
+  "review": [
+    {"supplier_external_id": "5", "candidate_ids": ["31683"], "reason": "Разный комплект поставки. Сверить стойку М и СОЖ."},
+    {"supplier_external_id": "6", "candidate_ids": ["20381"], "reason": "Неактивная стойка для подрезных пил. Сверить модель и диапазон 80–130 мм."},
+    {"supplier_external_id": "8", "candidate_ids": ["34726"], "reason": "Неактивный СЗПН 630А. 550 Вт в реестре и 1100 Вт у производителя."},
+    {"supplier_external_id": "9", "candidate_ids": ["31667"], "reason": "СЗПН 630. Расходятся мощность и допустимые размеры ножа."},
+    {"supplier_external_id": "10", "candidate_ids": ["20382", "29204"], "reason": "Две неактивные карточки для Фп. Сверить производителя, артикул и совместимость."},
+    {"supplier_external_id": "12", "candidate_ids": ["33100"], "reason": "Тумба с СОЖ для СЗТП. Неактивная карточка не указывает совместимую серию."},
+    {"supplier_external_id": "13", "candidate_ids": ["33100"], "reason": "Тумба с СОЖ для СЗПН. Сверить точную серию, 12 и 13 требуют отдельных решений."},
+    {"supplier_external_id": "15", "candidate_ids": ["20294"], "reason": "Неактивный алмазный круг. Сверить 12R4 и размер 150×5×3×16×32 мм."},
+    {"supplier_external_id": "16", "candidate_ids": ["20383"], "reason": "Неактивный корундовый круг. Сверить тип 12 и размер 150×16×32 мм."}
+  ],
+  "new_candidates": [
+    {"supplier_external_id": "3", "name": "СЗТП 600Тл ПЛЮС", "kind": "machine"},
+    {"supplier_external_id": "18", "name": "СЗПН 1000А", "kind": "machine"},
+    {"supplier_external_id": "19", "name": "СЗМ 200А", "kind": "machine"},
+    {"supplier_external_id": "11", "name": "Стойка Ф для концевых фрез", "kind": "accessory"},
+    {"supplier_external_id": "14", "name": "Мобильная система подачи СОЖ", "kind": "accessory"},
+    {"supplier_external_id": "17", "name": "Корундовый чашечный круг K7V32", "kind": "accessory"},
+    {"supplier_external_id": "20", "name": "Тумба СЗМ 200А без СОЖ", "kind": "accessory"}
+  ]
+}
