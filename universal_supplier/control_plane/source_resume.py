@@ -11,16 +11,21 @@ from contextlib import contextmanager
 import hashlib,json,os,threading
 from universal_supplier.kami_checkpoint import write_checkpoint
 from universal_supplier.postgres import SUPPLIER_CONFIGS
+from .transport_diagnostics import MANUAL_DISCONNECT, MANUAL_TIMEOUT, manual_transport_category, safe_message
 
 STATES=frozenset({'COMMITTED','HTTP_CAPTURED_NOT_COMMITTED','FAILED','NOT_REQUESTED','UNCERTAIN','QUARANTINED'})
-MANUAL_TIMEOUT = 'manual_read_timeout'
-MANUAL_DISCONNECT = 'manual_remote_disconnect'
 MANUAL_TRANSPORT_ERRORS = frozenset({MANUAL_TIMEOUT, MANUAL_DISCONNECT})
 
 
-def manual_transport_receipt(origin, url, job_id, evidence_path, *, category):
-    proof={'job_id':job_id,'file':Path(evidence_path).name,
-           'sha256':hashlib.sha256(Path(evidence_path).read_bytes()).hexdigest()}
+def manual_transport_receipt(origin, url, job_id, evidence_path, *, expected_error=None):
+    path=Path(evidence_path)
+    raw=path.read_bytes()
+    exception=json.loads(raw)['diagnostics']['original_exception']
+    category=manual_transport_category(exception)
+    if category is None or (expected_error is not None
+            and expected_error!=exception['type']+':'+exception['message']):
+        raise ValueError('DEFERRED_TRANSPORT_PROOF_REQUIRED')
+    proof={'job_id':job_id,'file':path.name,'sha256':hashlib.sha256(raw).hexdigest()}
     reason={MANUAL_TIMEOUT:'READ_TIMEOUT_UNKNOWN',MANUAL_DISCONNECT:'REMOTE_DISCONNECTED_UNKNOWN'}[category]
     receipt={'url':url,'state':'QUARANTINED','origin':dict(origin),'timeout_evidence':proof,
              'isolation':{'before_ingest':True,'category':category,'reason':reason}}
@@ -53,19 +58,13 @@ def quarantine_evidence_present(receipt,entry):
             raw=(job_dir(source,jid)/'transport-errors'/name).read_bytes()
             if hashlib.sha256(raw).hexdigest()!=proof['sha256']:return False
             record=json.loads(raw);diag=record['diagnostics']
-            exception=diag['original_exception']
-            expected=(exception['type']=='TimeoutError' if category==MANUAL_TIMEOUT
-                      else (exception['module'],exception['type'])==('http.client','RemoteDisconnected'))
-            if category==MANUAL_TIMEOUT and (exception.get('module'),exception.get('type'))==('urllib.error','URLError'):
-                cause=exception.get('reason',{})
-                expected=isinstance(cause,dict) and (cause.get('module'),cause.get('type'))==('builtins','TimeoutError')
-            from .transport_diagnostics import safe_message
             return (receipt['url']==entry['url'] and record['url']==safe_message(entry['url'])
                     and record['job_id']==jid and record['owner_job_id']==origin['job_id']
                     and record['input_sha256']==origin['manifest_sha256']
                     and record['transport_started'] is True and record['http_status'] is None
                     and diag['source']==source and diag['request_scope'] in ('product','discovery')
-                    and diag['response_available'] is False and expected)
+                    and diag['response_available'] is False
+                    and manual_transport_category(diag['original_exception'])==category)
         except (OSError,ValueError,KeyError,TypeError):return False
     if receipt.get('isolation',{}).get('category')=='operator_scope':
         from .source_recovery import approved_scope_item

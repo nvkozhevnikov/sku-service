@@ -5,6 +5,27 @@ import ssl
 from urllib.error import URLError,HTTPError
 from urllib.parse import urlsplit,urlunsplit
 
+MANUAL_TIMEOUT = 'manual_read_timeout'
+MANUAL_DISCONNECT = 'manual_remote_disconnect'
+
+
+def manual_transport_category(exception):
+    """Recognize typed socket interruptions from live or archived evidence."""
+    if not isinstance(exception,dict):
+        return None
+    if (exception.get('module'),exception.get('type'))==('urllib.error','URLError'):
+        exception=exception.get('reason')
+        if not isinstance(exception,dict):
+            return None
+    module=exception.get('module')
+    kind=exception.get('type')
+    if (module,kind)==('builtins','TimeoutError'):
+        return MANUAL_TIMEOUT
+    if (module=='http.client' and kind in {'RemoteDisconnected','IncompleteRead'}
+            or module=='builtins' and kind in {'ConnectionResetError','ConnectionAbortedError','BrokenPipeError'}):
+        return MANUAL_DISCONNECT
+    return None
+
 
 def safe_message(value):
     text=str(value)[:8192]

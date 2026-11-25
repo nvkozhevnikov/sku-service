@@ -233,8 +233,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     robots_exception_applied=None
     isolated=[];consecutive_card_errors=0
-    from .source_resume import (MANUAL_DISCONNECT, MANUAL_TIMEOUT, MANUAL_TRANSPORT_ERRORS,
-                                manual_transport_receipt, quarantine_evidence_present)
+    from .source_resume import MANUAL_TRANSPORT_ERRORS, manual_transport_receipt, quarantine_evidence_present
 
     def deferred_count(checkpoint):
         return sum(item['receipt'].get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS
@@ -371,8 +370,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             nonlocal consecutive_card_errors
             if not (manual and (outcome.timeout_refusal or outcome.disconnect_refusal) and outcome.response is None
                     and outcome.transport_started is True):return False
-            category=MANUAL_DISCONNECT if outcome.disconnect_refusal else MANUAL_TIMEOUT
-            receipt=manual_transport_receipt(origin,outcome.url,job.id,error_files[outcome.url],category=category)
+            receipt=manual_transport_receipt(origin,outcome.url,job.id,error_files[outcome.url])
             history=checkpoint.state['terminal'].get(outcome.url,{}).get('history',[])
             first=not any(item.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS for item in history)
             retry=first and rate.max_attempts>1

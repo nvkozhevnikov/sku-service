@@ -103,8 +103,9 @@ def job_message(value):
         return 'На товарной странице произошёл сетевой сбой. Подробности сохранены в запуске.'
     if upper in {'SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_CARD_ERROR_THRESHOLD'}:
         return 'Несколько карточек подряд завершились ошибкой. Сбор остановлен, очередь сохранена.'
-    if upper.startswith('REMOTEDISCONNECTED:'):
-        return 'Соединение с товарной страницей закрылось без ответа.'
+    if upper.startswith(('REMOTEDISCONNECTED:', 'CONNECTIONRESETERROR:', 'CONNECTIONABORTEDERROR:',
+                         'BROKENPIPEERROR:', 'INCOMPLETEREAD:')):
+        return 'Соединение оборвалось до полной загрузки товарной страницы.'
     if 'UNKNOWN' in upper or 'UNCERTAIN' in upper:
         return 'Исход запроса не подтверждён'
     if re.search(r'HTTP[_ :]*5\d\d', upper):

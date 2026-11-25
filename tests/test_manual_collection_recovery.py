@@ -2,7 +2,7 @@
 from dataclasses import replace
 from contextlib import nullcontext
 from datetime import datetime, timezone
-from http.client import RemoteDisconnected
+from http.client import IncompleteRead, RemoteDisconnected
 import json
 from pathlib import Path
 import socket
@@ -21,6 +21,7 @@ from test_source_runtime import Backend
 from universal_supplier.control_plane.manual_collection import MANUAL_EXECUTION, ManualRequest, verify
 from universal_supplier.control_plane.queue import CrawlJob, EnqueueResult
 from universal_supplier.control_plane.security import AuthUser
+from universal_supplier.control_plane.source_resume import manual_transport_receipt
 from universal_supplier.control_plane.source_runtime import LEASED_HOST, engine_fingerprint, run_source
 from universal_supplier.http_capture import HttpResponse
 
@@ -37,7 +38,7 @@ def offline(monkeypatch,tmp_path):
 
 
 def native_manual(*, fail_tail=False, end_window=False, block=False, robots_replies=None, robots_limit=2,
-                  product_error=TimeoutError, all_cards_fail=False):
+                  product_error=TimeoutError, second_error=None, all_cards_fail=False):
     code='partner_st'
     base='https://partner-st.ru'
     rate_values={'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0}
@@ -84,6 +85,8 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
             calls.append(number)
             if all_cards_fail or (number==1 and (calls.count(1)==1 or fail_tail)):
                 raise product_error('no response')
+            if number==2 and second_error and calls.count(2)==1:
+                raise second_error('connection reset')
             if number==2 and block:return HttpResponse(url,429,'text/plain',b'busy')
             return HttpResponse(url,200,'text/html; charset=utf-8',html(number).encode())
 
@@ -99,8 +102,10 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
 
 
 @pytest.mark.parametrize('fail_tail',[False,True])
-@pytest.mark.parametrize('product_error',[TimeoutError,RemoteDisconnected,
-    pytest.param(lambda message:URLError(TimeoutError(10060,message)),id='wrapped-connect-timeout')])
+@pytest.mark.parametrize('product_error',[TimeoutError,RemoteDisconnected,ConnectionResetError,ConnectionAbortedError,
+    pytest.param(lambda message:IncompleteRead(message.encode(),10),id='incomplete-response'),
+    pytest.param(lambda message:URLError(TimeoutError(10060,message)),id='wrapped-connect-timeout'),
+    pytest.param(lambda message:URLError(ConnectionResetError(10054,message)),id='wrapped-connection-reset')])
 def test_manual_transport_failure_moves_to_tail_once(fail_tail,product_error):
     run,job,backend,calls=native_manual(fail_tail=fail_tail,product_error=product_error)
     result=run(job)
@@ -112,13 +117,33 @@ def test_manual_transport_failure_moves_to_tail_once(fail_tail,product_error):
     assert any(summary.get('sql_committed')==1 and summary.get('deferred')==1 for summary in backend.summaries)
 
 
-def test_consecutive_wrapped_timeouts_stop_with_resumable_queue():
-    run,job,backend,calls=native_manual(all_cards_fail=True,
-        product_error=lambda message:URLError(TimeoutError(10060,message)))
+@pytest.mark.parametrize('product_error',[lambda message:URLError(TimeoutError(10060,message)),ConnectionResetError])
+def test_consecutive_transport_failures_stop_with_resumable_queue(product_error):
+    run,job,backend,calls=native_manual(all_cards_fail=True,product_error=product_error)
     result=run(job)
     assert calls==[1,2] and not backend.writes
     assert result['termination_reason']=='SOURCE_NETWORK_CIRCUIT_OPEN'
     assert result['deferred']==2 and result['remaining']==3 and result['resume_available']
+
+
+def test_timeout_then_reset_does_not_stop_remaining_cards():
+    run,job,backend,calls=native_manual(second_error=ConnectionResetError)
+    result=run(job)
+    assert calls==[1,2,3,1,2]
+    assert result['status']=='succeeded' and result['deferred']==0
+    assert result['sql_committed']==len(backend.writes)==3
+
+
+def test_old_transport_receipt_must_match_terminal_error():
+    run,job,_,_=native_manual(fail_tail=True,product_error=ConnectionResetError)
+    result=run(job)
+    receipt=result['quarantined'][0]
+    evidence=Path(result['checkpoint']).parent/'transport-errors'/receipt['timeout_evidence']['file']
+    assert manual_transport_receipt(receipt['origin'],receipt['url'],job.id,evidence,
+                                    expected_error='ConnectionResetError:no response')==receipt
+    with pytest.raises(ValueError,match='DEFERRED_TRANSPORT_PROOF_REQUIRED'):
+        manual_transport_receipt(receipt['origin'],receipt['url'],job.id,evidence,
+                                 expected_error='TimeoutError:no response')
 
 
 def test_other_urlerror_keeps_unknown_result_blocked():

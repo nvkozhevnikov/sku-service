@@ -98,7 +98,7 @@ class ManualRequest:
     def resume(self, config, sid, supplier, parent_id, previous):
         from .source_controls import verify_resume
         from .source_runtime import job_dir, read_input
-        from .source_resume import MANUAL_DISCONNECT, MANUAL_TIMEOUT, manual_transport_receipt
+        from .source_resume import manual_transport_receipt
         status, prior, metadata=previous
         require(status in TERMINAL, 'Дождитесь завершения исходного задания')
         prior_marker=authenticated_marker(prior,self.key)
@@ -128,13 +128,11 @@ class ManualRequest:
                 uncertain=[r['receipt'] for r in state['terminal'].values() if r['state']=='UNCERTAIN']
                 if len(uncertain)==1:
                     item=uncertain[0]
-                    category={'TimeoutError':MANUAL_TIMEOUT,'URLError':MANUAL_TIMEOUT,
-                              'RemoteDisconnected':MANUAL_DISCONNECT}.get(
-                        item.get('reason','').partition(':')[0])
-                    if category:
+                    if item.get('reason'):
                         for path in (job_dir(code,parent_id)/'transport-errors').glob('*.json'):
-                            try:receipt=manual_transport_receipt(item['origin'],item['url'],parent_id,path,category=category)
-                            except (OSError,ValueError):continue
+                            try:receipt=manual_transport_receipt(item['origin'],item['url'],parent_id,path,
+                                                                 expected_error=item['reason'])
+                            except (OSError,ValueError,KeyError,TypeError):continue
                             break
             verify_resume(code,owner,sha,original,config,manual_timeout=receipt,require_pending=True)
         finally:

@@ -212,11 +212,21 @@ class UrllibPublicHttpClient:
                     headers={k:response.headers[k] for k in ("Retry-After","Date") if response.headers.get(k)} or None,
                 )
         except HTTPError as error:
+            try:
+                body = _read_bounded(error)
+            except (TimeoutError, ConnectionError, http.client.IncompleteRead):
+                if error.code not in (403, 429, 503):
+                    raise
+                # The status and headers are already known. Keep the host's
+                # refusal even if its error body was interrupted.
+                body = b""
+            finally:
+                error.close()
             return HttpResponse(
                 final_url=url if not redirects.redirects and error.geturl()==wire_url else error.geturl() or url,
                 status_code=error.code,
                 content_type=error.headers.get("Content-Type") if error.headers else None,
-                body=_read_bounded(error),
+                body=body,
                 redirects=tuple(redirects.redirects),
                 transport_url=error.geturl() or wire_url,
                 headers={k:error.headers[k] for k in ("Retry-After","Date") if error.headers and error.headers.get(k)} or None,
