@@ -69,6 +69,7 @@ def test_all11_one_click_native_snapshot_is_signed_and_other_settings_preserved(
     assert result.enqueued
     snap=db.snapshots[0];proof=verify(snap,KEY)
     assert proof['actor_id']==1 and proof['matching_apply'] is False
+    assert proof['robots_attempts']==min(2,snap['rate_settings']['max_attempts'])
     assert snap['source_input']['canary']['selected']==5
     assert snap['rate_settings']['min_request_interval_seconds']==2
     assert snap['rate_settings']['jitter_max_seconds']==1

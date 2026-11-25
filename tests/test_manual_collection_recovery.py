@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import socket
+from urllib.error import URLError
 
 import pytest
 
@@ -12,6 +13,7 @@ from test_automation_admin import client, csrf
 from test_host_fetch import Clock
 from test_manual_collection import DB, KEY
 from test_partner_pilot import html
+from test_source_canary import CFG, build_preview
 from test_source_jobs import deny
 from test_source_runtime import Backend
 from universal_supplier.control_plane.manual_collection import MANUAL_EXECUTION, ManualRequest, verify
@@ -32,7 +34,7 @@ def offline(monkeypatch,tmp_path):
     monkeypatch.setattr(socket,'getaddrinfo',deny)
 
 
-def native_manual(*, fail_tail=False, end_window=False, block=False):
+def native_manual(*, fail_tail=False, end_window=False, block=False, robots_replies=None, robots_limit=2):
     code='partner_st'
     base='https://partner-st.ru'
     rate=approved_policy(code,base,{'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0})
@@ -43,6 +45,13 @@ def native_manual(*, fail_tail=False, end_window=False, block=False):
               'max_run_duration_seconds':100,'host_policy_approval':approval_for(base)}
     job=CrawlJob(1,1,code,code,base+'/','manual','full','running',datetime.now(timezone.utc),
         {'source_input':data,'rate_settings':rate.snapshot(),'crawl_settings':settings,'manual_collection':{'signed':True}})
+    if robots_replies is not None:
+        supplier=(code,code,base+'/',True,{'host_policy_approval':approval_for(base),
+                                          'max_run_duration_seconds':100},rate.snapshot())
+        rows=[(i,entry['source_external_id'],entry['url'],len(known)) for i,entry in enumerate(known,1)]
+        snapshot=build_preview(job.supplier_id,supplier,rows,CFG,len(rows))['snapshot']
+        snapshot['manual_collection']={'robots_attempts':robots_limit}
+        job=replace(job,settings_snapshot=snapshot)
     clock=Clock();backend=Backend()
     backend.matching=lambda ids:{'status':'succeeded','matching_applied':False}
     calls=[]
@@ -60,6 +69,11 @@ def native_manual(*, fail_tail=False, end_window=False, block=False):
             validator(url)
             self.before_request(url)
             if url.endswith('/robots.txt'):
+                if robots_replies is not None:
+                    calls.append('robots')
+                    status=next(robots_replies)
+                    if status is None:raise URLError(TimeoutError('service timeout'))
+                    if status!=200:return HttpResponse(url,status,'text/plain',b'unavailable')
                 return HttpResponse(url,200,'text/plain',b'User-agent: *\nAllow: /\n')
             number=int(url.removesuffix('/').rsplit('-',1)[-1])
             calls.append(number)
@@ -71,7 +85,8 @@ def native_manual(*, fail_tail=False, end_window=False, block=False):
     def run(value):
         lease=LEASED_HOST.set(value.domain)
         auth=MANUAL_EXECUTION.set(value.id)
-        try:return run_source(value,None,backend_factory=lambda cfg,source:backend,client_factory=Client,clock=clock)
+        try:return run_source(value,CFG if robots_replies is not None else None,
+                              backend_factory=lambda cfg,source:backend,client_factory=Client,clock=clock)
         finally:
             MANUAL_EXECUTION.reset(auth)
             LEASED_HOST.reset(lease)
@@ -113,6 +128,34 @@ def test_manual_rate_limit_still_stops_with_checkpoint():
     result=run(job)
     assert calls==[1,2] and result['termination_reason']=='SOURCE_BLOCKED_HTTP_429'
     assert result['sql_committed']==0 and result['remaining']>=1
+
+
+def test_manual_robots_timeout_retries_before_any_cards_with_frozen_budget():
+    run,job,backend,calls=native_manual(robots_replies=iter((None,200)))
+    result=run(job)
+    assert calls==['robots','robots',1,2,3,1]
+    assert result['status']=='succeeded' and result['sql_committed']==3
+    assert result['canary']['robots_requests']==2
+    phases=[summary['phase'] for summary in backend.summaries if 'phase' in summary]
+    assert phases[:3]==['PREPARING','ROBOTS','PRODUCTS']
+
+
+@pytest.mark.parametrize(('responses','limit','attempts','reason'),[
+    ((None,None),2,2,'SOURCE_ROBOTS_UNAVAILABLE'),
+    ((None,),1,1,'SOURCE_ROBOTS_UNAVAILABLE'),
+    ((403,),2,1,'SOURCE_BLOCKED_HTTP_403'),
+    ((429,),2,1,'SOURCE_BLOCKED_HTTP_429'),
+])
+def test_manual_robots_failures_stop_before_products(responses,limit,attempts,reason):
+    run,job,backend,calls=native_manual(robots_replies=iter(responses),robots_limit=limit)
+    result=run(job)
+    assert calls==['robots']*attempts
+    assert result['canary']['robots_requests']==attempts
+    assert result['status']=='partial' and result['termination_reason']==reason
+    assert result['sql_committed']==0 and result['remaining']==3 and not backend.writes
+    if responses[0] is None:
+        error=result['transport_errors'][0]['original_exception']
+        assert error['type']=='URLError' and error['reason']['type']=='TimeoutError'
 
 
 def test_night_budget_is_bound_to_one_job_and_non_admin_cannot_extend(monkeypatch):

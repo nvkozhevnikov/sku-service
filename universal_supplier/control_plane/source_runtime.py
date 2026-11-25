@@ -140,6 +140,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     from .manual_collection import running_manually
     manual=running_manually(job)
     manual_resume=job.settings_snapshot.get('manual_resume') if manual else None
+    manual_robots_attempts=job.settings_snapshot['manual_collection'].get('robots_attempts',1) if manual else None
     if job.settings_snapshot.get('source_batch'):
         from .source_batch import validate_snapshot
         validate_snapshot(job.settings_snapshot)
@@ -272,8 +273,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             run_id=backend.start(job,mode)
             if manual:
                 backend.progress({'collection_mode':mode,
-                    'phase':'PRODUCTS' if original['mode']=='REFRESH' else 'DISCOVERY',
-                    'owner_job_id':owner,'input_sha256':sha,'remaining':len(cp.state['frontier']),
+                    'phase':'PREPARING','owner_job_id':owner,'input_sha256':sha,
+                    'remaining':len(entries) if mode=='REFRESH' else len(cp.state['frontier']),
                     'found':len(entries) if original['mode']=='REFRESH' else None,
                     'sql_committed':sum(item['state']=='COMMITTED' for item in cp.state['terminal'].values())})
         def allowed(url):
@@ -287,7 +288,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if approved and approved.get('continuation',{}).get('operator_extension'):
                 from .source_recovery import extension_authorization
                 extension_authorization(approved);isolate_repeats=True
-            dispatch_budget=DispatchBudget(original,robots_url,isolate_repeats=isolate_repeats)
+            dispatch_budget=DispatchBudget(original,robots_url,isolate_repeats=isolate_repeats,
+                                           robots_limit=manual_robots_attempts or 1)
         frozen_urls={entry['url'] for entry in original['entries']}
         def request_url(url):
             if url in blocked_scope_urls:
@@ -317,7 +319,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             validator=request_url,robots_allowed=allowed,robots_delay_seconds=0,
             lease_acquired=True,clock=clock,stop_requested=stopped,source=code,approval=settings.get('host_policy_approval'),defer_first_start=True,isolate_timeouts=isolate_timeouts,
             prevent_unknown_retry=bool(job.settings_snapshot.get('automation')),robots_url=robots_url,
-            manual_product_attempts=manual)
+            manual_product_attempts=manual,manual_robots_attempts=manual_robots_attempts)
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
         if dispatch_budget:fetcher.request_start_guard=dispatch_budget
         capture_archive_lock = threading.Lock()
@@ -410,9 +412,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         def robots():
             nonlocal robot,robots_exception_applied
             try:
+                if manual and backend:backend.progress({'phase':'ROBOTS'})
                 outcomes=fetch([robots_url],request_scope='robots')
-                if len(outcomes)!=1 or outcomes[0].error or outcomes[0].response is None or outcomes[0].response.status_code!=200:raise ValueError(fetcher.stop_reason or 'ROBOTS_NOT_PROVEN')
+                if len(outcomes)!=1 or outcomes[0].error or outcomes[0].response is None:
+                    reason='SOURCE_ROBOTS_UNAVAILABLE' if manual else 'ROBOTS_NOT_PROVEN'
+                    if manual and clock.monotonic()>=deadline:reason='MAX_RUN_DURATION_EXCEEDED'
+                    raise ValueError(fetcher.stop_reason or reason)
                 response=outcomes[0].response
+                if response.status_code!=200:raise ValueError(fetcher.stop_reason or 'ROBOTS_NOT_PROVEN')
                 if '<html' in response.body.decode('utf-8',errors='ignore').lower():raise ValueError('ROBOTS_NOT_TEXT')
                 robot=RobotFileParser();robot.parse(response.body.decode('utf-8').splitlines())
                 delay=robot.crawl_delay(AGENT);rr=robot.request_rate(AGENT)
@@ -426,6 +433,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                         raise PermissionError('ROBOTS_REQUIRES_SLOWER_PROFILE')
                     robots_exception_applied={k:exception[k] for k in ('format','source','robots_sha256',
                         'declared_minimum_seconds','applied_min_request_interval_seconds')}
+                if manual and backend:
+                    backend.progress({'phase':'PRODUCTS' if original['mode']=='REFRESH' else 'DISCOVERY'})
             except (ValueError,PermissionError) as error:
                 from . import automation_execution
                 from .source_failure import ROBOTS_LOCAL

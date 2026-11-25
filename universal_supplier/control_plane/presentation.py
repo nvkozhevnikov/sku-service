@@ -93,6 +93,10 @@ def error_presentation(message, path):
 def job_message(value):
     """Human summary; exact wire diagnostics remain in details and logs."""
     upper = str(value or '').upper()
+    if upper in {'SOURCE_ROBOTS_UNAVAILABLE','CANARY_ROBOTS_REQUEST_LIMIT'}:
+        return 'Не удалось получить правила сайта (robots.txt). До карточек сбор не дошёл.'
+    if upper in {'ROBOTS_NOT_PROVEN','ROBOTS_NOT_TEXT'}:
+        return 'Сайт не предоставил пригодный robots.txt. Карточки не запрашивались.'
     if 'UNKNOWN' in upper or 'UNCERTAIN' in upper:
         return 'Исход запроса не подтверждён'
     if re.search(r'HTTP[_ :]*5\d\d', upper):

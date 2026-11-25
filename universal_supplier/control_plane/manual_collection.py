@@ -101,7 +101,8 @@ class ManualRequest:
         from .source_resume import manual_timeout_receipt
         status, prior, metadata=previous
         require(status in TERMINAL, 'Дождитесь завершения исходного задания')
-        authenticated_marker(prior,self.key)
+        prior_marker=authenticated_marker(prior,self.key)
+        self.robots_attempts=prior_marker.get('robots_attempts',1)
         code=supplier[0]; result=(metadata or {}).get('source_runtime') or {}
         original=prior['source_input']; scope=original['canary']
         owner=result.get('owner_job_id'); sha=result.get('input_sha256')
@@ -148,12 +149,13 @@ class ManualRequest:
         cursor.execute('SELECT id,catalog_product_id FROM source_products WHERE catalog_product_id IS NOT NULL ORDER BY id')
         # DB-API cursor.execute is not required to return the cursor.
         mappings=[list(row) for row in cursor.fetchall()]
+        robots_attempts=getattr(self,'robots_attempts',min(2,snapshot['rate_settings']['max_attempts']))
         value={'format':KIND,'nonce':self.nonce,'target':TARGET,
             'actor_id':self.actor.id,'actor_role':self.actor.role,'actor_sv':self.actor.session_version,
             'head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
             'engine':engine_fingerprint(),'snapshot_sha256':digest(snapshot),'policies':self.policy,
             'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=snapshot['crawl_settings']['max_run_duration_seconds']+300)).isoformat(),
-            'matching_apply':False,'mappings':mappings}
+            'matching_apply':False,'mappings':mappings,'robots_attempts':robots_attempts}
         return {**value,'signature':signature(value,self.key)}
 
 
@@ -191,6 +193,9 @@ def verify(snapshot, key, *, now=None):
             and snapshot['source_input']['supplier_code']==code and snapshot['adapter_name']==code
             and type(canary['max_products']) is int and 1<=canary['max_products']<=100000,'Область запуска изменилась')
     host=snapshot['domain'];rate=DomainRatePolicy.from_mapping(snapshot['rate_settings'])
+    robots_attempts=marker.get('robots_attempts',1)
+    require(type(robots_attempts) is int and 1<=robots_attempts<=min(2,rate.max_attempts),
+            'Лимит проверки правил сайта изменился')
     expected={host:{code:policy_digest(code,host,rate,snapshot['crawl_settings']['host_policy_approval']['reference'])}}
     require(marker['policies']==expected,'Профиль скорости изменился')
     token=MANUAL_POLICIES.set(expected)

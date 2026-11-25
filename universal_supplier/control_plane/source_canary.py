@@ -113,20 +113,20 @@ def validate_live_selection(connection,value,*,allow_inactive=False):
     if actual!=value['entries']:raise PermissionError('CANARY_REGISTERED_SELECTION_CHANGED')
 
 class DispatchBudget:
-    """At most N product identities; robots has a separate one-request budget.
+    """At most N product identities; robots defaults to a separate one-request budget.
 
     Legacy v1 permits one wire start per URL. V2 permits only the frozen number
     of attempts per selected URL; retries never add an identity outside scope.
     """
-    def __init__(self,value,robots_url,*,isolate_repeats=False):
+    def __init__(self,value,robots_url,*,isolate_repeats=False,robots_limit=1):
         self.urls={e['url'] for e in value['entries']};self.limit=value['canary']['max_products']
         self.attempts=1 if value['canary']['format']=='source-canary/v1' else value['rate_policy']['max_attempts']
-        self.robots_url=robots_url;self.products=[];self.robots=0;self.lock=threading.Lock()
+        self.robots_url=robots_url;self.robots_limit=robots_limit;self.products=[];self.robots=0;self.lock=threading.Lock()
         self.isolate_repeats=isolate_repeats
     def __call__(self,url):
         with self.lock:
             if url==self.robots_url:
-                if self.robots:raise RequestAborted('CANARY_ROBOTS_REQUEST_LIMIT')
+                if self.robots>=self.robots_limit:raise RequestAborted('CANARY_ROBOTS_REQUEST_LIMIT')
                 self.robots+=1;return
             count=self.products.count(url)
             if self.isolate_repeats and url in self.urls and count>=self.attempts:
