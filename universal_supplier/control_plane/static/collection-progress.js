@@ -21,6 +21,10 @@ for (const root of document.querySelectorAll("[data-collection-progress]")) {
       const progress = await response.json();
       const status = progress.job_status || progress.run_status || progress.status;
       const active = status === "queued" || status === "running";
+      if (!active && root.closest("[data-rendered-running]")) {
+        window.location.reload();
+        return;
+      }
       phase.textContent = (active && progress.phase_label_ru) || statuses[status] || "Ожидается";
       const durable = progress.durable_progress === true;
       const count = (durable ? progress.succeeded : progress.processed) ?? 0;

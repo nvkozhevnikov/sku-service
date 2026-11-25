@@ -135,8 +135,8 @@ class SourceBackend:
                        observation.price_type,observation.price_raw,observation.price_source,Jsonb(observation.extraction_evidence)))
         return {'ingest_counts':counts}
     def probe(self,entry,receipt):
-        from .source_resume import MANUAL_TIMEOUT, quarantine_evidence_present
-        if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')==MANUAL_TIMEOUT:
+        from .source_resume import MANUAL_TRANSPORT_ERRORS, quarantine_evidence_present
+        if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS:
             # This outcome was archived before any capture could reach ingest.
             return 'NOT_FOUND' if quarantine_evidence_present(receipt,entry) else 'UNKNOWN'
         if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')=='operator_scope':

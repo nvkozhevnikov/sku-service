@@ -233,10 +233,11 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     robots_exception_applied=None
     isolated=[];consecutive_card_errors=0
-    from .source_resume import MANUAL_TIMEOUT, manual_timeout_receipt, quarantine_evidence_present
+    from .source_resume import (MANUAL_DISCONNECT, MANUAL_TIMEOUT, MANUAL_TRANSPORT_ERRORS,
+                                manual_transport_receipt, quarantine_evidence_present)
 
     def deferred_count(checkpoint):
-        return sum(item['receipt'].get('isolation',{}).get('category')==MANUAL_TIMEOUT
+        return sum(item['receipt'].get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS
                    for item in checkpoint.state['terminal'].values())
 
     try:
@@ -366,13 +367,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         fetcher.error_sink=archive_error
         origin={'source':code,'job_id':owner,'manifest_sha256':sha}
 
-        def defer_timeout(checkpoint,outcome):
+        def defer_transport_error(checkpoint,outcome):
             nonlocal consecutive_card_errors
-            if not (manual and outcome.timeout_refusal and outcome.response is None
+            if not (manual and (outcome.timeout_refusal or outcome.disconnect_refusal) and outcome.response is None
                     and outcome.transport_started is True):return False
-            receipt=manual_timeout_receipt(origin,outcome.url,job.id,error_files[outcome.url])
+            category=MANUAL_DISCONNECT if outcome.disconnect_refusal else MANUAL_TIMEOUT
+            receipt=manual_transport_receipt(origin,outcome.url,job.id,error_files[outcome.url],category=category)
             history=checkpoint.state['terminal'].get(outcome.url,{}).get('history',[])
-            first=not any(item.get('isolation',{}).get('category')==MANUAL_TIMEOUT for item in history)
+            first=not any(item.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS for item in history)
             retry=first and rate.max_attempts>1
             checkpoint.record_terminal([receipt],defer_to_tail=retry)
             consecutive_card_errors+=1
@@ -459,7 +461,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                             'origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcomes[0].error})
                         fetcher.stop(fetcher.stop_reason or 'SOURCE_REQUEST_NOT_DISPATCHED')
                         break
-                    if outcomes and defer_timeout(discovery,outcomes[0]):continue
+                    if outcomes and defer_transport_error(discovery,outcomes[0]):continue
                     if not outcomes or outcomes[0].error or outcomes[0].response.status_code!=200:raise ValueError(fetcher.stop_reason or 'DISCOVERY_HTTP_FAILED')
                     rec=records[node];body=read_body(rec)
                     children,products=decode_node(code,node,body)
@@ -631,7 +633,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     if not gate_passed:batch=min(batch,max(1,gate_target-verified))
                     urls=cp.claim_batch(batch);outcomes=fetch(urls);fetched_count+=len(urls)
                     for outcome in outcomes:
-                        if defer_timeout(cp,outcome):continue
+                        if defer_transport_error(cp,outcome):continue
                         if outcome.scope_refusal or outcome.dispatch_refusal or outcome.timeout_refusal:
                             if (not scope_policy_active or original['mode']!='REFRESH' or backend is None or
                                     outcome.response is not None or outcome.transport_started is not True):
@@ -691,7 +693,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             manifest_path=folder/('manifest-partial-r'+str(discovery.state['revision'])+'.json')
             frozen_json(manifest_path,{'format':'source-discovered-manifest/v1','supplier_code':code,'input_sha256':sha,'entries':locals().get('entries',[]),'traversal_finished':False,'external_catalog_completeness':'NOT_PROVEN'})
         deferred_urls=[url for checkpoint in (cp,discovery) for url,item in checkpoint.state['terminal'].items()
-                       if item['receipt'].get('isolation',{}).get('category')==MANUAL_TIMEOUT]
+                       if item['receipt'].get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS]
         deferred=len(deferred_urls)
         result={'status':'partial' if termination or errors or remaining or deferred else 'succeeded','supplier_code':code,'collection_mode':mode,
             'crawl_run_id':run_id,'owner_job_id':owner,'input_sha256':sha,'checkpoint':str(cp.path),

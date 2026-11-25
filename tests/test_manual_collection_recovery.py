@@ -2,6 +2,7 @@
 from dataclasses import replace
 from contextlib import nullcontext
 from datetime import datetime, timezone
+from http.client import RemoteDisconnected
 import json
 from pathlib import Path
 import socket
@@ -35,7 +36,8 @@ def offline(monkeypatch,tmp_path):
     monkeypatch.setattr(socket,'getaddrinfo',deny)
 
 
-def native_manual(*, fail_tail=False, end_window=False, block=False, robots_replies=None, robots_limit=2):
+def native_manual(*, fail_tail=False, end_window=False, block=False, robots_replies=None, robots_limit=2,
+                  product_error=TimeoutError):
     code='partner_st'
     base='https://partner-st.ru'
     rate=approved_policy(code,base,{'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0})
@@ -79,7 +81,7 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
             number=int(url.removesuffix('/').rsplit('-',1)[-1])
             calls.append(number)
             if number==1 and (calls.count(1)==1 or fail_tail):
-                raise TimeoutError('body timeout')
+                raise product_error('no response')
             if number==2 and block:return HttpResponse(url,429,'text/plain',b'busy')
             return HttpResponse(url,200,'text/html; charset=utf-8',html(number).encode())
 
@@ -95,8 +97,9 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
 
 
 @pytest.mark.parametrize('fail_tail',[False,True])
-def test_manual_timeout_moves_to_tail_once(fail_tail):
-    run,job,backend,calls=native_manual(fail_tail=fail_tail)
+@pytest.mark.parametrize('product_error',[TimeoutError,RemoteDisconnected])
+def test_manual_transport_failure_moves_to_tail_once(fail_tail,product_error):
+    run,job,backend,calls=native_manual(fail_tail=fail_tail,product_error=product_error)
     result=run(job)
     assert calls==[1,2,3,1]
     assert result['sql_committed']==(2 if fail_tail else 3)
@@ -104,6 +107,17 @@ def test_manual_timeout_moves_to_tail_once(fail_tail):
     assert result['status']==('partial' if fail_tail else 'succeeded')
     assert result['remaining']==0 and len(backend.writes)==result['sql_committed']
     assert any(summary.get('sql_committed')==1 and summary.get('deferred')==1 for summary in backend.summaries)
+
+
+def test_bounded_manual_disconnect_goes_to_tail_before_retry():
+    run,job,backend,calls=native_manual(fail_tail=True,product_error=RemoteDisconnected,robots_replies=iter((200,)))
+    result=run(job)
+    assert calls==['robots',1,2,3,1]
+    assert result['status']=='partial' and result['sql_committed']==2
+    assert result['remaining']==0 and result['deferred']==1
+    assert len(result['canary']['product_requests'])==4
+    details=result['quarantined'][0]['isolation']
+    assert details['category']=='manual_remote_disconnect'
 
 
 def test_manual_resume_skips_commit_and_retries_tail_in_saved_order():

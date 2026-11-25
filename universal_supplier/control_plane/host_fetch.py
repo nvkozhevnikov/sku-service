@@ -6,6 +6,7 @@ host lease, URL allowlist, robots decision and HTTP client. SQL is never called.
 from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
 from dataclasses import dataclass, replace
 from datetime import datetime,timezone
+from http.client import RemoteDisconnected
 from urllib.parse import urlsplit
 from contextvars import ContextVar
 import hashlib,json,math,os,threading
@@ -63,6 +64,7 @@ class FetchOutcome:
     scope_refusal:dict|None=None
     dispatch_refusal:dict|None=None
     timeout_refusal:dict|None=None
+    disconnect_refusal:bool=False
     error_diagnostics:dict|None=None
 
 class FrozenScopeRefusal(RequestAborted):
@@ -87,6 +89,10 @@ class ReadTimeoutRefusal(RequestAborted):
         self.details={'reason':'READ_TIMEOUT_UNKNOWN','exception':'TimeoutError',
             'response_available':False,'transport_entered':True,
             'blocked_target_sha256':hashlib.sha256(url.encode()).hexdigest()}
+
+
+class RemoteDisconnectRefusal(RequestAborted):
+    """A manual public GET returned no status or response body."""
 
 class BoundedHostFetcher:
     def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
@@ -192,15 +198,19 @@ class BoundedHostFetcher:
                             automation_execution.ACTIVE.fail('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
                         self.stop('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
                         raise RequestAborted('AUTOMATION_UNKNOWN_HTTP_OUTCOME') from error
-                    if not isinstance(error,TimeoutError) or not (self.isolate_timeouts or
-                            (self.manual_product_attempts and request_scope!='robots')):raise
+                    manual_request=self.manual_product_attempts and request_scope!='robots'
+                    defer_disconnect=manual_request and type(error) is RemoteDisconnected
+                    defer_timeout=isinstance(error,TimeoutError) and (self.isolate_timeouts or manual_request)
+                    if not (defer_disconnect or defer_timeout):raise
                     # Keep the real network failure and native breaker. The typed
                     # abort only prevents retrying an UNKNOWN transport result.
                     with self._lock:
-                        self.metrics.record_network_error(self.clock.monotonic()-request_started,'TimeoutError')
-                        self.breaker.failure('TimeoutError')
+                        error_type=type(error).__name__
+                        self.metrics.record_network_error(self.clock.monotonic()-request_started,error_type)
+                        self.breaker.failure(error_type)
                         tripped=self.metrics.circuit_breaker_trips>0
                     if tripped:self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
+                    if defer_disconnect:raise RemoteDisconnectRefusal('REMOTE_DISCONNECTED_UNKNOWN') from error
                     raise ReadTimeoutRefusal(url)
                 self._validate(response.final_url)
                 for target in response.redirects:self._validate(target)
@@ -238,7 +248,8 @@ class BoundedHostFetcher:
             outcome=FetchOutcome(url,response,observed,attempts,self.clock.monotonic()-started,error=f'{type(e).__name__}:{safe_message(e)}',transport_started=transport_started,
                 scope_refusal=e.details if isinstance(e,FrozenScopeRefusal) else None,
                 dispatch_refusal=e.details if isinstance(e,RepeatedDispatchRefusal) else None,
-                timeout_refusal=e.details if isinstance(e,ReadTimeoutRefusal) else None,error_diagnostics=diagnostics)
+                timeout_refusal=e.details if isinstance(e,ReadTimeoutRefusal) else None,
+                disconnect_refusal=isinstance(e,RemoteDisconnectRefusal),error_diagnostics=diagnostics)
             if diagnostics is not None and self.error_sink:
                 try:self.error_sink(outcome)
                 except Exception:

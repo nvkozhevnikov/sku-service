@@ -98,7 +98,7 @@ class ManualRequest:
     def resume(self, config, sid, supplier, parent_id, previous):
         from .source_controls import verify_resume
         from .source_runtime import job_dir, read_input
-        from .source_resume import manual_timeout_receipt
+        from .source_resume import MANUAL_DISCONNECT, MANUAL_TIMEOUT, manual_transport_receipt
         status, prior, metadata=previous
         require(status in TERMINAL, 'Дождитесь завершения исходного задания')
         prior_marker=authenticated_marker(prior,self.key)
@@ -122,16 +122,19 @@ class ManualRequest:
             folder=job_dir(code,owner)
             state=json.loads((folder/'checkpoint.json').read_text(encoding='utf-8'))
             receipt=None
-            # A pre-update manual job may contain exactly one proven isolated
-            # read timeout. Preserve it as deferred without dispatching it again.
-            if (not anchor and original['mode']=='REFRESH' and
-                    result.get('termination_reason')=='SOURCE_CARD_HTTP_FAILED'):
+            # Use only the last signed job's evidence. The checkpoint can
+            # belong to the original job even if the failed request was in a child.
+            if original['mode']=='REFRESH' and result.get('termination_reason')=='SOURCE_CARD_HTTP_FAILED':
                 uncertain=[r['receipt'] for r in state['terminal'].values() if r['state']=='UNCERTAIN']
-                if len(uncertain)==1 and uncertain[0].get('reason','').startswith('TimeoutError:'):
-                    for path in (folder/'transport-errors').glob('*.json'):
-                        try:receipt=manual_timeout_receipt(uncertain[0]['origin'],uncertain[0]['url'],parent_id,path)
-                        except (OSError,ValueError):continue
-                        break
+                if len(uncertain)==1:
+                    item=uncertain[0]
+                    category={'TimeoutError':MANUAL_TIMEOUT,'RemoteDisconnected':MANUAL_DISCONNECT}.get(
+                        item.get('reason','').partition(':')[0])
+                    if category:
+                        for path in (job_dir(code,parent_id)/'transport-errors').glob('*.json'):
+                            try:receipt=manual_transport_receipt(item['origin'],item['url'],parent_id,path,category=category)
+                            except (OSError,ValueError):continue
+                            break
             verify_resume(code,owner,sha,original,config,manual_timeout=receipt,require_pending=True)
         finally:
             MANUAL_POLICIES.reset(token)

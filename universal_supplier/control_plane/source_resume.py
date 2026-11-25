@@ -14,13 +14,16 @@ from universal_supplier.postgres import SUPPLIER_CONFIGS
 
 STATES=frozenset({'COMMITTED','HTTP_CAPTURED_NOT_COMMITTED','FAILED','NOT_REQUESTED','UNCERTAIN','QUARANTINED'})
 MANUAL_TIMEOUT = 'manual_read_timeout'
+MANUAL_DISCONNECT = 'manual_remote_disconnect'
+MANUAL_TRANSPORT_ERRORS = frozenset({MANUAL_TIMEOUT, MANUAL_DISCONNECT})
 
 
-def manual_timeout_receipt(origin, url, job_id, evidence_path):
+def manual_transport_receipt(origin, url, job_id, evidence_path, *, category):
     proof={'job_id':job_id,'file':Path(evidence_path).name,
            'sha256':hashlib.sha256(Path(evidence_path).read_bytes()).hexdigest()}
+    reason={MANUAL_TIMEOUT:'READ_TIMEOUT_UNKNOWN',MANUAL_DISCONNECT:'REMOTE_DISCONNECTED_UNKNOWN'}[category]
     receipt={'url':url,'state':'QUARANTINED','origin':dict(origin),'timeout_evidence':proof,
-             'isolation':{'before_ingest':True,'category':MANUAL_TIMEOUT,'reason':'READ_TIMEOUT_UNKNOWN'}}
+             'isolation':{'before_ingest':True,'category':category,'reason':reason}}
     if not quarantine_evidence_present(receipt,{'url':url}):raise ValueError('DEFERRED_TIMEOUT_PROOF_REQUIRED')
     return receipt
 
@@ -37,7 +40,8 @@ def original_capture_present(receipt,entry):
 
 
 def quarantine_evidence_present(receipt,entry):
-    if receipt.get('isolation',{}).get('category')==MANUAL_TIMEOUT:
+    category=receipt.get('isolation',{}).get('category')
+    if category in MANUAL_TRANSPORT_ERRORS:
         proof=receipt.get('timeout_evidence') or {}
         origin=receipt.get('origin') or {}
         try:
@@ -49,13 +53,16 @@ def quarantine_evidence_present(receipt,entry):
             raw=(job_dir(source,jid)/'transport-errors'/name).read_bytes()
             if hashlib.sha256(raw).hexdigest()!=proof['sha256']:return False
             record=json.loads(raw);diag=record['diagnostics']
+            exception=diag['original_exception']
+            expected=(exception['type']=='TimeoutError' if category==MANUAL_TIMEOUT
+                      else (exception['module'],exception['type'])==('http.client','RemoteDisconnected'))
             from .transport_diagnostics import safe_message
             return (receipt['url']==entry['url'] and record['url']==safe_message(entry['url'])
                     and record['job_id']==jid and record['owner_job_id']==origin['job_id']
                     and record['input_sha256']==origin['manifest_sha256']
                     and record['transport_started'] is True and record['http_status'] is None
                     and diag['source']==source and diag['request_scope'] in ('product','discovery')
-                    and diag['response_available'] is False and diag['original_exception']['type']=='TimeoutError')
+                    and diag['response_available'] is False and expected)
         except (OSError,ValueError,KeyError,TypeError):return False
     if receipt.get('isolation',{}).get('category')=='operator_scope':
         from .source_recovery import approved_scope_item
@@ -97,7 +104,7 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
             if state=='HTTP_CAPTURED_NOT_COMMITTED' and not original_capture_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not quarantine_evidence_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not (receipt.get('isolation',{}).get('before_ingest') is True and
-                    receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope',MANUAL_TIMEOUT)):state='UNCERTAIN'
+                    receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope',*MANUAL_TRANSPORT_ERRORS)):state='UNCERTAIN'
             if state=='QUARANTINED' and receipt['isolation']['category']=='matching':
                 proof=receipt['isolation'].get('rejection_proof',{})
                 if not (proof.get('rollback_verified') is True and proof.get('sql_absent') is True and
@@ -191,7 +198,7 @@ class SourceCheckpoint:
                 if not history or history[-1]!=receipt:history=history+[deepcopy(receipt)]
                 self.state['terminal'][url]={'state':state,'receipt':deepcopy(receipt),'history':history};self.state['inflight'].pop(url,None)
                 if defer_to_tail:
-                    if (state!='QUARANTINED' or receipt.get('isolation',{}).get('category')!=MANUAL_TIMEOUT
+                    if (state!='QUARANTINED' or receipt.get('isolation',{}).get('category') not in MANUAL_TRANSPORT_ERRORS
                             or not quarantine_evidence_present(receipt,{'url':url}) or url in self.state['frontier']):
                         raise ValueError('DEFERRED_TIMEOUT_PROOF_REQUIRED')
                     self.state['frontier'].append(url)
@@ -206,7 +213,7 @@ class SourceCheckpoint:
             prior=self.state['terminal'].get(url,{})
             if (url in self.state['inflight'] and receipt.get('state')=='NOT_REQUESTED'
                     and receipt.get('transport_started') is False
-                    and prior.get('receipt',{}).get('isolation',{}).get('category')==MANUAL_TIMEOUT):
+                    and prior.get('receipt',{}).get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS):
                 self.state['inflight'].pop(url)
                 self.state['frontier'].insert(0,url)
                 return

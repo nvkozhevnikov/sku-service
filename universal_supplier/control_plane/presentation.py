@@ -99,6 +99,10 @@ def job_message(value):
         return 'Не удалось получить правила сайта (robots.txt). До карточек сбор не дошёл.'
     if upper in {'ROBOTS_NOT_PROVEN','ROBOTS_NOT_TEXT'}:
         return 'Сайт не предоставил пригодный robots.txt. Карточки не запрашивались.'
+    if upper == 'SOURCE_CARD_HTTP_FAILED':
+        return 'На товарной странице произошёл сетевой сбой. Подробности сохранены в запуске.'
+    if upper.startswith('REMOTEDISCONNECTED:'):
+        return 'Соединение с товарной страницей закрылось без ответа.'
     if 'UNKNOWN' in upper or 'UNCERTAIN' in upper:
         return 'Исход запроса не подтверждён'
     if re.search(r'HTTP[_ :]*5\d\d', upper):
