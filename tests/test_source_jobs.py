@@ -71,7 +71,7 @@ def test_saved_parser_runs_through_shared_registry_without_network_or_db(tmp_pat
 
 def test_registry_preserves_existing_runners():
     registry=default_adapter_registry()
-    assert set(registry.names)==set(SOURCES)|{'partner_st','optimum'}
+    assert set(registry.names)==set(SOURCES)|{'partner_st','optimum','ivstankomaster'}
 
 def test_rc_existing_runners_use_shared_safe_pipeline(monkeypatch):
     from universal_supplier.control_plane.adapter_registry import _post_ingest_identity

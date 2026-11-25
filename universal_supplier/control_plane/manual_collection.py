@@ -1,5 +1,6 @@
 """Authenticated one-click approval; native queue, parsers and worker unchanged."""
 from copy import deepcopy
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -16,6 +17,8 @@ from .rate_control import DomainRatePolicy
 
 KIND = 'authenticated-manual-collection/v1'
 ROOT = Path(__file__).resolve().parents[2]
+MANUAL_EXECUTION = ContextVar('manual_collection_execution', default=None)
+TERMINAL = ('partial','failed','cancelled','stale_failed')
 
 
 def enabled():return os.environ.get('STERBRUST_MANUAL_COLLECTION_ENABLED') == 'YES'
@@ -30,6 +33,10 @@ def signature(value, key):
     return hmac.new(key.encode(), (KIND + ':' + digest(value)).encode(), hashlib.sha256).hexdigest()
 
 
+def running_manually(job):
+    return MANUAL_EXECUTION.get()==job.id and bool(job.settings_snapshot.get('manual_collection'))
+
+
 @dataclass
 class ManualRequest:
     actor: object
@@ -38,6 +45,7 @@ class ManualRequest:
     maximum: str
     revision: int
     mode: str = 'REFRESH'
+    duration_hours: int | None = None
 
     def validate(self, supplier_id, limit, trigger, mode):
         from .source_canary import limit_value
@@ -46,8 +54,15 @@ class ManualRequest:
         require(self.actor.id > 0 and self.actor.is_active and not self.actor.must_change_password
                 and self.actor.role in ('ADMIN','OPERATOR') and allowed(self.actor,'supplier.manage'), 'Нет прав на запуск сбора')
         require(type(supplier_id) is int and supplier_id>0 and trigger=='manual'
-                and mode==self.mode and mode in ('REFRESH','DISCOVERY'), 'Недопустимый режим ручного сбора')
-        limit_value(limit)
+                and mode==self.mode and mode in ('REFRESH','DISCOVERY','RESUME'), 'Недопустимый режим ручного сбора')
+        if mode!='RESUME':
+            limit_value(limit)
+        elif limit is not None or self.duration_hours is not None:
+            raise ValueError('Продолжение использует сохранённые лимиты')
+        if self.duration_hours is not None:
+            require(self.actor.role=='ADMIN', 'Изменить время может только администратор')
+            if type(self.duration_hours) is not int or not 1<=self.duration_hours<=24:
+                raise ValueError('Укажите целое число часов от 1 до 24')
 
     def preview(self, queue, connection, cursor, sid, supplier, limit):
         code, adapter, base, is_enabled, crawl, old_rate = supplier
@@ -69,6 +84,9 @@ class ManualRequest:
         self.nonce=secrets.token_hex(16)
         self.supplier_id=sid
         modified=deepcopy(crawl or {})
+        if self.duration_hours is not None:
+            rate['max_run_duration_seconds']=self.duration_hours*3600
+            modified['max_run_duration_seconds']=rate['max_run_duration_seconds']
         modified['host_policy_approval']={'host':host_key(base),'reference':'MANUAL:'+self.nonce,
             'approved_rate_sha256':digest(rate)}
         self.policy={host_key(base):{code:policy_digest(code,host_key(base),DomainRatePolicy.from_mapping(rate),modified['host_policy_approval']['reference'])}}
@@ -76,6 +94,53 @@ class ManualRequest:
         try:
             return queue._canary_preview(connection,cursor,sid,(code,adapter,base,is_enabled,modified,rate),limit,self.mode)
         finally:MANUAL_POLICIES.reset(token)
+
+    def resume(self, config, sid, supplier, parent_id, previous):
+        from .source_controls import verify_resume
+        from .source_runtime import job_dir, read_input
+        from .source_resume import manual_timeout_receipt
+        status, prior, metadata=previous
+        require(status in TERMINAL, 'Дождитесь завершения исходного задания')
+        authenticated_marker(prior,self.key)
+        code=supplier[0]; result=(metadata or {}).get('source_runtime') or {}
+        original=prior['source_input']; scope=original['canary']
+        owner=result.get('owner_job_id'); sha=result.get('input_sha256')
+        require(prior['supplier_code']==code and scope['supplier_id']==sid and
+                type(owner) is int and 0<owner<=parent_id and sha==digest(original),
+                'Сохранённое задание относится к другой партии')
+        anchor=prior.get('manual_resume')
+        require((anchor and owner==anchor['owner_job_id']) or (not anchor and owner==parent_id),
+                'Изменился владелец сохранённой очереди')
+        self.nonce=secrets.token_hex(16)
+        host=host_key(supplier[2]);rate=DomainRatePolicy.from_mapping(original['rate_policy'])
+        ref=scope['host_policy_approval']['reference']
+        self.policy={host:{code:policy_digest(code,host,rate,ref)}}
+        token=MANUAL_POLICIES.set(self.policy)
+        try:
+            read_input(code,owner,sha,previous_engine=original['engine_sha256'])
+            folder=job_dir(code,owner)
+            state=json.loads((folder/'checkpoint.json').read_text(encoding='utf-8'))
+            receipt=None
+            # A pre-update manual job may contain exactly one proven isolated
+            # read timeout. Preserve it as deferred without dispatching it again.
+            if (not anchor and original['mode']=='REFRESH' and
+                    result.get('termination_reason')=='SOURCE_CARD_HTTP_FAILED'):
+                uncertain=[r['receipt'] for r in state['terminal'].values() if r['state']=='UNCERTAIN']
+                if len(uncertain)==1 and uncertain[0].get('reason','').startswith('TimeoutError:'):
+                    for path in (folder/'transport-errors').glob('*.json'):
+                        try:receipt=manual_timeout_receipt(uncertain[0]['origin'],uncertain[0]['url'],parent_id,path)
+                        except (OSError,ValueError):continue
+                        break
+            verify_resume(code,owner,sha,original,config,manual_timeout=receipt,require_pending=True)
+        finally:
+            MANUAL_POLICIES.reset(token)
+        snapshot=deepcopy(prior)
+        snapshot.pop('manual_collection')
+        snapshot['crawl_settings'].update(collection_mode='RESUME',resume_owner_job_id=owner,resume_input_sha256=sha)
+        snapshot['manual_resume']={'parent_job_id':parent_id,'owner_job_id':owner,
+                                   'previous_engine':original['engine_sha256'],
+                                   'checkpoint_sha256':state['checksum'],'legacy_timeout':receipt}
+        return snapshot
 
     def seal(self, snapshot, cursor):
         from .source_canary import TARGET
@@ -92,22 +157,36 @@ class ManualRequest:
         return {**value,'signature':signature(value,self.key)}
 
 
-def verify(snapshot, key, *, now=None):
-    from .source_canary import TARGET, validate_input
-    from .source_runtime import engine_fingerprint
-    from .source_jobs import RUNTIME_SOURCES
-    from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
+def authenticated_marker(snapshot,key):
+    from .source_canary import TARGET
     marker=deepcopy(snapshot.get('manual_collection') or {})
     signed=marker.pop('signature', '')
     require(marker.get('format')==KIND and hmac.compare_digest(signed,signature(marker,key)), 'Подтверждение запуска повреждено')
     require(marker.get('target')==TARGET and marker.get('matching_apply') is False,'Неверная база или режим сопоставления')
     plain={k:v for k,v in snapshot.items() if k!='manual_collection'}
     require(digest(plain)==marker.get('snapshot_sha256'),'Параметры запуска изменились')
+    return marker
+
+
+def verify(snapshot, key, *, now=None):
+    from .source_canary import validate_input
+    from .source_runtime import engine_fingerprint
+    from .source_jobs import RUNTIME_SOURCES
+    from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
+    marker=authenticated_marker(snapshot,key)
     require(marker.get('engine')==engine_fingerprint() and marker.get('head')==subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'Код изменился. Создайте новый запуск')
     clock=now or datetime.now(timezone.utc)
     require(clock < datetime.fromisoformat(marker['expires_at']), 'Время запуска истекло')
     code=snapshot['supplier_code'];canary=snapshot['source_input']['canary']
     mode=snapshot['source_input']['mode']
+    resume=snapshot.get('manual_resume')
+    settings=snapshot['crawl_settings']
+    if settings.get('collection_mode')=='RESUME':
+        require(resume and resume['owner_job_id']==settings['resume_owner_job_id']
+                and resume['previous_engine']==snapshot['source_input']['engine_sha256']
+                and settings['resume_input_sha256']==digest(snapshot['source_input']), 'Изменилась область продолжения')
+    else:
+        require(not resume and snapshot['source_input']['engine_sha256']==marker['engine'], 'Изменился исходный запуск')
     require(code in RUNTIME_SOURCES and (mode=='REFRESH' or (code==IVSTANKOMASTER and mode=='DISCOVERY'))
             and snapshot['source_input']['supplier_code']==code and snapshot['adapter_name']==code
             and type(canary['max_products']) is int and 1<=canary['max_products']<=100000,'Область запуска изменилась')

@@ -1,0 +1,12 @@
+{% macro progress_meter(progress={}, url='', show_link=false, durable=true) %}
+{% set total=progress.get('total') %}
+{% set count=progress.get('succeeded' if durable else 'processed',0) %}
+{% set value=([100,100 * count / total]|min if total else none) if durable else progress.get('percent') %}
+<div class="collection-progress"{% if url %} data-collection-progress="{{ url }}"{% endif %}>
+  {% if url %}<p data-phase>{{ progress.get('phase_label_ru') or 'Ожидается' }}</p>{% endif %}
+  <progress data-bar aria-label="Ход сбора" max="100"{% if value is not none %} value="{{ value }}"{% endif %}></progress>
+  <p data-count>{{ 'Сохранено' if durable else 'Обработано' }} {{ count }}{% if total is not none %} из {{ total }}{% endif %}{% if value is not none %} · {{ '%.1f'|format(value)|replace('.', ',') }}%{% endif %}</p>
+  <p data-deferred{% if not progress.get('deferred') %} hidden{% endif %}>Отложено {{ progress.get('deferred',0) }}</p>
+  {% if show_link %}<a data-run-link hidden>Открыть подробности</a>{% endif %}
+</div>
+{% endmacro %}

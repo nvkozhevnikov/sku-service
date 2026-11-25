@@ -390,7 +390,10 @@ class PostgresControlPlaneStore:
 
     def run(self, run_id: int) -> dict | None:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT cr.*,s.name AS supplier_name FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id WHERE cr.id=%s", (run_id,))
+            cursor.execute("""SELECT cr.*,s.name AS supplier_name,
+                (SELECT max(j.id) FROM crawl_jobs j WHERE j.crawl_run_id=cr.id
+                 AND j.settings_snapshot ? 'manual_collection') AS manual_job_id
+                FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id WHERE cr.id=%s""", (run_id,))
             row = cursor.fetchone()
             if row:
                 cursor.execute("SELECT * FROM crawl_errors WHERE crawl_run_id=%s ORDER BY created_at,id", (run_id,))
@@ -400,14 +403,29 @@ class PostgresControlPlaneStore:
         return row
 
     def run_progress(self, run_id: int) -> dict | None:
-        row = self.run(run_id)
-        if not row:
-            return None
-        metadata = row.get("metadata") or {}
-        progress = dict(metadata.get("progress") or {}) if isinstance(metadata, dict) else {}
-        progress.update({"run_id": run_id, "supplier_name": row.get("supplier_name"),
-                         "run_status": row.get("status")})
-        return progress
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("""SELECT r.id AS run_id, r.status AS run_status, s.name AS supplier_name,
+                r.metadata->'progress' AS progress, r.metadata ? 'source_runtime' AS durable_progress
+                FROM crawl_runs r
+                JOIN suppliers s ON r.supplier_id=s.id WHERE r.id=%s""",(run_id,))
+            row=cursor.fetchone()
+        if not row:return None
+        return {**(row.pop('progress') or {}),**row}
+
+    def job_progress(self, job_id: int) -> dict | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("""SELECT j.status AS job_status,r.id AS run_id,r.status AS run_status,
+                s.name AS supplier_name,r.metadata->'progress' AS progress,
+                (coalesce(r.metadata ? 'source_runtime',false)
+                 OR j.settings_snapshot ? 'source_input') AS durable_progress,
+                CASE WHEN j.settings_snapshot->'source_input'->>'mode'='REFRESH'
+                     THEN j.settings_snapshot->'source_input'->'canary'->'selected' END AS target
+                FROM crawl_jobs j JOIN suppliers s ON j.supplier_id=s.id
+                LEFT JOIN crawl_runs r ON j.crawl_run_id=r.id WHERE j.id=%s""",(job_id,))
+            row=cursor.fetchone()
+        if not row:return None
+        progress=row.pop('progress') or {}
+        return {'total':row.pop('target'),'succeeded':0,'deferred':0,**progress,**row}
 
     def suppliers(self) -> list[dict]:
         return self.dashboard()

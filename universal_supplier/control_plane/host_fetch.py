@@ -4,7 +4,7 @@ Reuses DomainRatePolicy/Limiter/resilience. The caller must supply the existing
 host lease, URL allowlist, robots decision and HTTP client. SQL is never called.
 """
 from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime,timezone
 from urllib.parse import urlsplit
 from contextvars import ContextVar
@@ -90,7 +90,7 @@ class ReadTimeoutRefusal(RequestAborted):
 
 class BoundedHostFetcher:
     def __init__(self,host,rate,client_factory,*,validator,robots_allowed,
-                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False,isolate_timeouts=False,prevent_unknown_retry=False,robots_url=None,error_sink=None):
+                 lease_acquired=False,clock=None,stop_requested=None,robots_delay_seconds=None,source=None,approval=None,receipt_sink=None,defer_first_start=False,isolate_timeouts=False,prevent_unknown_retry=False,robots_url=None,error_sink=None,manual_product_attempts=False):
         if not source:raise ValueError('SOURCE_REQUIRED')
         rate=compile_policy(source,'https://'+host,rate.snapshot(),approval=approval)
         if not lease_acquired:raise PermissionError('HOST_LEASE_REQUIRED')
@@ -117,6 +117,7 @@ class BoundedHostFetcher:
         self.request_start_guard=None
         self.isolate_timeouts=isolate_timeouts
         self.prevent_unknown_retry=prevent_unknown_retry
+        self.manual_product_attempts=manual_product_attempts
         self.source=source;self.robots_url=robots_url;self.error_sink=error_sink
     def stop(self,reason='OPERATOR_STOP'):
         with self._lock:
@@ -188,7 +189,8 @@ class BoundedHostFetcher:
                             automation_execution.ACTIVE.fail('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
                         self.stop('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
                         raise RequestAborted('AUTOMATION_UNKNOWN_HTTP_OUTCOME') from error
-                    if not isinstance(error,TimeoutError) or not self.isolate_timeouts:raise
+                    if not isinstance(error,TimeoutError) or not (self.isolate_timeouts or
+                            (self.manual_product_attempts and request_scope!='robots')):raise
                     # Keep the real network failure and native breaker. The typed
                     # abort only prevents retrying an UNKNOWN transport result.
                     with self._lock:
@@ -206,7 +208,8 @@ class BoundedHostFetcher:
                     stop_statuses.add(503);self.stop('SOURCE_RETRY_AFTER_HTTP_503')
                 elif has_blocking_interstitial(response.body):self.stop('SOURCE_BLOCKED_INTERSTITIAL')
                 return response
-            response,attempts=request_with_resilience(send,self.rate,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=stop_statuses,abort_requested=self.aborted)
+            policy=replace(self.rate,max_attempts=1) if self.manual_product_attempts and request_scope!='robots' else self.rate
+            response,attempts=request_with_resilience(send,policy,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=stop_statuses,abort_requested=self.aborted)
             if self.prevent_unknown_retry and self.metrics.circuit_breaker_trips:
                 self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
             observed=datetime.now(timezone.utc)

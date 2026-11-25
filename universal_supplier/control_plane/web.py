@@ -518,10 +518,12 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         try:
             count=optional_int(raw.get('max_products'),'Количество карточек')
             mode=raw.get('collection_mode','REFRESH')
-            approval=ManualRequest(user,signer.secret.decode('utf-8'),raw.get('delay_min_seconds',''),raw.get('delay_max_seconds',''),int(raw.get('revision','-1')),mode)
+            parent_id=optional_int(raw.get('resume_job_id'),'Номер задания')
+            hours=optional_int(raw.get('duration_hours'),'Лимит времени')
+            approval=ManualRequest(user,signer.secret.decode('utf-8'),raw.get('delay_min_seconds',''),raw.get('delay_max_seconds',''),int(raw.get('revision','-1')),mode,hours)
             approval.validate(supplier_id,count,'manual',mode)
             result=queue.enqueue(supplier_id,trigger_type='manual',crawl_type='full',requested_by_user_id=user.id,
-                source_mode=mode,source_limit=count,manual_request=approval)
+                source_mode=mode,source_limit=count,resume_job_id=parent_id,manual_request=approval)
             if result.enqueued:
                 if manual_launcher is not None:manual_launcher(result.job_id)
                 else:launch(result.job_id,key=signer.secret.decode('utf-8'))
@@ -768,7 +770,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         guard(request)
         job_status=request.query_params.get('job_status')
         rows=store.runs(job_status=job_status) if job_status in ('queued','running') else store.runs()
-        return templates.TemplateResponse(request, "runs.html", context(request, runs=rows, active="runs", enqueue_status=request.query_params.get("enqueue_status"), job_id=request.query_params.get("job_id")))
+        job_id=request.query_params.get("job_id")
+        return templates.TemplateResponse(request, "runs.html", context(request, runs=rows, active="runs", job_id=job_id if is_id(job_id) else None))
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):
@@ -786,16 +789,23 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 item['metadata']['source_runtime']['resume_check']='Продолжение заблокировано: '+str(error)
         return templates.TemplateResponse(request, "run_detail.html", context(request, item=item, active="runs"))
 
+    def progress_response(item):
+        if item is None:raise HTTPException(404, "Запуск не найден")
+        allowed={"run_id","supplier_name","run_status","job_status","phase","phase_label_ru","status",
+                 "total","processed","succeeded","errors","percent","saved_percent","deferred","durable_progress","rate_per_second",
+                 "eta_seconds","eta_human_ru","elapsed_seconds","fetch_elapsed_seconds","updated_at"}
+        return JSONResponse({key:value for key,value in item.items() if key in allowed},headers={'Cache-Control':'no-store'})
+
+    @app.get("/api/jobs/{job_id}/progress")
+    def job_progress(request: Request,job_id: int):
+        guard(request)
+        return progress_response(store.job_progress(job_id) if hasattr(store,'job_progress') else None)
+
     @app.get("/api/runs/{run_id}/progress")
     def run_progress(request: Request, run_id: int):
         guard(request)
         item = store.run_progress(run_id) if hasattr(store, "run_progress") else None
-        if item is None:
-            raise HTTPException(404, "Запуск не найден")
-        allowed = {"run_id", "supplier_name", "run_status", "phase", "phase_label_ru", "status",
-                   "total", "processed", "succeeded", "errors", "percent", "rate_per_second",
-                   "eta_seconds", "eta_human_ru", "elapsed_seconds", "fetch_elapsed_seconds", "updated_at"}
-        return JSONResponse({key: value for key, value in item.items() if key in allowed})
+        return progress_response(item)
 
     @app.get("/scheduler", response_class=HTMLResponse)
     def scheduler_page(request: Request):

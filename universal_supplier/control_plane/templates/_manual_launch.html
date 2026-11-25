@@ -8,6 +8,7 @@
 <fieldset><legend>Пауза между запросами, сек.</legend><div class="collection-range"><label>От<input type="number" name="delay_min_seconds" min="0.001" max="86400" step="0.001" value="{{cfg.delay_min_seconds|number}}" required {{'readonly' if current_user.role!='ADMIN'}}></label><label>До<input type="number" name="delay_max_seconds" min="0.001" max="86400" step="0.001" value="{{cfg.delay_max_seconds|number}}" required {{'readonly' if current_user.role!='ADMIN'}}></label></div></fieldset>
 <p class="form-hint">Меньше пауза — быстрее сбор. Правила сайта могут увеличить задержку.</p>
 <label>Количество карточек<input type="number" name="max_products" min="1" max="100000" required placeholder="Например, 100"></label>
+{% if current_user.role=='ADMIN' %}<label>Лимит времени, часов<input type="number" name="duration_hours" min="1" max="24" step="1" placeholder="По настройкам источника"></label>{% endif %}
 {% if not item.enabled %}<p class="form-hint">Запуск включит этот источник. Другие поставщики и расписание не изменятся.</p>{% endif %}
 <button class="manual-start-button">Начать парсинг</button><p class="form-hint manual-form-hint" role="status">{% if item.code=='ivstankomaster' %}В карточках сохраняются цены с НДС.{% else %}Будут обновлены сохранённые карточки.{% endif %} Импорт на сайт не выполняется.</p>
 </form><p><a href="/suppliers/{{item.id}}/parsing">Дополнительные настройки и история</a></p>

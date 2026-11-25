@@ -3,7 +3,7 @@ import argparse
 import json
 import os
 import time
-from .manual_collection import verify, require
+from .manual_collection import MANUAL_EXECUTION, verify, require
 from .runtime_config import runtime_config, guarded_connect
 from .queue import PostgresJobQueue
 
@@ -45,10 +45,13 @@ def run(job_id):
         queue.complete(job_id,'failed',error_message='MANUAL_WORKER_BUSY: исполнитель занят; повторите запуск позже')
         return
     worker=Orchestrator(cfg,queue=queue,max_parallel_supplier_jobs=1)
+    token=MANUAL_EXECUTION.set(job.id)
     try:
         worker._run_job(job)
         validate(job.settings_snapshot)
-    finally:worker.pool.shutdown(wait=True)
+    finally:
+        MANUAL_EXECUTION.reset(token)
+        worker.pool.shutdown(wait=True)
 
 
 if __name__=='__main__':

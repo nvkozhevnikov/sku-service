@@ -182,7 +182,8 @@ class PostgresJobQueue:
             from .manual_collection import ManualRequest
             if not isinstance(manual_request,ManualRequest):raise PermissionError('Неверное подтверждение запуска')
             manual_request.validate(supplier_id,source_limit,trigger_type,source_mode)
-            if any(x is not None for x in (automation_sha256,recovery_sha256,pilot_limit,resume_job_id)):
+            if any(x is not None for x in (automation_sha256,recovery_sha256,pilot_limit)) or (
+                    (source_mode=='RESUME') != (type(resume_job_id) is int and resume_job_id>0)):
                 raise PermissionError('Ручной запуск нельзя смешивать с другим допуском')
         if automation_sha256 is not None:
             from .automation_execution import require_active
@@ -239,7 +240,17 @@ class PostgresJobQueue:
                 "domain": normalized_domain(base_url), "crawl_type": crawl_type,
                 "crawl_settings": crawl_settings or {}, "rate_settings": rate_settings or {},
             }
-            if source_limit is not None:
+            if manual_request is not None and source_mode=='RESUME':
+                cursor.execute("""SELECT j.status,j.settings_snapshot,r.metadata
+                    FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id
+                    WHERE j.id=%s AND j.supplier_id=%s
+                      AND NOT EXISTS (SELECT 1 FROM crawl_jobs newer WHERE newer.supplier_id=j.supplier_id
+                          AND newer.id>j.id AND newer.status<>'skipped_already_queued')
+                    FOR SHARE OF j""",(resume_job_id,supplier_id))
+                previous=cursor.fetchone()
+                if not previous:raise ValueError('Выберите последнее задание этого поставщика')
+                snapshot=manual_request.resume(self.config,supplier_id,supplier,resume_job_id,previous)
+            elif source_limit is not None:
                 preview=(manual_request.preview(self,connection,cursor,supplier_id,supplier,source_limit) if manual_request is not None else self._canary_preview(connection,cursor,supplier_id,supplier,source_limit,source_mode))
                 if manual_request is None and preview['confirmation_sha256']!=source_preview_sha256:
                     raise ValueError('Партия, количество, политика или target изменились; заново откройте preview canary')
@@ -321,7 +332,8 @@ class PostgresJobQueue:
                 snapshot['manual_collection']=manual_request.seal(snapshot,cursor)
                 from .admin_store import PostgresAdminStore
                 PostgresAdminStore._audit(cursor,manual_request.actor.id,'MANUAL_COLLECTION_APPROVED','supplier',supplier_id,None,
-                    {'cards':source_limit,'nonce':snapshot['manual_collection']['nonce'],'profile':snapshot['rate_settings']},'Authenticated one-click manual start; no scheduler or matching apply')
+                    {'cards':snapshot['crawl_settings']['max_products'],'resume_job_id':resume_job_id,
+                     'nonce':snapshot['manual_collection']['nonce'],'profile':snapshot['rate_settings']},'Authenticated one-click manual start; no scheduler or matching apply')
             if active:
                 cursor.execute(
                     """INSERT INTO crawl_jobs

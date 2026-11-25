@@ -28,3 +28,6 @@ body.workspace-shell>.workspace-header{min-height:72px;padding:12px 32px;backgro
 .workspace-layout>main{animation:workspace-enter .14s ease-out}@keyframes workspace-enter{from{opacity:.7}to{opacity:1}}@media(prefers-reduced-motion:reduce){.workspace-layout>main{animation:none!important}}
 
 .manual-start label{display:block}.manual-start label>input{display:block;max-width:100%;margin:6px 0 14px}.manual-start>label>input{max-width:280px}.manual-start button{margin-top:8px}
+
+.collection-progress progress{display:block;width:min(100%,36rem);min-width:7rem;height:1rem;accent-color:var(--ws-blue)}
+.collection-progress p{margin:4px 0}

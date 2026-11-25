@@ -29,7 +29,8 @@ class SourceBackend:
             from .automation_execution import validate_job
             validate_job(job.settings_snapshot)
         value=job.settings_snapshot.get('source_input')
-        if mode=='RESUME' and (job.settings_snapshot.get('crawl_settings') or {}).get('source_canary'):
+        from .manual_collection import running_manually
+        if mode=='RESUME' and not running_manually(job) and (job.settings_snapshot.get('crawl_settings') or {}).get('source_canary'):
             from .source_runtime import read_input
             settings=job.settings_snapshot['crawl_settings']
             value=read_input(self.code,settings['resume_owner_job_id'],settings['resume_input_sha256'])
@@ -134,13 +135,16 @@ class SourceBackend:
                        observation.price_type,observation.price_raw,observation.price_source,Jsonb(observation.extraction_evidence)))
         return {'ingest_counts':counts}
     def probe(self,entry,receipt):
+        from .source_resume import MANUAL_TIMEOUT, quarantine_evidence_present
+        if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')==MANUAL_TIMEOUT:
+            # This outcome was archived before any capture could reach ingest.
+            return 'NOT_FOUND' if quarantine_evidence_present(receipt,entry) else 'UNKNOWN'
         if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')=='operator_scope':
             from .source_recovery import approved_scope_item,scope_sql_absent
             item=approved_scope_item(receipt,entry)
             with self.repo.connection.cursor() as q:scope_sql_absent(q,item)
             return 'NOT_FOUND'
         if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')=='http':
-            from .source_resume import quarantine_evidence_present
             if not quarantine_evidence_present(receipt,entry):return 'UNKNOWN'
             record=receipt['http_evidence']
             with self.repo.connection.cursor() as q:
@@ -180,8 +184,11 @@ class SourceBackend:
         phase={'PRODUCTS':'FETCHING_PRODUCTS'}.get(self.summary.get('phase'),self.summary.get('phase','QUEUED'))
         from .progress import PHASE_LABELS_RU
         speed=self.summary.get('http_cards_per_minute')
+        saved=self.summary.get('sql_committed',0)
         progress={'phase':phase,'phase_label_ru':PHASE_LABELS_RU.get(phase,phase),'status':self.summary.get('status','running'),
-            'total':total,'processed':processed,'succeeded':self.summary.get('sql_committed',0),'errors':self.summary.get('errors',0),
+            'total':total,'processed':processed,'succeeded':saved,'errors':self.summary.get('errors',0),
+            'saved_percent':None if not total else min(100,100*saved/total),
+            'deferred':self.summary.get('deferred',0),
             'percent':None if total is None else 100 if total==0 else min(100,100*processed/total),
             'rate_per_second':None if speed is None else speed/60,'eta_seconds':None,'eta_human_ru':'Время окончания пока неизвестно',
             'elapsed_seconds':time.monotonic()-self.started,'updated_at':datetime.now(timezone.utc).isoformat()}

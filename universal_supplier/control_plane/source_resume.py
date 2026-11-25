@@ -13,6 +13,16 @@ from universal_supplier.kami_checkpoint import write_checkpoint
 from universal_supplier.postgres import SUPPLIER_CONFIGS
 
 STATES=frozenset({'COMMITTED','HTTP_CAPTURED_NOT_COMMITTED','FAILED','NOT_REQUESTED','UNCERTAIN','QUARANTINED'})
+MANUAL_TIMEOUT = 'manual_read_timeout'
+
+
+def manual_timeout_receipt(origin, url, job_id, evidence_path):
+    proof={'job_id':job_id,'file':Path(evidence_path).name,
+           'sha256':hashlib.sha256(Path(evidence_path).read_bytes()).hexdigest()}
+    receipt={'url':url,'state':'QUARANTINED','origin':dict(origin),'timeout_evidence':proof,
+             'isolation':{'before_ingest':True,'category':MANUAL_TIMEOUT,'reason':'READ_TIMEOUT_UNKNOWN'}}
+    if not quarantine_evidence_present(receipt,{'url':url}):raise ValueError('DEFERRED_TIMEOUT_PROOF_REQUIRED')
+    return receipt
 
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
 
@@ -27,6 +37,26 @@ def original_capture_present(receipt,entry):
 
 
 def quarantine_evidence_present(receipt,entry):
+    if receipt.get('isolation',{}).get('category')==MANUAL_TIMEOUT:
+        proof=receipt.get('timeout_evidence') or {}
+        origin=receipt.get('origin') or {}
+        try:
+            from .source_runtime import job_dir
+            name=proof['file'];jid=proof['job_id'];source=origin['source']
+            if (source not in SUPPLIER_CONFIGS or type(jid) is not int or jid<1 or
+                    len(name)!=69 or not name.endswith('.json') or
+                    any(c not in '0123456789abcdef' for c in name[:-5])):return False
+            raw=(job_dir(source,jid)/'transport-errors'/name).read_bytes()
+            if hashlib.sha256(raw).hexdigest()!=proof['sha256']:return False
+            record=json.loads(raw);diag=record['diagnostics']
+            from .transport_diagnostics import safe_message
+            return (receipt['url']==entry['url'] and record['url']==safe_message(entry['url'])
+                    and record['job_id']==jid and record['owner_job_id']==origin['job_id']
+                    and record['input_sha256']==origin['manifest_sha256']
+                    and record['transport_started'] is True and record['http_status'] is None
+                    and diag['source']==source and diag['request_scope'] in ('product','discovery')
+                    and diag['response_available'] is False and diag['original_exception']['type']=='TimeoutError')
+        except (OSError,ValueError,KeyError,TypeError):return False
     if receipt.get('isolation',{}).get('category')=='operator_scope':
         from .source_recovery import approved_scope_item
         try:approved_scope_item(receipt,entry);return True
@@ -67,7 +97,7 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
             if state=='HTTP_CAPTURED_NOT_COMMITTED' and not original_capture_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not quarantine_evidence_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not (receipt.get('isolation',{}).get('before_ingest') is True and
-                    receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope')):state='UNCERTAIN'
+                    receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope',MANUAL_TIMEOUT)):state='UNCERTAIN'
             if state=='QUARANTINED' and receipt['isolation']['category']=='matching':
                 proof=receipt['isolation'].get('rejection_proof',{})
                 if not (proof.get('rollback_verified') is True and proof.get('sql_absent') is True and
@@ -148,7 +178,7 @@ class SourceCheckpoint:
             batch=self.state['frontier'][:limit];self.state['frontier']=self.state['frontier'][limit:]
             for url in batch:self.state['inflight'][url]={'state':'UNCERTAIN'}
             return batch
-    def record_terminal(self,receipts):
+    def record_terminal(self,receipts,*,defer_to_tail=False):
         with self._change():
             for receipt in receipts:
                 url=receipt['url'];state=receipt['state'];self.validator(url)
@@ -160,6 +190,11 @@ class SourceCheckpoint:
                 history=previous['history']
                 if not history or history[-1]!=receipt:history=history+[deepcopy(receipt)]
                 self.state['terminal'][url]={'state':state,'receipt':deepcopy(receipt),'history':history};self.state['inflight'].pop(url,None)
+                if defer_to_tail:
+                    if (state!='QUARANTINED' or receipt.get('isolation',{}).get('category')!=MANUAL_TIMEOUT
+                            or not quarantine_evidence_present(receipt,{'url':url}) or url in self.state['frontier']):
+                        raise ValueError('DEFERRED_TIMEOUT_PROOF_REQUIRED')
+                    self.state['frontier'].append(url)
     def return_not_requested(self,receipt):
         """Only an explicit pre-transport receipt may return a claim to frontier.
 
@@ -168,6 +203,13 @@ class SourceCheckpoint:
         """
         with self._change():
             url=receipt['url'];self.validator(url)
+            prior=self.state['terminal'].get(url,{})
+            if (url in self.state['inflight'] and receipt.get('state')=='NOT_REQUESTED'
+                    and receipt.get('transport_started') is False
+                    and prior.get('receipt',{}).get('isolation',{}).get('category')==MANUAL_TIMEOUT):
+                self.state['inflight'].pop(url)
+                self.state['frontier'].insert(0,url)
+                return
             if (url not in self.state['inflight'] or url in self.state['terminal'] and self.state['terminal'][url]['state']!='NOT_REQUESTED'
                     or receipt.get('state')!='NOT_REQUESTED' or receipt.get('transport_started') is not False):
                 raise ValueError('NOT_REQUESTED_PROOF_REQUIRED')
@@ -215,7 +257,10 @@ class SourceCheckpoint:
                 self.validator(child)
                 if child not in known:self.state['frontier'].append(child);known.add(child)
             self.state['inflight'].pop(url);self.state['visited'].append(url)
-            self.state['discovery_receipts'][url]={'evidence_sha256':evidence_sha256,'children':list(children),'products':deepcopy(list(products))}
+            prior=self.state['terminal'].pop(url,None)
+            receipt={'evidence_sha256':evidence_sha256,'children':list(children),'products':deepcopy(list(products))}
+            if prior:receipt['history']=prior['history']
+            self.state['discovery_receipts'][url]=receipt
     def finish_discovery(self,*,category_failures=()):
         with self._change():
             self.state['discovery_finished']=True;self.state['category_failures']=list(category_failures)
