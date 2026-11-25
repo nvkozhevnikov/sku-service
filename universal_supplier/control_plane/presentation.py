@@ -103,6 +103,16 @@ def job_message(value):
         return 'На товарной странице произошёл сетевой сбой. Подробности сохранены в запуске.'
     if upper in {'SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_CARD_ERROR_THRESHOLD'}:
         return 'Несколько карточек подряд завершились ошибкой. Сбор остановлен, очередь сохранена.'
+    if upper == 'MAX_RUN_DURATION_EXCEEDED':
+        return 'Истекло время сбора. Необработанные карточки остались в очереди.'
+    if upper.startswith('SOURCE_BLOCKED_HTTP_403'):
+        return 'Сайт запретил доступ. Сбор остановлен.'
+    if upper.startswith(('SOURCE_BLOCKED_HTTP_429', 'SOURCE_RETRY_AFTER_HTTP_503')):
+        return 'Сайт попросил сделать паузу. Сбор остановлен.'
+    if 'EXISTING_LINK_CONFLICT' in upper:
+        return 'Данные карточки противоречат существующей связи. Прежняя связь сохранена.'
+    if upper in {'HTTP_404', 'HTTP_410'}:
+        return 'Карточка недоступна по сохранённому адресу.'
     if upper.startswith(('REMOTEDISCONNECTED:', 'CONNECTIONRESETERROR:', 'CONNECTIONABORTEDERROR:',
                          'BROKENPIPEERROR:', 'INCOMPLETEREAD:')):
         return 'Соединение оборвалось до полной загрузки товарной страницы.'
@@ -117,6 +127,41 @@ def job_message(value):
     if 'ERROR' in upper or 'FAILED' in upper:
         return 'Сбор завершился с ошибкой'
     return ''
+
+
+def collection_issue_counts(receipts):
+    counts = {'matching_conflicts': 0, 'other_card_issues': 0}
+    for receipt in receipts or ():
+        category = (receipt.get('isolation') or {}).get('category')
+        if category == 'matching':
+            counts['matching_conflicts'] += 1
+        elif category not in ('manual_read_timeout', 'manual_remote_disconnect'):
+            counts['other_card_issues'] += 1
+    return counts
+
+
+def run_collection_progress(metadata):
+    runtime = metadata.get('source_runtime') or {}
+    return {**(metadata.get('progress') or {}), **collection_issue_counts(runtime.get('quarantined'))}
+
+
+def collection_issue_message(receipt):
+    isolation = receipt.get('isolation') or {}
+    reason = isolation.get('reason')
+    category = isolation.get('category')
+    if category == 'manual_remote_disconnect':
+        return 'Соединение оборвалось. Карточка отложена.'
+    if category == 'manual_read_timeout':
+        return 'Карточка не ответила вовремя и была отложена.'
+    if category == 'matching':
+        return job_message(reason) if 'EXISTING_LINK_CONFLICT' in str(reason) else 'Обновление требует проверки сопоставления.'
+    if category == 'identity':
+        return 'Не удалось подтвердить, что это тот же товар. Карточка пропущена.'
+    if category == 'parse':
+        return 'Не удалось разобрать данные карточки. Карточка пропущена.'
+    if category == 'http':
+        return job_message(reason) or 'Сайт вернул ошибку для этой карточки.'
+    return 'Карточка требует проверки.'
 
 def phase_summary(row):
     if not hasattr(row,'get'):row=vars(row)

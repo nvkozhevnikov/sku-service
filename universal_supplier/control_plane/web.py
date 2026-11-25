@@ -187,6 +187,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     templates.env.globals.update(phase_summary=phase_summary,price_label=price_label,duration_label=duration_label)
     templates.env.filters['msk'] = display_timestamp
     from .presentation import compact_number, collection_notice, error_presentation
+    from .presentation import run_collection_progress
+    templates.env.globals['run_collection_progress'] = run_collection_progress
     templates.env.filters['number'] = compact_number
     templates.env.globals['collection_notice'] = collection_notice
     templates.env.globals.update(supplier_display_name=supplier_display_name, supplier_status=supplier_status, moscow_datetime=moscow_datetime, job_message=job_message)
@@ -787,6 +789,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):
+        from .presentation import collection_issue_message
+        from .transport_diagnostics import safe_message
         guard(request); item = store.run(run_id)
         if not item: raise HTTPException(404, "Запуск не найден")
         if request.query_params.get('check_source_resume')=='1' and (item.get('metadata') or {}).get('source_runtime'):
@@ -799,12 +803,25 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             except (ValueError,PermissionError,KeyError,AttributeError) as error:
                 item['metadata']['source_runtime']['resume_available']=False
                 item['metadata']['source_runtime']['resume_check']='Продолжение заблокировано: '+str(error)
-        return templates.TemplateResponse(request, "run_detail.html", context(request, item=item, active="runs"))
+        metadata = item.get('metadata') or {}
+        receipts = (metadata.get('source_runtime') or {}).get('quarantined') or []
+        progress = run_collection_progress(metadata)
+        issues = []
+        for receipt in receipts[:50]:
+            proof = (receipt.get('isolation') or {}).get('rejection_proof') or {}
+            linked_id = proof.get('sterbrust_product_id')
+            issues.append({'message': collection_issue_message(receipt),
+                           'url': safe_http_url(safe_message(receipt.get('url') or '')),
+                           'linked_id': linked_id if is_id(linked_id) else None})
+        return templates.TemplateResponse(request, "run_detail.html",
+            context(request, item=item, active="runs", collection_progress=progress,
+                    collection_issues=issues, collection_issues_total=len(receipts)))
 
     def progress_response(item):
         if item is None:raise HTTPException(404, "Запуск не найден")
         allowed={"run_id","supplier_name","run_status","job_status","phase","phase_label_ru","status",
                  "total","processed","succeeded","errors","percent","saved_percent","deferred","durable_progress","rate_per_second",
+                 "matching_conflicts","other_card_issues",
                  "eta_seconds","eta_human_ru","elapsed_seconds","fetch_elapsed_seconds","updated_at"}
         return JSONResponse({key:value for key,value in item.items() if key in allowed},headers={'Cache-Control':'no-store'})
 

@@ -1,4 +1,5 @@
 """Application permissions layered on the existing users/sessions, never DB roles."""
+import re
 from urllib.parse import urlsplit
 
 PERMISSIONS = {
@@ -37,6 +38,8 @@ def allowed(user, permission):
 
 def request_permission(path, method):
     write = method not in {"GET", "HEAD", "OPTIONS"}
+    if method in {"GET", "HEAD"} and re.fullmatch(r"/api/(?:jobs|runs)/[0-9]+/progress", path):
+        return "catalog.read"
     if path.startswith('/content-studio'):
         return 'content.read'  # child adapter enforces exact action + project ACL
     if path.startswith(("/users", "/roles", "/settings/users")):
@@ -60,7 +63,6 @@ def request_permission(path, method):
 
 
 def validate_profile(code, name, permissions):
-    import re
     code, name = str(code).strip().upper(), str(name).strip()
     if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,47}", code) or not 1 <= len(name) <= 100:
         raise ValueError("Код роли: 3–48 символов A–Z/0–9/_; название: 1–100 символов")

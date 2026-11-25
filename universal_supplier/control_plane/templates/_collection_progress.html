@@ -6,7 +6,9 @@
   {% if url %}<p data-phase>{{ progress.get('phase_label_ru') or 'Ожидается' }}</p>{% endif %}
   <progress data-bar aria-label="Ход сбора" max="100"{% if value is not none %} value="{{ value }}"{% endif %}></progress>
   <p data-count>{{ 'Сохранено' if durable else 'Обработано' }} {{ count }}{% if total is not none %} из {{ total }}{% endif %}{% if value is not none %} · {{ '%.1f'|format(value)|replace('.', ',') }}%{% endif %}</p>
-  <p data-deferred{% if not progress.get('deferred') %} hidden{% endif %}>Отложено {{ progress.get('deferred',0) }}</p>
+  <p data-deferred{% if not progress.get('deferred') %} hidden{% endif %}>Отложено из-за сети: {{ progress.get('deferred',0) }}</p>
+  <p data-matching-conflicts{% if not progress.get('matching_conflicts') %} hidden{% endif %}>Конфликты сопоставления: {{ progress.get('matching_conflicts',0) }}</p>
+  <p data-other-card-issues{% if not progress.get('other_card_issues') %} hidden{% endif %}>Прочие проблемы с карточками: {{ progress.get('other_card_issues',0) }}</p>
   {% if show_link %}<a data-run-link hidden>Открыть подробности</a>{% endif %}
 </div>
 {% endmacro %}

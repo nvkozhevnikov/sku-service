@@ -12,6 +12,7 @@ from typing import Any
 from universal_supplier.postgres import PostgresConfig
 from .heartbeat import read_components
 from .scheduler import next_occurrences
+from .presentation import collection_issue_counts
 
 
 MAX_PAGE = 100_000
@@ -419,14 +420,15 @@ class PostgresControlPlaneStore:
             cursor.execute("""SELECT r.id AS run_id, r.status AS run_status, s.name AS supplier_name,
                 EXISTS (SELECT 1 FROM crawl_jobs j WHERE j.crawl_run_id=r.id AND j.status='running'
                     AND j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection') AS manual_job_expired,
-                r.metadata->'progress' AS progress, r.metadata ? 'source_runtime' AS durable_progress
+                r.metadata->'progress' AS progress, r.metadata ? 'source_runtime' AS durable_progress,
+                r.metadata->'source_runtime'->'quarantined' AS quarantined
                 FROM crawl_runs r
                 JOIN suppliers s ON r.supplier_id=s.id WHERE r.id=%s""",(run_id,))
             row=cursor.fetchone()
         if not row:return None
         if row.pop('manual_job_expired',False) and row['run_status']=='running':
             row['run_status']='lease_expired'
-        return {**(row.pop('progress') or {}),**row}
+        return {**(row.pop('progress') or {}), **collection_issue_counts(row.pop('quarantined',None)), **row}
 
     def job_progress(self, job_id: int) -> dict | None:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -434,6 +436,7 @@ class PostgresControlPlaneStore:
                 AND j.settings_snapshot ? 'manual_collection' THEN 'lease_expired' ELSE j.status END AS job_status,
                 r.id AS run_id,r.status AS run_status,
                 s.name AS supplier_name,r.metadata->'progress' AS progress,
+                r.metadata->'source_runtime'->'quarantined' AS quarantined,
                 (coalesce(r.metadata ? 'source_runtime',false)
                  OR j.settings_snapshot ? 'source_input') AS durable_progress,
                 CASE WHEN j.settings_snapshot->'source_input'->>'mode'='REFRESH'
@@ -443,7 +446,8 @@ class PostgresControlPlaneStore:
             row=cursor.fetchone()
         if not row:return None
         progress=row.pop('progress') or {}
-        return {'total':row.pop('target'),'succeeded':0,'deferred':0,**progress,**row}
+        return {'total':row.pop('target'),'succeeded':0,'deferred':0,**progress,
+                **collection_issue_counts(row.pop('quarantined',None)), **row}
 
     def suppliers(self) -> list[dict]:
         return self.dashboard()

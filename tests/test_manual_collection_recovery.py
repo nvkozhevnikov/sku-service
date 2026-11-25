@@ -261,6 +261,39 @@ def test_job_progress_polls_and_api_omits_private_metadata(tmp_path,monkeypatch)
     assert response.headers['cache-control']=='no-store'
 
 
+def test_partial_collection_separates_network_and_matching_for_operator(tmp_path,monkeypatch):
+    c,store=client(tmp_path,monkeypatch,role='OPERATOR')
+    receipts=[
+        {'url':'https://example.test/timeout?token=private-sample',
+         'isolation':{'category':'manual_read_timeout','reason':'READ_TIMEOUT_UNKNOWN'}},
+        {'url':'https://example.test/conflict',
+         'isolation':{'category':'matching','reason':'SOURCE_UPDATE_SEMANTIC_CONFLICT:EXISTING_LINK_CONFLICT'}},
+        {'url':'javascript:alert(1)','isolation':{'category':'http','reason':'HTTP_410'}},
+    ]
+    progress={'total':9,'succeeded':6,'deferred':1,'durable_progress':True}
+    details={'id':105,'supplier_name':'КАМИ','status':'partial','supplier_id':5812,'manual_job_id':214,
+             'metadata':{'progress':progress,'source_runtime':{'remaining':0,'quarantined':receipts}},
+             'errors':[]}
+    monkeypatch.setattr(store,'run',lambda run_id: details)
+    monkeypatch.setattr(type(store),'job_progress',lambda self,jid:{**progress,'job_status':'partial',
+        'run_id':105,'matching_conflicts':1,'other_card_issues':1,'quarantined':receipts},raising=False)
+    page=c.get('/runs/105')
+    assert page.status_code==200 and 'Очередь обработана' in page.text
+    assert 'Отложено из-за сети: 1' in page.text and 'Конфликты сопоставления: 1' in page.text
+    assert 'Прочие проблемы с карточками: 1' in page.text
+    assert 'Прежняя связь сохранена' in page.text
+    assert 'Карточка недоступна по сохранённому адресу' in page.text
+    assert 'EXISTING_LINK_CONFLICT' not in page.text and 'Продолжить сбор' not in page.text
+    assert 'href="https://example.test/timeout"' in page.text
+    assert 'private-sample' not in page.text and 'javascript:alert' not in page.text
+    response=c.get('/api/jobs/214/progress')
+    assert response.status_code==200
+    payload=response.json()
+    assert payload['matching_conflicts']==1 and payload['other_card_issues']==1
+    assert 'quarantined' not in payload
+    assert c.post('/api/jobs/214/progress').status_code==403
+
+
 def test_expired_job_action_is_scoped_and_requires_csrf(tmp_path,monkeypatch):
     from universal_supplier.control_plane.queue import InMemoryJobQueue
     monkeypatch.setenv('STERBRUST_MANUAL_COLLECTION_ENABLED','YES')

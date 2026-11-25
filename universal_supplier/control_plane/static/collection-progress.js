@@ -38,9 +38,15 @@ for (const root of document.querySelectorAll("[data-collection-progress]")) {
       root.querySelector("[data-count]").textContent = (durable ? "Сохранено " : "Обработано ") + count
         + (total == null ? "" : " из " + total)
         + (percent === null ? "" : " · " + percentText.format(percent) + "%");
-      const deferred = root.querySelector("[data-deferred]");
-      deferred.hidden = !progress.deferred;
-      deferred.textContent = "Отложено " + (progress.deferred || 0);
+      for (const [selector, count, label] of [
+        ["[data-deferred]", progress.deferred, "Отложено из-за сети"],
+        ["[data-matching-conflicts]", progress.matching_conflicts, "Конфликты сопоставления"],
+        ["[data-other-card-issues]", progress.other_card_issues, "Прочие проблемы с карточками"],
+      ]) {
+        const line = root.querySelector(selector);
+        line.hidden = !count;
+        line.textContent = label + ": " + (count ?? 0);
+      }
       const link = root.querySelector("[data-run-link]");
       if (link && Number.isInteger(progress.run_id)) {
         link.href = "/runs/" + progress.run_id;
