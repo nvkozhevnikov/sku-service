@@ -37,10 +37,12 @@ def offline(monkeypatch,tmp_path):
 
 
 def native_manual(*, fail_tail=False, end_window=False, block=False, robots_replies=None, robots_limit=2,
-                  product_error=TimeoutError):
+                  product_error=TimeoutError, all_cards_fail=False):
     code='partner_st'
     base='https://partner-st.ru'
-    rate=approved_policy(code,base,{'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0})
+    rate_values={'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0}
+    if all_cards_fail:rate_values['consecutive_error_threshold']=2
+    rate=approved_policy(code,base,rate_values)
     known=[{'url':base+f'/item-{i}/','source_external_id':str(i)} for i in (1,2,3)]
     data={'format':'source-runtime-input/v1','supplier_code':code,'mode':'REFRESH','entries':known,
           'seeds':[],'rate_policy':rate.snapshot(),'engine_sha256':engine_fingerprint()}
@@ -80,7 +82,7 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
                 return HttpResponse(url,200,'text/plain',b'User-agent: *\nAllow: /\n')
             number=int(url.removesuffix('/').rsplit('-',1)[-1])
             calls.append(number)
-            if number==1 and (calls.count(1)==1 or fail_tail):
+            if all_cards_fail or (number==1 and (calls.count(1)==1 or fail_tail)):
                 raise product_error('no response')
             if number==2 and block:return HttpResponse(url,429,'text/plain',b'busy')
             return HttpResponse(url,200,'text/html; charset=utf-8',html(number).encode())
@@ -97,7 +99,8 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
 
 
 @pytest.mark.parametrize('fail_tail',[False,True])
-@pytest.mark.parametrize('product_error',[TimeoutError,RemoteDisconnected])
+@pytest.mark.parametrize('product_error',[TimeoutError,RemoteDisconnected,
+    pytest.param(lambda message:URLError(TimeoutError(10060,message)),id='wrapped-connect-timeout')])
 def test_manual_transport_failure_moves_to_tail_once(fail_tail,product_error):
     run,job,backend,calls=native_manual(fail_tail=fail_tail,product_error=product_error)
     result=run(job)
@@ -107,6 +110,23 @@ def test_manual_transport_failure_moves_to_tail_once(fail_tail,product_error):
     assert result['status']==('partial' if fail_tail else 'succeeded')
     assert result['remaining']==0 and len(backend.writes)==result['sql_committed']
     assert any(summary.get('sql_committed')==1 and summary.get('deferred')==1 for summary in backend.summaries)
+
+
+def test_consecutive_wrapped_timeouts_stop_with_resumable_queue():
+    run,job,backend,calls=native_manual(all_cards_fail=True,
+        product_error=lambda message:URLError(TimeoutError(10060,message)))
+    result=run(job)
+    assert calls==[1,2] and not backend.writes
+    assert result['termination_reason']=='SOURCE_NETWORK_CIRCUIT_OPEN'
+    assert result['deferred']==2 and result['remaining']==3 and result['resume_available']
+
+
+def test_other_urlerror_keeps_unknown_result_blocked():
+    run,job,backend,calls=native_manual(product_error=URLError)
+    result=run(job)
+    assert calls==[1] and not backend.writes
+    assert result['termination_reason']=='SOURCE_CARD_HTTP_FAILED'
+    assert result['deferred']==0 and not result['resume_available']
 
 
 def test_bounded_manual_disconnect_goes_to_tail_before_retry():

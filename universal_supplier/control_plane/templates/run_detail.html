@@ -5,7 +5,9 @@
 {% set meta=item.metadata or {} %}
 <section class="panel"{% if item.status=='running' and not item.manual_job_expired %} data-rendered-running{% endif %}><h3>Ход сбора</h3>{{ progress_meter(meta.get('progress') or {}, '/api/runs/' ~ item.id ~ '/progress', durable='source_runtime' in meta) }}
 {% set stop_reason=meta.get('termination_reason') or (meta.get('source_runtime') or {}).get('termination_reason') %}
-{% if stop_reason in ['SOURCE_ROBOTS_UNAVAILABLE','CANARY_ROBOTS_REQUEST_LIMIT','ROBOTS_NOT_PROVEN','ROBOTS_NOT_TEXT','ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT','SOURCE_CARD_HTTP_FAILED'] %}<p class="form-hint">{{ job_message(stop_reason) }}</p>{% endif %}</section>
+{% set metrics=(meta.get('source_runtime') or {}).get('request_metrics') or {} %}
+{% if stop_reason=='SOURCE_CARD_HTTP_FAILED' and metrics.get('circuit_breaker_trips') %}{% set stop_reason='SOURCE_NETWORK_CIRCUIT_OPEN' %}{% endif %}
+{% if stop_reason in ['SOURCE_ROBOTS_UNAVAILABLE','CANARY_ROBOTS_REQUEST_LIMIT','ROBOTS_NOT_PROVEN','ROBOTS_NOT_TEXT','ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT','SOURCE_CARD_HTTP_FAILED','SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_CARD_ERROR_THRESHOLD'] %}<p class="form-hint">{{ job_message(stop_reason) }}</p>{% endif %}</section>
 {% if item.status=='failed' %}<section class="panel notice warning" role="alert"><h3>Сбор завершился ошибкой</h3><p>Обновление данных не завершено. HTTP-прогресс не подтверждает запись в БД.</p><p>{{item.metadata.failure if item.metadata and item.metadata.failure else 'Причина не сохранена; требуется диагностика журнала запуска.'}}</p></section>{% endif %}
 {% if item.metadata and item.metadata.http_phase %}<section class="panel"><h3>HTTP-этап</h3><p>Успешно разобрано {{item.metadata.http_phase.successful_cards}} из {{item.metadata.http_phase.selected_urls}}; ошибок {{item.metadata.http_phase.errors}}. Время {{item.metadata.http_phase.duration_seconds}} сек.; скорость {{item.metadata.http_phase.cards_per_minute}} карточек/мин.</p></section>{% endif %}
 {% if item.metadata and item.metadata.source_runtime %}{% set rt=item.metadata.source_runtime %}

@@ -128,7 +128,8 @@ class ManualRequest:
                 uncertain=[r['receipt'] for r in state['terminal'].values() if r['state']=='UNCERTAIN']
                 if len(uncertain)==1:
                     item=uncertain[0]
-                    category={'TimeoutError':MANUAL_TIMEOUT,'RemoteDisconnected':MANUAL_DISCONNECT}.get(
+                    category={'TimeoutError':MANUAL_TIMEOUT,'URLError':MANUAL_TIMEOUT,
+                              'RemoteDisconnected':MANUAL_DISCONNECT}.get(
                         item.get('reason','').partition(':')[0])
                     if category:
                         for path in (job_dir(code,parent_id)/'transport-errors').glob('*.json'):

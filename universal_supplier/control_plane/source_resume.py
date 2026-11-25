@@ -56,6 +56,9 @@ def quarantine_evidence_present(receipt,entry):
             exception=diag['original_exception']
             expected=(exception['type']=='TimeoutError' if category==MANUAL_TIMEOUT
                       else (exception['module'],exception['type'])==('http.client','RemoteDisconnected'))
+            if category==MANUAL_TIMEOUT and (exception.get('module'),exception.get('type'))==('urllib.error','URLError'):
+                cause=exception.get('reason',{})
+                expected=isinstance(cause,dict) and (cause.get('module'),cause.get('type'))==('builtins','TimeoutError')
             from .transport_diagnostics import safe_message
             return (receipt['url']==entry['url'] and record['url']==safe_message(entry['url'])
                     and record['job_id']==jid and record['owner_job_id']==origin['job_id']

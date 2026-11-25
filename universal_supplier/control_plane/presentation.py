@@ -101,6 +101,8 @@ def job_message(value):
         return 'Сайт не предоставил пригодный robots.txt. Карточки не запрашивались.'
     if upper == 'SOURCE_CARD_HTTP_FAILED':
         return 'На товарной странице произошёл сетевой сбой. Подробности сохранены в запуске.'
+    if upper in {'SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_CARD_ERROR_THRESHOLD'}:
+        return 'Несколько карточек подряд завершились ошибкой. Сбор остановлен, очередь сохранена.'
     if upper.startswith('REMOTEDISCONNECTED:'):
         return 'Соединение с товарной страницей закрылось без ответа.'
     if 'UNKNOWN' in upper or 'UNCERTAIN' in upper:

@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
 from dataclasses import dataclass, replace
 from datetime import datetime,timezone
 from http.client import RemoteDisconnected
+from urllib.error import URLError
 from urllib.parse import urlsplit
 from contextvars import ContextVar
 import hashlib,json,math,os,threading
@@ -200,7 +201,9 @@ class BoundedHostFetcher:
                         raise RequestAborted('AUTOMATION_UNKNOWN_HTTP_OUTCOME') from error
                     manual_request=self.manual_product_attempts and request_scope!='robots'
                     defer_disconnect=manual_request and type(error) is RemoteDisconnected
-                    defer_timeout=isinstance(error,TimeoutError) and (self.isolate_timeouts or manual_request)
+                    wrapped_timeout=type(error) is URLError and isinstance(error.reason,TimeoutError)
+                    defer_timeout=(isinstance(error,TimeoutError) and (self.isolate_timeouts or manual_request)
+                                   or manual_request and wrapped_timeout)
                     if not (defer_disconnect or defer_timeout):raise
                     # Keep the real network failure and native breaker. The typed
                     # abort only prevents retrying an UNKNOWN transport result.
