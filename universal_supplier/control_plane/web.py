@@ -659,6 +659,18 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         except (ValueError,PermissionError,AttributeError) as error:raise HTTPException(400,str(error))
         return RedirectResponse(f'/suppliers/{supplier_id}',303)
 
+    @app.post('/suppliers/{supplier_id}/close-expired-job')
+    async def close_expired_job(request: Request, supplier_id: int):
+        user=guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        values=await form_values(request);check_csrf(request,values)
+        if getattr(type(store),'read_only',False):raise HTTPException(403,'Источник доступен только для чтения')
+        try:
+            job_id=optional_int(values.get('job_id'),'Номер задания')
+            if not job_id:raise ValueError('Укажите номер прерванного задания')
+            queue.close_expired_manual_job(supplier_id,job_id,actor_id=user.id)
+        except (ValueError,PermissionError,AttributeError) as error:raise HTTPException(400,str(error))
+        return RedirectResponse(f'/suppliers/{supplier_id}',303)
+
     @app.post('/suppliers/{supplier_id}/stop-pilot')
     async def stop_pilot(request:Request,supplier_id:int):
         from universal_supplier.partner_pilot import enabled

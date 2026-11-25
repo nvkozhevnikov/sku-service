@@ -141,6 +141,8 @@ class PostgresControlPlaneStore:
                        EXISTS(SELECT 1 FROM crawl_jobs WHERE supplier_id=s.id AND status='queued') AS has_queued_job,
                        EXISTS(SELECT 1 FROM crawl_jobs WHERE supplier_id=s.id AND status='running') AS has_running_job,
                        active.status AS job_status,active.id AS job_id,active.error_message AS job_error_message,
+                       coalesce(active.status='running' AND active.lease_expires_at<now()
+                           AND active.settings_snapshot ? 'manual_collection',false) AS manual_job_expired,
                        active.crawl_run_id AS job_run_id,active.created_at AS job_created_at,
                        (SELECT max(finished_at) FROM crawl_runs WHERE supplier_id=s.id AND status='succeeded') AS last_successful_crawl,
                        ss.enabled AS schedule_enabled,ss.cron_expression,ss.timezone
@@ -148,7 +150,9 @@ class PostgresControlPlaneStore:
                 LEFT JOIN LATERAL (SELECT count(*) AS n FROM source_products WHERE supplier_id=s.id AND active) product_counts ON true
                 LEFT JOIN LATERAL (SELECT count(*) AS n FROM crawl_errors WHERE supplier_id=s.id AND created_at>now()-interval '30 days') error_counts ON true
                 LEFT JOIN LATERAL (SELECT id,status,started_at,finished_at,discovered_count,new_count,changed_count,error_count,metadata FROM crawl_runs WHERE supplier_id=s.id ORDER BY started_at DESC LIMIT 1) last_run ON true
-                LEFT JOIN LATERAL (SELECT id,status,error_message,crawl_run_id,created_at FROM crawl_jobs WHERE supplier_id=s.id ORDER BY id DESC LIMIT 1) active ON true
+                LEFT JOIN LATERAL (SELECT id,status,error_message,crawl_run_id,created_at,lease_expires_at,settings_snapshot
+                    FROM crawl_jobs WHERE supplier_id=s.id
+                    ORDER BY (status IN ('queued','running')) DESC,id DESC LIMIT 1) active ON true
                 LEFT JOIN supplier_schedules ss ON ss.supplier_id=s.id
                 ORDER BY s.name,s.id""")
             rows = list(cursor.fetchall())
@@ -375,14 +379,20 @@ class PostgresControlPlaneStore:
             if job_status in ('queued','running'):
                 cursor.execute("""SELECT j.*,s.name AS supplier_name,s.code AS supplier_code,'job' AS entry_type
                     FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
-                    WHERE j.status=%s ORDER BY j.id DESC LIMIT %s""",(job_status,limit))
+                    WHERE j.status=%s AND NOT (j.status='running' AND
+                        coalesce(j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection',false))
+                    ORDER BY j.id DESC LIMIT %s""",(job_status,limit))
                 return list(cursor.fetchall())
-            cursor.execute("""SELECT cr.*,s.code AS supplier_code,s.name AS supplier_name,j.trigger_type,'run' AS entry_type
+            cursor.execute("""SELECT cr.*,s.code AS supplier_code,s.name AS supplier_name,j.trigger_type,'run' AS entry_type,
+                 coalesce(j.status='running' AND j.lease_expires_at<now()
+                     AND j.settings_snapshot ? 'manual_collection',false) AS manual_job_expired
                 FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id
                 LEFT JOIN crawl_jobs j ON j.crawl_run_id=cr.id
                 ORDER BY cr.started_at DESC,cr.id DESC LIMIT %s""", (limit,))
             rows=list(cursor.fetchall())
-            cursor.execute("""SELECT j.*,s.name AS supplier_name,s.code AS supplier_code,'job' AS entry_type
+            cursor.execute("""SELECT j.*,s.name AS supplier_name,s.code AS supplier_code,'job' AS entry_type,
+                coalesce(j.status='running' AND j.lease_expires_at<now()
+                    AND j.settings_snapshot ? 'manual_collection',false) AS manual_job_expired
                 FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
                 WHERE j.crawl_run_id IS NULL ORDER BY j.id DESC LIMIT %s""",(limit,))
             rows.extend(cursor.fetchall())
@@ -392,7 +402,9 @@ class PostgresControlPlaneStore:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("""SELECT cr.*,s.name AS supplier_name,
                 (SELECT max(j.id) FROM crawl_jobs j WHERE j.crawl_run_id=cr.id
-                 AND j.settings_snapshot ? 'manual_collection') AS manual_job_id
+                 AND j.settings_snapshot ? 'manual_collection') AS manual_job_id,
+                EXISTS (SELECT 1 FROM crawl_jobs j WHERE j.crawl_run_id=cr.id AND j.status='running'
+                    AND j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection') AS manual_job_expired
                 FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id WHERE cr.id=%s""", (run_id,))
             row = cursor.fetchone()
             if row:
@@ -405,16 +417,22 @@ class PostgresControlPlaneStore:
     def run_progress(self, run_id: int) -> dict | None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("""SELECT r.id AS run_id, r.status AS run_status, s.name AS supplier_name,
+                EXISTS (SELECT 1 FROM crawl_jobs j WHERE j.crawl_run_id=r.id AND j.status='running'
+                    AND j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection') AS manual_job_expired,
                 r.metadata->'progress' AS progress, r.metadata ? 'source_runtime' AS durable_progress
                 FROM crawl_runs r
                 JOIN suppliers s ON r.supplier_id=s.id WHERE r.id=%s""",(run_id,))
             row=cursor.fetchone()
         if not row:return None
+        if row.pop('manual_job_expired',False) and row['run_status']=='running':
+            row['run_status']='lease_expired'
         return {**(row.pop('progress') or {}),**row}
 
     def job_progress(self, job_id: int) -> dict | None:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("""SELECT j.status AS job_status,r.id AS run_id,r.status AS run_status,
+            cursor.execute("""SELECT CASE WHEN j.status='running' AND j.lease_expires_at<now()
+                AND j.settings_snapshot ? 'manual_collection' THEN 'lease_expired' ELSE j.status END AS job_status,
+                r.id AS run_id,r.status AS run_status,
                 s.name AS supplier_name,r.metadata->'progress' AS progress,
                 (coalesce(r.metadata ? 'source_runtime',false)
                  OR j.settings_snapshot ? 'source_input') AS durable_progress,

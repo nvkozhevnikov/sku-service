@@ -161,6 +161,49 @@ class PostgresJobQueue:
             with path.open('x',encoding='utf-8') as f:f.write('OPERATOR_STOP')
         except FileExistsError:pass
 
+    def close_expired_manual_job(self, supplier_id, job_id, *, actor_id=None):
+        """Close one expired manual job. Keep the checkpoint and all receipts."""
+        from .admin_store import PostgresAdminStore
+        from .source_canary import validate_config, validate_connection
+        validate_config(self.config)
+        reason = 'ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT'
+        with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            validate_connection(connection)
+            cursor.execute("""SELECT j.crawl_run_id,j.heartbeat_at,j.lease_expires_at,
+                       j.settings_snapshot->>'domain',s.base_url
+                FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
+                WHERE j.id=%s AND j.supplier_id=%s AND j.status='running'
+                  AND j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection'
+                FOR UPDATE OF j""", (job_id, supplier_id))
+            expired = cursor.fetchone()
+            if not expired:
+                raise ValueError('Срок задания не истёк или задание уже закрыто. Обновите страницу.')
+            run_id, heartbeat, lease_expiry, stored_domain, base_url = expired
+            domain = normalized_domain(base_url)
+            if stored_domain != domain:
+                raise PermissionError('Домен задания не совпадает с доменом поставщика')
+            cursor.execute('SELECT pg_try_advisory_xact_lock(%s)', (advisory_lock_key(domain),))
+            if cursor.fetchone() != (True,):
+                raise PermissionError('Исполнитель ещё держит блокировку сайта. Проверьте статус позже.')
+            run_status = None
+            if run_id is not None:
+                cursor.execute("""SELECT status,metadata->>'job_id' FROM crawl_runs
+                    WHERE id=%s AND supplier_id=%s FOR UPDATE""", (run_id, supplier_id))
+                run = cursor.fetchone()
+                if not run or run[1] != str(job_id):
+                    raise ValueError('Связь задания с запуском не подтверждена')
+                run_status = run[0]
+                if run_status == 'running':
+                    cursor.execute("""UPDATE crawl_runs SET status='partial',finished_at=now(),
+                        metadata=coalesce(metadata,'{}'::jsonb)||jsonb_build_object('termination_reason',%s::text)
+                        WHERE id=%s""", (reason, run_id))
+            cursor.execute("""UPDATE crawl_jobs SET status='stale_failed',finished_at=now(),
+                lease_expires_at=NULL,error_message=%s,updated_at=now() WHERE id=%s""", (reason, job_id))
+            PostgresAdminStore._audit(cursor, actor_id, 'MANUAL_COLLECTION_EXPIRED_CLOSED', 'crawl_job', job_id,
+                {'status':'running','run_id':run_id,'run_status':run_status,'heartbeat_at':heartbeat,'lease_expires_at':lease_expiry},
+                {'status':'stale_failed','run_id':run_id,'run_status':'partial' if run_status=='running' else run_status},
+                'Expired manual lease closed without starting a job or changing receipts')
+
     def source_resume_status(self,job_id):
         from .source_controls import verify_resume
         from .source_runtime import runtime_enabled,read_input

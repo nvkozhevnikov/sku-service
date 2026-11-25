@@ -67,6 +67,11 @@ class Orchestrator:
             if not lease.acquired:
                 self.queue.complete(job.id, "skipped_locked", error_message="SAME_DOMAIN_LOCK_NOT_ACQUIRED")
                 return
+            from .manual_collection import running_manually
+            if running_manually(job) and not self.queue.heartbeat(job.id):
+                # A delayed process may acquire the host lock after its queue
+                # entry was closed. Check ownership before the runner starts.
+                return
             stop = threading.Event()
             lost = threading.Event()
 

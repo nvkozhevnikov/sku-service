@@ -5,6 +5,7 @@ const statuses = {
   partial: "Завершено частично",
   failed: "Остановлено с ошибкой",
   stale_failed: "Прервано",
+  lease_expired: "Нет связи с исполнителем",
   cancelled: "Остановлено",
   skipped_already_queued: "Уже в очереди",
 };

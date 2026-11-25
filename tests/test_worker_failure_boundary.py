@@ -55,3 +55,21 @@ def test_successful_future_does_not_change_existing_dispatch(monkeypatch):
     f=Future();f.set_result(None);w.active={f}
     try:assert w.tick()==0 and not w.active
     finally:w.pool.shutdown(wait=True)
+
+
+def test_delayed_manual_worker_cannot_start_after_job_was_closed():
+    from universal_supplier.control_plane.manual_collection import MANUAL_EXECUTION
+    q=Queue()
+    q.heartbeat=lambda job_id:False
+    lease=SimpleNamespace(acquired=True)
+    from contextlib import nullcontext
+    w=worker(q,lambda domain:nullcontext(lease))
+    w.registry.resolve=lambda code:pytest.fail('Closed job must never reach the runner')
+    job=SimpleNamespace(id=176,adapter_name='beka_mak',crawl_type='full',domain='beka-mak.su',
+                         settings_snapshot={'manual_collection':True})
+    token=MANUAL_EXECUTION.set(job.id)
+    try:w._run_job(job)
+    finally:
+        MANUAL_EXECUTION.reset(token)
+        w.pool.shutdown(wait=True)
+    assert not q.done

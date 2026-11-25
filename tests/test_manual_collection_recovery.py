@@ -1,5 +1,6 @@
 """The authenticated manual path uses the native queue, fetcher and receipts."""
 from dataclasses import replace
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -199,3 +200,64 @@ def test_job_progress_polls_and_api_omits_private_metadata(tmp_path,monkeypatch)
     response=c.get('/api/jobs/44/progress')
     assert response.json()=={'job_status':'running','run_id':100,'total':10,'succeeded':2,'deferred':1}
     assert response.headers['cache-control']=='no-store'
+
+
+def test_expired_job_action_is_scoped_and_requires_csrf(tmp_path,monkeypatch):
+    from universal_supplier.control_plane.queue import InMemoryJobQueue
+    monkeypatch.setenv('STERBRUST_MANUAL_COLLECTION_ENABLED','YES')
+    c,store=client(tmp_path,monkeypatch)
+    supplier_rows=store.suppliers
+    monkeypatch.setattr(store,'suppliers',lambda:[{**row,'manual_job_expired':True,
+        'has_running_job':True,'job_id':176} for row in supplier_rows()])
+    requests=[]
+    monkeypatch.setattr(InMemoryJobQueue,'close_expired_manual_job',
+        lambda self,supplier,job,actor_id:requests.append((supplier,job,actor_id)),raising=False)
+    headers={'origin':'https://testserver'}
+    endpoint='/suppliers/1/close-expired-job'
+    assert c.post(endpoint,headers=headers,data={'job_id':'176'},follow_redirects=False).status_code==403
+    page=c.get('/suppliers/1')
+    assert 'Нет связи с исполнителем' in page.text and endpoint in page.text
+    assert 'Начать парсинг' not in page.text and 'Сбор выполняется' not in page.text
+    token=csrf(page)
+    response=c.post(endpoint,headers=headers,data={'job_id':'176','csrf_token':token},follow_redirects=False)
+    assert response.status_code==303 and response.headers['location']=='/suppliers/1'
+    assert requests==[(1,176,1)]
+
+
+@pytest.mark.parametrize(('expired','lock_acquired','run_owner','closes'),[
+    (True,True,'176',True), (False,True,'176',False),
+    (True,False,'176',False), (True,True,'177',False),
+])
+def test_close_expired_job_requires_expiry_released_lock_and_same_owner(expired,lock_acquired,run_owner,closes):
+    statements=[]
+
+    class Connection:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def transaction(self):return nullcontext()
+        def cursor(self):return self
+        def execute(self,sql,args=None):
+            self.sql=sql
+            statements.append((sql,args))
+        def fetchone(self):
+            if 'pg_control_system' in self.sql:
+                from universal_supplier.control_plane.source_canary import TARGET
+                return (TARGET['dbname'],TARGET['system_identifier'],'17.11',TARGET['pgdata'],TARGET['host'],TARGET['port'])
+            if 'FOR UPDATE OF j' in self.sql:
+                return (67,None,None,'beka-mak.su','https://beka-mak.su/') if expired else None
+            if 'pg_try_advisory_xact_lock' in self.sql:return (lock_acquired,)
+            if 'FROM crawl_runs' in self.sql:return ('running',run_owner)
+            raise AssertionError(self.sql)
+
+    from universal_supplier.control_plane.queue import PostgresJobQueue
+    queue=PostgresJobQueue(CFG)
+    queue._connect=Connection
+    if closes:
+        queue.close_expired_manual_job(11,176,actor_id=1)
+        assert [args[-1] for sql,args in statements if sql.startswith('UPDATE crawl_')]==[67,176]
+        assert sum(sql.startswith('INSERT INTO audit_events') for sql,_ in statements)==1
+    else:
+        with pytest.raises((ValueError,PermissionError)):
+            queue.close_expired_manual_job(11,176,actor_id=1)
+        assert not any(sql.startswith(('UPDATE ', 'INSERT ')) for sql,_ in statements)
+    assert any('j.id=%s AND j.supplier_id=%s' in sql and args==(176,11) for sql,args in statements)

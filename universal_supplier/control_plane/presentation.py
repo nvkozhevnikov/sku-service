@@ -93,6 +93,8 @@ def error_presentation(message, path):
 def job_message(value):
     """Human summary; exact wire diagnostics remain in details and logs."""
     upper = str(value or '').upper()
+    if upper == 'ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT':
+        return 'Исполнитель перестал отвечать. Прерванное задание закрыто, сохранённые данные доступны.'
     if upper in {'SOURCE_ROBOTS_UNAVAILABLE','CANARY_ROBOTS_REQUEST_LIMIT'}:
         return 'Не удалось получить правила сайта (robots.txt). До карточек сбор не дошёл.'
     if upper in {'ROBOTS_NOT_PROVEN','ROBOTS_NOT_TEXT'}:
