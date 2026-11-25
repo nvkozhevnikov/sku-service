@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import pytest
 from test_automation_admin import client, csrf
+from universal_supplier.control_plane import manual_collection
 from universal_supplier.control_plane.manual_collection import ManualRequest, verify
 from universal_supplier.control_plane.security import AuthUser
 from universal_supplier.control_plane.host_fetch import MANUAL_POLICIES
@@ -105,6 +106,42 @@ def test_button_post_starts_exactly_one_worker_without_an_extra_preview(tmp_path
     result=c.post('/suppliers/1/manual-start',data={'csrf_token':csrf(page),'revision':'0','max_products':'100','delay_min_seconds':'2','delay_max_seconds':'3'},follow_redirects=False)
     assert result.status_code==303 and '/runs?' in result.headers['location']
     assert launches==[44] and len(calls)==1 and calls[0]['source_limit']==100
+
+
+def test_button_signs_with_baked_revision_without_git(tmp_path,monkeypatch):
+    c,_=client(tmp_path,monkeypatch)
+    db=DB('uss_stanko')
+    c.app.state.queue.enqueue=db.queue().enqueue
+    launched=[]
+    monkeypatch.setattr(manual_collection,'launch',lambda jid,**kwargs:launched.append((jid,kwargs['key'])))
+    monkeypatch.setattr(manual_collection,'ROOT',tmp_path)
+    revision=tmp_path/'.release-revision'
+    revision.write_text('a'*40+'\n',encoding='ascii')
+    data={'csrf_token':csrf(c.get('/suppliers/1')),'revision':'0','max_products':'2',
+          'delay_min_seconds':'2','delay_max_seconds':'3'}
+    response=c.post('/suppliers/1/manual-start',data=data,follow_redirects=False)
+    assert response.status_code==303 and 'job_id=44' in response.headers['location']
+    assert len(launched)==len(db.snapshots)==1 and launched[0][0]==44
+    assert verify(db.snapshots[0],launched[0][1])['head']=='a'*40
+    revision.write_text('b'*40,encoding='ascii')
+    with pytest.raises(PermissionError,match='Код изменился'):
+        verify(db.snapshots[0],launched[0][1])
+
+
+@pytest.mark.parametrize('revision',[None,'bad-revision'])
+def test_no_worker_or_new_job_when_release_revision_unavailable(tmp_path,monkeypatch,revision):
+    c,_=client(tmp_path,monkeypatch)
+    db=DB('uss_stanko')
+    c.app.state.queue.enqueue=db.queue().enqueue
+    monkeypatch.setattr(manual_collection,'ROOT',tmp_path)
+    monkeypatch.setattr(manual_collection,'launch',lambda *a,**k:pytest.fail('NO WORKER'))
+    if revision is not None:
+        (tmp_path/'.release-revision').write_text(revision,encoding='ascii')
+    data={'csrf_token':csrf(c.get('/suppliers/1')),'revision':'0','max_products':'2',
+          'delay_min_seconds':'2','delay_max_seconds':'3'}
+    response=c.post('/suppliers/1/manual-start',data=data,follow_redirects=False)
+    assert response.status_code==400 and 'Проверьте сборку панели' in response.text
+    assert not db.snapshots
 
 
 @pytest.mark.parametrize('case',['csrf','origin','viewer','readonly','bad_count'])

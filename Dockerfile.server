@@ -11,6 +11,14 @@ COPY content_studio ./content_studio
 COPY scripts ./scripts
 COPY migrations ./migrations
 COPY config ./config
+# Manual job signatures bind to the build revision even when Git is absent.
+ARG RELEASE_GIT_SHA
+RUN if [ -n "$RELEASE_GIT_SHA" ]; then \
+        case "$RELEASE_GIT_SHA" in *[!0-9a-f]*) exit 1;; esac \
+        && test "${#RELEASE_GIT_SHA}" -eq 40 \
+        && printf '%s\n' "$RELEASE_GIT_SHA" > /app/.release-revision \
+        && chmod 0444 /app/.release-revision; \
+    fi
 # Non-root runtime. Fresh named volumes inherit this ownership; a volume created by an older root image
 # needs a one-time `chown -R 10001:10001 /app/server-artifacts` (run the container with --user root).
 RUN useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin app \

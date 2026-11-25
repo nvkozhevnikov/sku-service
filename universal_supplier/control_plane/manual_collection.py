@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 
@@ -26,6 +27,19 @@ def enabled():return os.environ.get('STERBRUST_MANUAL_COLLECTION_ENABLED') == 'Y
 
 def require(condition, message):
     if not condition:raise PermissionError(message)
+
+
+def release_revision():
+    """Use the checkout's HEAD locally or the revision baked into a release image."""
+    try:
+        if (ROOT / '.git').exists():
+            revision = subprocess.check_output(['git','rev-parse','HEAD'], cwd=ROOT, text=True).strip()
+        else:
+            revision = (ROOT / '.release-revision').read_text(encoding='ascii').strip()
+    except (OSError, UnicodeError, subprocess.CalledProcessError) as error:
+        raise PermissionError('Не удалось определить версию приложения. Проверьте сборку панели.') from error
+    require(re.fullmatch(r'[0-9a-f]{40}', revision), 'Неверная версия приложения. Проверьте сборку панели.')
+    return revision
 
 
 def signature(value, key):
@@ -148,13 +162,14 @@ class ManualRequest:
     def seal(self, snapshot, cursor):
         from .source_canary import TARGET
         from .source_runtime import engine_fingerprint
+        revision = release_revision()
         cursor.execute('SELECT id,catalog_product_id FROM source_products WHERE catalog_product_id IS NOT NULL ORDER BY id')
         # DB-API cursor.execute is not required to return the cursor.
         mappings=[list(row) for row in cursor.fetchall()]
         robots_attempts=getattr(self,'robots_attempts',min(2,snapshot['rate_settings']['max_attempts']))
         value={'format':KIND,'nonce':self.nonce,'target':TARGET,
             'actor_id':self.actor.id,'actor_role':self.actor.role,'actor_sv':self.actor.session_version,
-            'head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
+            'head':revision,
             'engine':engine_fingerprint(),'snapshot_sha256':digest(snapshot),'policies':self.policy,
             'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=snapshot['crawl_settings']['max_run_duration_seconds']+300)).isoformat(),
             'matching_apply':False,'mappings':mappings,'robots_attempts':robots_attempts}
@@ -178,7 +193,7 @@ def verify(snapshot, key, *, now=None):
     from .source_jobs import RUNTIME_SOURCES
     from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
     marker=authenticated_marker(snapshot,key)
-    require(marker.get('engine')==engine_fingerprint() and marker.get('head')==subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'Код изменился. Создайте новый запуск')
+    require(marker.get('engine')==engine_fingerprint() and marker.get('head')==release_revision(),'Код изменился. Создайте новый запуск')
     clock=now or datetime.now(timezone.utc)
     require(clock < datetime.fromisoformat(marker['expires_at']), 'Время запуска истекло')
     code=snapshot['supplier_code'];canary=snapshot['source_input']['canary']
