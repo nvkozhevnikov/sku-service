@@ -33,7 +33,7 @@ jobs:
             requirements-dev.txt
       - name: Install dependencies
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
-      # Git-ignored local evidence (reports/, RC_LOCAL, stage baselines) is absent
+      # Git-ignored local evidence (reports/, RC_LOCAL) is absent
       # on a clean clone: those tests SKIP with an explicit reason (tests/conftest.py).
       # Web-UI tests use the synthetic tests/fixtures/control_plane_snapshot instead.
       # The scratch-DB tests skip here; they run in the postgres job below.

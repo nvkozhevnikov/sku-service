@@ -42,6 +42,12 @@ The immutable policy captured when a job is enqueued reaches the actual Partner 
 
 ## Database and tests
 
+The migration checksum manifests are in the repository root. The general-purpose
+`Dockerfile` includes the historical manifests used by QA, including
+`stage3d_migration_baseline_sha256.json` and `stage6c1_migration_baseline_sha256.json`.
+`Dockerfile.server` uses `stage6e_migration_baseline_sha256.json` to verify
+migrations 001–015. A fresh checkout contains these files.
+
 Services run `scripts/docker_postgres_migrate.py` before startup. Migrations 001–015 are immutable (checksums in `stage6e_migration_baseline_sha256.json`); Stage 6E.1 itself added no migration. Later additive migrations: 015 (commercial capture observations) and 016 (index on `review_decisions.source_product_id`). To test without live crawling:
 
 `docker compose --profile tools run --rm application`
