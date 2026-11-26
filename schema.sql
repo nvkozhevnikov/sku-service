@@ -1480,11 +1480,19 @@ INSERT INTO content_studio.ai_settings VALUES(1,'{}');
 INSERT INTO content_studio.ai_gateway VALUES(1,'{"revision":0,"profiles":{},"tasks":{},"default":"legacy"}');
 INSERT INTO content_studio.vk_settings VALUES(1,'{}');
 -- Existing least-privilege runtime, no owner role used by web. Only new schema.
-GRANT USAGE ON SCHEMA content_studio TO rc_runtime;
-GRANT SELECT ON content_studio.schema_version TO rc_runtime;
-GRANT SELECT,INSERT,UPDATE ON content_studio.projects,content_studio.revisions,content_studio.media,content_studio.composition_runs,content_studio.ai_settings,content_studio.ai_gateway,content_studio.vk_settings,content_studio.vk_intents,content_studio.vk_steps,content_studio.project_access TO rc_runtime;
-GRANT SELECT,INSERT ON content_studio.audit_events TO rc_runtime;
-GRANT USAGE,SELECT ON SEQUENCE content_studio.vk_steps_id_seq,content_studio.audit_events_id_seq TO rc_runtime;
+-- Granted only where that role exists (the Unified RC deployment); a scratch
+-- or CI database without rc_runtime applies the schema and skips the grants.
+DO $grants$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rc_runtime') THEN
+        GRANT USAGE ON SCHEMA content_studio TO rc_runtime;
+        GRANT SELECT ON content_studio.schema_version TO rc_runtime;
+        GRANT SELECT,INSERT,UPDATE ON content_studio.projects,content_studio.revisions,content_studio.media,content_studio.composition_runs,content_studio.ai_settings,content_studio.ai_gateway,content_studio.vk_settings,content_studio.vk_intents,content_studio.vk_steps,content_studio.project_access TO rc_runtime;
+        GRANT SELECT,INSERT ON content_studio.audit_events TO rc_runtime;
+        GRANT USAGE,SELECT ON SEQUENCE content_studio.vk_steps_id_seq,content_studio.audit_events_id_seq TO rc_runtime;
+    END IF;
+END
+$grants$;
 COMMIT;
 
 -- ===== 021_ivstankomaster_supplier.sql =====
@@ -1506,6 +1514,22 @@ BEGIN;
 -- (ORDER BY created_at DESC, id DESC LIMIT n); login auditing makes the table
 -- grow with every sign-in. Additive and idempotent; no data changes.
 CREATE INDEX IF NOT EXISTS audit_events_recent_idx ON audit_events (created_at DESC, id DESC);
+
+COMMIT;
+
+-- ===== 023_content_manager_profile_permissions.sql =====
+BEGIN;
+
+-- 019 seeded CONTENT_MANAGER without the Content Studio permissions that
+-- accounts.BUILTINS defines, so on PostgreSQL that profile got 403 on the
+-- whole studio. Only the untouched 019 seed is updated: a profile already
+-- edited by an administrator is left as it is.
+UPDATE app_access_profiles
+   SET permissions = '["competitor.read","applications.read","content.read","content.edit","content.media","content.export","content.rules.manage","content.ai.use","content.site.export"]'::jsonb,
+       updated_at = now()
+ WHERE code = 'CONTENT_MANAGER'
+   AND is_builtin
+   AND permissions = '["competitor.read","applications.read"]'::jsonb;
 
 COMMIT;
 

@@ -23,9 +23,17 @@ INSERT INTO content_studio.ai_settings VALUES(1,'{}');
 INSERT INTO content_studio.ai_gateway VALUES(1,'{"revision":0,"profiles":{},"tasks":{},"default":"legacy"}');
 INSERT INTO content_studio.vk_settings VALUES(1,'{}');
 -- Existing least-privilege runtime, no owner role used by web. Only new schema.
-GRANT USAGE ON SCHEMA content_studio TO rc_runtime;
-GRANT SELECT ON content_studio.schema_version TO rc_runtime;
-GRANT SELECT,INSERT,UPDATE ON content_studio.projects,content_studio.revisions,content_studio.media,content_studio.composition_runs,content_studio.ai_settings,content_studio.ai_gateway,content_studio.vk_settings,content_studio.vk_intents,content_studio.vk_steps,content_studio.project_access TO rc_runtime;
-GRANT SELECT,INSERT ON content_studio.audit_events TO rc_runtime;
-GRANT USAGE,SELECT ON SEQUENCE content_studio.vk_steps_id_seq,content_studio.audit_events_id_seq TO rc_runtime;
+-- Granted only where that role exists (the Unified RC deployment); a scratch
+-- or CI database without rc_runtime applies the schema and skips the grants.
+DO $grants$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rc_runtime') THEN
+        GRANT USAGE ON SCHEMA content_studio TO rc_runtime;
+        GRANT SELECT ON content_studio.schema_version TO rc_runtime;
+        GRANT SELECT,INSERT,UPDATE ON content_studio.projects,content_studio.revisions,content_studio.media,content_studio.composition_runs,content_studio.ai_settings,content_studio.ai_gateway,content_studio.vk_settings,content_studio.vk_intents,content_studio.vk_steps,content_studio.project_access TO rc_runtime;
+        GRANT SELECT,INSERT ON content_studio.audit_events TO rc_runtime;
+        GRANT USAGE,SELECT ON SEQUENCE content_studio.vk_steps_id_seq,content_studio.audit_events_id_seq TO rc_runtime;
+    END IF;
+END
+$grants$;
 COMMIT;

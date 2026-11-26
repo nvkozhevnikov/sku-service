@@ -51,6 +51,39 @@ POST_BASELINE_IMMUTABLE = {
 }
 
 
+# Renamed after release, same bytes: recorded old name -> current file name.
+# 018 is taken by the login-throttle migration that runtime code requires
+# (AUTH_SCHEMA018); develop's audit index moved to 022 when the branches merged.
+RENAMED_MIGRATIONS = {
+    "018_audit_events_recent_index.sql": "022_audit_events_recent_index.sql",
+}
+
+# Released bytes that are still accepted for an applied file because the
+# change cannot alter an existing schema (020: GRANTs became conditional on
+# the rc_runtime role existing, so scratch/CI databases can apply it).
+ACCEPTED_PREVIOUS_SHA256 = {
+    "020_content_studio.sql": frozenset({"1fbbcc94c77c2f487ea8cec57080070947f745934d8bf45288c889e3e1e6f24e"}),
+}
+
+
+def pending_renames(applied: dict[str, str], actual: dict[str, str]) -> dict[str, str]:
+    """Old->new names to rewrite in schema_migrations; refuses a rename whose bytes differ."""
+    renames = {}
+    for old, new in RENAMED_MIGRATIONS.items():
+        if old not in applied:
+            continue
+        if new in applied:
+            raise RuntimeError(f"Migration recorded under both names: {old}, {new}")
+        if applied[old] != actual.get(new):
+            raise RuntimeError(f"Renamed migration checksum mismatch: {old} -> {new}")
+        renames[old] = new
+    return renames
+
+
+def checksum_matches(name: str, recorded: str, current: str) -> bool:
+    return recorded == current or recorded in ACCEPTED_PREVIOUS_SHA256.get(name, frozenset())
+
+
 def unknown_applied(applied: dict[str, str], known: set[str]) -> list[str]:
     """Migrations recorded in the database that this checkout does not have."""
     return sorted(name for name in applied if name not in known)
@@ -91,6 +124,12 @@ def main() -> None:
                 )
                 cursor.execute("SELECT filename, sha256 FROM schema_migrations")
                 applied = dict(cursor.fetchall())
+                renames = pending_renames(applied, actual)
+                if renames:
+                    with connection.transaction():
+                        for old, new in renames.items():
+                            cursor.execute("UPDATE schema_migrations SET filename=%s WHERE filename=%s", (new, old))
+                            applied[new] = applied.pop(old)
                 unknown = unknown_applied(applied, set(actual))
                 if unknown:
                     # The database is newer than this code (or was migrated from
@@ -99,7 +138,7 @@ def main() -> None:
                 for path in MIGRATIONS:
                     digest = actual[path.name]
                     if path.name in applied:
-                        if applied[path.name] != digest:
+                        if not checksum_matches(path.name, applied[path.name], digest):
                             raise RuntimeError(f"Applied migration checksum mismatch: {path.name}")
                         continue
                     body = migration_body(path.read_text(encoding="utf-8"))
