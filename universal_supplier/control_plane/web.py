@@ -522,7 +522,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             mode=raw.get('collection_mode','REFRESH')
             parent_id=optional_int(raw.get('resume_job_id'),'Номер задания')
             hours=optional_int(raw.get('duration_hours'),'Лимит времени')
-            approval=ManualRequest(user,signer.secret.decode('utf-8'),raw.get('delay_min_seconds',''),raw.get('delay_max_seconds',''),int(raw.get('revision','-1')),mode,hours)
+            approval=ManualRequest(user,signer.secret.decode('utf-8'),raw.get('delay_min_seconds',''),raw.get('delay_max_seconds',''),
+                                   int(raw.get('revision','-1')),mode,hours,retry_network=raw.get('retry_network')=='yes')
             approval.validate(supplier_id,count,'manual',mode)
             result=queue.enqueue(supplier_id,trigger_type='manual',crawl_type='full',requested_by_user_id=user.id,
                 source_mode=mode,source_limit=count,resume_job_id=parent_id,manual_request=approval)

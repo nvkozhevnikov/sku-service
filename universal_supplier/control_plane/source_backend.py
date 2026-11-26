@@ -135,10 +135,27 @@ class SourceBackend:
                        observation.price_type,observation.price_raw,observation.price_source,Jsonb(observation.extraction_evidence)))
         return {'ingest_counts':counts}
     def probe(self,entry,receipt):
-        from .source_resume import MANUAL_TRANSPORT_ERRORS, quarantine_evidence_present
+        from .source_resume import MANUAL_REDIRECT, MANUAL_TRANSPORT_ERRORS, digest, quarantine_evidence_present
         if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS:
             # This outcome was archived before any capture could reach ingest.
             return 'NOT_FOUND' if quarantine_evidence_present(receipt,entry) else 'UNKNOWN'
+        if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')==MANUAL_REDIRECT:
+            if not quarantine_evidence_present(receipt,entry):return 'UNKNOWN'
+            with self.repo.connection.cursor() as q:
+                q.execute("""SELECT j.settings_snapshot->'source_input',
+                    EXISTS(SELECT 1 FROM supplier_http_captures c
+                        WHERE c.supplier_id=s.id AND (c.requested_url=%s OR c.source_product_id=sp.id)
+                        AND c.observed_at>=r.started_at AND (r.finished_at IS NULL OR c.observed_at<=r.finished_at)),
+                    EXISTS(SELECT 1 FROM offer_commercial_observations o WHERE o.source_product_id=sp.id
+                        AND o.observed_at>=r.started_at AND (r.finished_at IS NULL OR o.observed_at<=r.finished_at)),
+                    EXISTS(SELECT 1 FROM entity_change_history h WHERE h.crawl_run_id=r.id AND h.source_product_id=sp.id)
+                    FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id
+                    JOIN suppliers s ON s.id=j.supplier_id JOIN source_products sp ON sp.supplier_id=s.id
+                    WHERE j.id=%s AND s.code=%s AND sp.id=%s AND sp.external_id=%s""",
+                    (entry['url'],receipt['redirect_evidence']['job_id'],self.code,
+                     entry['source_product_id'],entry['source_external_id']))
+                row=q.fetchone()
+            return 'NOT_FOUND' if row and digest(row[0])==receipt['origin']['manifest_sha256'] and not any(row[1:]) else 'UNKNOWN'
         if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category')=='operator_scope':
             from .source_recovery import approved_scope_item,scope_sql_absent
             item=approved_scope_item(receipt,entry)

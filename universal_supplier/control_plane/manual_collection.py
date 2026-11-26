@@ -60,6 +60,7 @@ class ManualRequest:
     revision: int
     mode: str = 'REFRESH'
     duration_hours: int | None = None
+    retry_network: bool = False
 
     def validate(self, supplier_id, limit, trigger, mode):
         from .source_canary import limit_value
@@ -69,6 +70,7 @@ class ManualRequest:
                 and self.actor.role in ('ADMIN','OPERATOR') and allowed(self.actor,'supplier.manage'), 'Нет прав на запуск сбора')
         require(type(supplier_id) is int and supplier_id>0 and trigger=='manual'
                 and mode==self.mode and mode in ('REFRESH','DISCOVERY','RESUME'), 'Недопустимый режим ручного сбора')
+        require(not self.retry_network or mode=='RESUME', 'Повтор сетевых ошибок доступен из итогов завершённого сбора')
         if mode!='RESUME':
             limit_value(limit)
         elif limit is not None or self.duration_hours is not None:
@@ -112,7 +114,7 @@ class ManualRequest:
     def resume(self, config, sid, supplier, parent_id, previous):
         from .source_controls import verify_resume
         from .source_runtime import job_dir, read_input
-        from .source_resume import manual_transport_receipt
+        from .source_resume import FROZEN_BATCH_REFUSAL, manual_redirect_receipt, manual_transport_receipt, retryable_network_urls
         status, prior, metadata=previous
         require(status in TERMINAL, 'Дождитесь завершения исходного задания')
         prior_marker=authenticated_marker(prior,self.key)
@@ -136,19 +138,35 @@ class ManualRequest:
             folder=job_dir(code,owner)
             state=json.loads((folder/'checkpoint.json').read_text(encoding='utf-8'))
             receipt=None
+            legacy_redirect=None
             # Use only the last signed job's evidence. The checkpoint can
             # belong to the original job even if the failed request was in a child.
-            if original['mode']=='REFRESH' and result.get('termination_reason')=='SOURCE_CARD_HTTP_FAILED':
+            reason=result.get('termination_reason')
+            if original['mode']=='REFRESH' and reason in ('SOURCE_CARD_HTTP_FAILED',FROZEN_BATCH_REFUSAL):
                 uncertain=[r['receipt'] for r in state['terminal'].values() if r['state']=='UNCERTAIN']
                 if len(uncertain)==1:
                     item=uncertain[0]
                     if item.get('reason'):
                         for path in (job_dir(code,parent_id)/'transport-errors').glob('*.json'):
-                            try:receipt=manual_transport_receipt(item['origin'],item['url'],parent_id,path,
-                                                                 expected_error=item['reason'])
+                            try:
+                                if reason==FROZEN_BATCH_REFUSAL:
+                                    if item['reason']!='ValueError:'+FROZEN_BATCH_REFUSAL:break
+                                    legacy_redirect=manual_redirect_receipt(item['origin'],item['url'],parent_id,path,legacy=True)
+                                else:
+                                    receipt=manual_transport_receipt(item['origin'],item['url'],parent_id,path,
+                                                                     expected_error=item['reason'])
                             except (OSError,ValueError,KeyError,TypeError):continue
                             break
-            verify_resume(code,owner,sha,original,config,manual_timeout=receipt,require_pending=True)
+            retries=[]
+            if self.retry_network:
+                require(not reason and not state['frontier'] and not state['inflight'],
+                        'Сначала завершите оставшуюся очередь')
+                retries=retryable_network_urls(state)
+                require(bool(retries), 'В этом запуске нет сетевых ошибок для повторного сбора')
+            plan=verify_resume(code,owner,sha,original,config,manual_isolation=legacy_redirect or receipt,
+                               require_pending=not self.retry_network)
+            if self.retry_network:
+                require(plan is not None and not plan['offline_pending'],'Сначала завершите оставшуюся очередь')
         finally:
             MANUAL_POLICIES.reset(token)
         snapshot=deepcopy(prior)
@@ -157,6 +175,8 @@ class ManualRequest:
         snapshot['manual_resume']={'parent_job_id':parent_id,'owner_job_id':owner,
                                    'previous_engine':original['engine_sha256'],
                                    'checkpoint_sha256':state['checksum'],'legacy_timeout':receipt}
+        if legacy_redirect:snapshot['manual_resume']['legacy_redirect']=legacy_redirect
+        if retries:snapshot['manual_resume']['retry_network_urls']=retries
         return snapshot
 
     def seal(self, snapshot, cursor):
@@ -204,6 +224,12 @@ def verify(snapshot, key, *, now=None):
         require(resume and resume['owner_job_id']==settings['resume_owner_job_id']
                 and resume['previous_engine']==snapshot['source_input']['engine_sha256']
                 and settings['resume_input_sha256']==digest(snapshot['source_input']), 'Изменилась область продолжения')
+        retries=resume.get('retry_network_urls')
+        if retries is not None:
+            require(isinstance(retries,list) and 0<len(retries)<=canary['max_products']
+                    and all(isinstance(url,str) for url in retries) and len(set(retries))==len(retries)
+                    and not any(resume.get(a) for a in ('legacy_redirect','legacy_timeout')),
+                    'Изменился список повторных запросов')
     else:
         require(not resume and snapshot['source_input']['engine_sha256']==marker['engine'], 'Изменился исходный запуск')
     require(code in RUNTIME_SOURCES and (mode=='REFRESH' or (code==IVSTANKOMASTER and mode=='DISCOVERY'))

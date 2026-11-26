@@ -82,6 +82,9 @@ def error_presentation(message, path):
                 'EXPLICIT_HOST_PROFILE_REQUIRED', 'SOURCE_RUNTIME_NOT_ENABLED',
                 'SOURCE_WRITES_NOT_AUTHORIZED', 'SUPPLIER_HTTP_NOT_AUTHORIZED'}:
         notice = collection_notice(code)
+    elif code in {'UNCERTAIN_OR_FAILED_RESUME','UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR'}:
+        notice = {'title': 'Очередь сохранена. Нужна сверка одной или нескольких карточек',
+                  'explanation': 'Продолжение временно недоступно. Откройте последние результаты сбора и проверьте причину остановки.'}
     elif re.fullmatch(r'[A-Z][A-Z0-9_ :;=.-]*', code):
         notice = {'title': 'Действие заблокировано',
                   'explanation': 'Проверка безопасности не пройдена. Сбор не запущен; обратитесь к администратору.'}
@@ -101,6 +104,10 @@ def job_message(value):
         return 'Сайт не предоставил пригодный robots.txt. Карточки не запрашивались.'
     if upper == 'SOURCE_CARD_HTTP_FAILED':
         return 'На товарной странице произошёл сетевой сбой. Подробности сохранены в запуске.'
+    if upper == 'CANARY_URL_OUTSIDE_FROZEN_BATCH':
+        return 'Один адрес вывел за пределы списка этого сбора. Переход заблокирован, очередь сохранена.'
+    if upper == 'MANUAL_REDIRECT_TARGET_NOT_ALLOWED':
+        return 'Поставщик перенаправил на недопустимый адрес. Переход заблокирован, очередь сохранена.'
     if upper in {'SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_CARD_ERROR_THRESHOLD'}:
         return 'Несколько карточек подряд завершились ошибкой. Сбор остановлен, очередь сохранена.'
     if upper == 'SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW':
@@ -155,6 +162,8 @@ def collection_issue_message(receipt):
         return 'Соединение оборвалось. Карточка отложена.'
     if category == 'manual_read_timeout':
         return 'Карточка не ответила вовремя и была отложена.'
+    if category == 'manual_out_of_scope_redirect':
+        return 'Карточка ведёт на другой адрес. Исходный адрес отложен для проверки.'
     if category == 'matching':
         return job_message(reason) if 'EXISTING_LINK_CONFLICT' in str(reason) else 'Обновление требует проверки сопоставления.'
     if category == 'identity':

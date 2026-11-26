@@ -8,13 +8,15 @@ from datetime import datetime
 from universal_supplier.commercial_persistence import HttpCapture
 from copy import deepcopy
 from contextlib import contextmanager
-import hashlib,json,os,threading
+import hashlib,json,os,re,threading
 from universal_supplier.kami_checkpoint import write_checkpoint
 from universal_supplier.postgres import SUPPLIER_CONFIGS
 from .transport_diagnostics import MANUAL_DISCONNECT, MANUAL_TIMEOUT, manual_transport_category, safe_message
 
 STATES=frozenset({'COMMITTED','HTTP_CAPTURED_NOT_COMMITTED','FAILED','NOT_REQUESTED','UNCERTAIN','QUARANTINED'})
 MANUAL_TRANSPORT_ERRORS = frozenset({MANUAL_TIMEOUT, MANUAL_DISCONNECT})
+MANUAL_REDIRECT = 'manual_out_of_scope_redirect'
+FROZEN_BATCH_REFUSAL = 'CANARY_URL_OUTSIDE_FROZEN_BATCH'
 
 
 def manual_transport_receipt(origin, url, job_id, evidence_path, *, expected_error=None):
@@ -32,6 +34,56 @@ def manual_transport_receipt(origin, url, job_id, evidence_path, *, expected_err
     if not quarantine_evidence_present(receipt,{'url':url}):raise ValueError('DEFERRED_TIMEOUT_PROOF_REQUIRED')
     return receipt
 
+
+def manual_redirect_receipt(origin,url,job_id,evidence_path,*,legacy=False):
+    path=Path(evidence_path)
+    receipt={'url':url,'state':'QUARANTINED','origin':dict(origin),
+             'redirect_evidence':{'job_id':job_id,'file':path.name,
+                                  'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'legacy':legacy},
+             'isolation':{'category':MANUAL_REDIRECT,'before_ingest':True,
+                          'reason':FROZEN_BATCH_REFUSAL if legacy else 'PRODUCT_REDIRECT_OUTSIDE_BATCH'}}
+    if not quarantine_evidence_present(receipt,{'url':url}):
+        raise ValueError('MANUAL_REDIRECT_PROOF_REQUIRED')
+    return receipt
+
+
+def _manual_redirect_proven(receipt,entry):
+    from .source_runtime import job_dir
+    proof=receipt['redirect_evidence'];origin=receipt['origin'];jid=proof['job_id'];source=origin['source']
+    name=proof['file'];url=entry['url'];legacy=proof['legacy']
+    if (source not in SUPPLIER_CONFIGS or type(jid) is not int or jid<origin['job_id']
+            or type(legacy) is not bool or not re.fullmatch(r'[a-f0-9]{64}\.json',name)):
+        return False
+    folder=job_dir(source,jid)
+    raw=(folder/'transport-errors'/name).read_bytes()
+    if hashlib.sha256(raw).hexdigest()!=proof['sha256']:return False
+    record=json.loads(raw);diag=record['diagnostics'];error=diag['original_exception']
+    if not (receipt['url']==url and record['url']==safe_message(url) and record['job_id']==jid
+            and record['owner_job_id']==origin['job_id'] and record['input_sha256']==origin['manifest_sha256']
+            and record['transport_started'] is True and record['http_status'] is None
+            and diag['source']==source and diag['request_scope']=='product' and diag['response_available'] is False):
+        return False
+    if not legacy:
+        redirect=diag['redirect']
+        return (diag['wire_outcome']=='REDIRECT_NOT_FOLLOWED'
+                and (error['module'],error['type'],error['message'])==
+                    ('universal_supplier.http_capture','UnfollowedProductRedirect','PRODUCT_REDIRECT_OUTSIDE_BATCH')
+                and redirect['status'] in (301,302,303,307,308)
+                and bool(re.fullmatch(r'[a-f0-9]{64}',redirect['target_sha256'])))
+    # Old workers stopped before dispatching the new address. Require both
+    # the exact first-stop event and the immutable job's final dispatch list.
+    if (diag['wire_outcome']!='UNKNOWN' or
+            (error['module'],error['type'],error['message'])!=('builtins','ValueError',FROZEN_BATCH_REFUSAL)):
+        return False
+    first_stop=json.loads((folder/'FIRST_STOP.json').read_bytes())
+    result=json.loads((folder/'result.json').read_bytes())
+    starts=result['canary']['product_requests']
+    return (first_stop['job_id']==jid and first_stop['reason']==FROZEN_BATCH_REFUSAL
+            and result['supplier_code']==source and result['input_sha256']==origin['manifest_sha256']
+            and result['owner_job_id']==origin['job_id'] and result['termination_reason']==FROZEN_BATCH_REFUSAL
+            and result['resume_uncertain']==[url] and bool(starts) and starts[-1]==url)
+
+
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
 
 def original_capture_present(receipt,entry):
@@ -46,6 +98,9 @@ def original_capture_present(receipt,entry):
 
 def quarantine_evidence_present(receipt,entry):
     category=receipt.get('isolation',{}).get('category')
+    if category==MANUAL_REDIRECT:
+        try:return _manual_redirect_proven(receipt,entry)
+        except (OSError,ValueError,KeyError,TypeError):return False
     if category in MANUAL_TRANSPORT_ERRORS:
         proof=receipt.get('timeout_evidence') or {}
         origin=receipt.get('origin') or {}
@@ -106,7 +161,8 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
             if state=='HTTP_CAPTURED_NOT_COMMITTED' and not original_capture_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not quarantine_evidence_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not (receipt.get('isolation',{}).get('before_ingest') is True and
-                    receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope',*MANUAL_TRANSPORT_ERRORS)):state='UNCERTAIN'
+                    receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope',
+                                                            MANUAL_REDIRECT,*MANUAL_TRANSPORT_ERRORS)):state='UNCERTAIN'
             if state=='QUARANTINED' and receipt['isolation']['category']=='matching':
                 proof=receipt['isolation'].get('rejection_proof',{})
                 if not (proof.get('rollback_verified') is True and proof.get('sql_absent') is True and
@@ -134,6 +190,12 @@ def pending_manifest(original,classified,*,parent_job_id,parent_manifest_sha256,
     return {'http_pending':{**deepcopy(original),'entries':http,'resume':{'parent_job_id':parent_job_id,'parent_manifest_sha256':parent_manifest_sha256,'mode':'PENDING_ONLY','discovery_complete':False}},
             'offline_pending':offline,'uncertain':uncertain,'failed_requires_decision':failed,
             'quarantined':quarantined,'automatic_resume_allowed':not uncertain and not failed}
+
+
+def retryable_network_urls(state):
+    return sorted(url for url,row in state['terminal'].items() if row['state']=='QUARANTINED'
+                  and row['receipt'].get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS)
+
 
 class SourceCheckpoint:
     """Single leased collector owns this job checkpoint; O_EXCL guards concurrent writers.
@@ -240,6 +302,16 @@ class SourceCheckpoint:
                 self.state['terminal'][url]={'state':'NOT_REQUESTED','receipt':dict(entry),
                     'history':item['history']+[entry]}
                 self.state['frontier'].insert(0,url)
+    def retry_network(self,urls):
+        """Admit only proven, operator-selected network failures from a drained queue."""
+        with self._change():
+            if not urls or self.state['frontier'] or self.state['inflight'] or urls!=retryable_network_urls(self.state):
+                raise ValueError('MANUAL_NETWORK_RETRY_SCOPE_CHANGED')
+            for url in urls:
+                self.validator(url)
+                if not quarantine_evidence_present(self.state['terminal'][url]['receipt'],{'url':url}):
+                    raise ValueError('DEFERRED_TIMEOUT_PROOF_REQUIRED')
+            self.state['frontier'].extend(urls)
     def quarantine_unrequested(self,receipt):
         """Only reuse an approved prior refusal; never invent transport/UNCERTAIN."""
         from .source_recovery import approved_scope_item

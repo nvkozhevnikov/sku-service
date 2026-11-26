@@ -153,6 +153,19 @@ class FilesystemEvidenceStore:
         return f"capture://{host}/{evidence_sha256}.html"
 
 
+class ProductTargetOutsideBatch(ValueError):
+    """A safe, unlisted target. It is never eligible for a second GET here."""
+
+
+class UnfollowedProductRedirect(ValueError):
+    """A real redirect was refused before dispatching its target."""
+
+    def __init__(self, status: int, target: str) -> None:
+        super().__init__('PRODUCT_REDIRECT_OUTSIDE_BATCH')
+        self.status = status
+        self.target_sha256 = hashlib.sha256(target.encode()).hexdigest()
+
+
 class _BoundedRedirectHandler(HTTPRedirectHandler):
     max_redirections = 3
 
@@ -166,7 +179,10 @@ class _BoundedRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         if len(self.redirects) >= self.max_redirections:
             raise URLError("redirect limit exceeded")
-        self.validator(newurl)
+        try:
+            self.validator(newurl)
+        except ProductTargetOutsideBatch as error:
+            raise UnfollowedProductRedirect(code, newurl) from error
         self.redirects.append(newurl)
         wire = public_transport_url(newurl)
         self.validator(wire)

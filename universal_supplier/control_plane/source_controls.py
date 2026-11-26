@@ -37,7 +37,7 @@ def prepare_snapshot(snapshot,mode,*,known_rows=(),resume=None,config=None):
     settings.update(collection_mode=mode,execution_mode='LIVE',persist_source_data=True)
     return out
 
-def verify_resume(code,owner,sha,original,config,*,manual_timeout=None,require_pending=False):
+def verify_resume(code,owner,sha,original,config,*,manual_isolation=None,require_pending=False):
     """Read-only SQL reconciliation, rechecked by worker under its host lease."""
     if original.get('canary'):
         from .source_canary import validate_config
@@ -72,7 +72,7 @@ def verify_resume(code,owner,sha,original,config,*,manual_timeout=None,require_p
     for entry in entries:
         url=entry['url']
         if url in state['terminal']:
-            receipt=(manual_timeout if manual_timeout and manual_timeout['url']==url
+            receipt=(manual_isolation if manual_isolation and manual_isolation['url']==url
                      else approved_receipts.get(url,state['terminal'][url]['receipt']))
             if receipt['state']=='HTTP_CAPTURED_NOT_COMMITTED' and not receipt.get('external_id') and entry.get('source_external_id'):
                 receipt={**receipt,'external_id':entry['source_external_id']}
@@ -90,4 +90,5 @@ def verify_resume(code,owner,sha,original,config,*,manual_timeout=None,require_p
         if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME')
         if require_pending and not (state['frontier'] or plan['offline_pending']):
             raise ValueError('Список сохранённого задания уже обработан. Отложенные карточки указаны в итогах.')
+        return plan
     finally:backend.close()

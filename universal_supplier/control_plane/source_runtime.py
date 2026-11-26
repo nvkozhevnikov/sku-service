@@ -19,7 +19,7 @@ from .source_jobs import RUNTIME_SOURCES, NATIVE_SOURCES, validate_url, parse_ex
 from .rate_control import SystemClock
 from .source_backend import SourceUpdateRejected
 from universal_supplier.commercial_persistence import HttpCapture, product_card_from_snapshot
-from universal_supplier.http_capture import UrllibPublicHttpClient, MAX_RESPONSE_BYTES, sanitise_html
+from universal_supplier.http_capture import ProductTargetOutsideBatch, UrllibPublicHttpClient, MAX_RESPONSE_BYTES, sanitise_html
 from universal_supplier.ltt_uss_capture import sanitise_for_charset, charset_from_response
 from universal_supplier.kami_checkpoint import write_checkpoint
 
@@ -204,6 +204,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     cp=SourceCheckpoint(evidence_root(),code,owner,sha,validator=validate,lease_acquired=True)
     if manual_resume and cp.expected!=manual_resume['checkpoint_sha256']:
         raise ValueError('RESUME_CHECKPOINT_CHANGED')
+    retry_network=(manual_resume or {}).get('retry_network_urls')
+    retry_target=None
     discovery=SourceCheckpoint(evidence_root()/'discovery',code,owner,sha,validator=lambda u:validate_node(code,u),lease_acquired=True)
     if mode!='RESUME' and (cp.state['revision'] or discovery.state['revision']):raise ValueError('EXISTING_JOB_REQUIRES_EXPLICIT_RESUME')
     if mode!='RESUME':cp.add_urls([])
@@ -234,7 +236,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     robots_exception_applied=None
     isolated=[];consecutive_card_errors=0;network_pauses=0
-    from .source_resume import MANUAL_TRANSPORT_ERRORS, manual_transport_receipt, quarantine_evidence_present
+    from .source_resume import MANUAL_TRANSPORT_ERRORS, manual_redirect_receipt, manual_transport_receipt, quarantine_evidence_present
 
     def deferred_count(checkpoint):
         return sum(item['receipt'].get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS
@@ -291,12 +293,25 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 extension_authorization(approved);isolate_repeats=True
             dispatch_budget=DispatchBudget(original,robots_url,isolate_repeats=isolate_repeats,
                                            robots_limit=manual_robots_attempts or 1)
+            if retry_network is not None:dispatch_budget.attempts=1
         frozen_urls={entry['url'] for entry in original['entries']}
         def request_url(url):
             if url in blocked_scope_urls:
                 if fetcher is not None:fetcher.stop('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
                 raise ValueError('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
-            if (canary or scope_policy_active) and original['mode']=='REFRESH' and url!=robots_url and url not in frozen_urls:
+            outside_retry=retry_network is not None and url not in (robots_url,retry_target)
+            outside_refresh=(canary or scope_policy_active) and original['mode']=='REFRESH' and url!=robots_url and url not in frozen_urls
+            already_saved=manual and cp.state['terminal'].get(url,{}).get('state')=='COMMITTED'
+            if outside_retry or outside_refresh or already_saved:
+                if manual:
+                    from universal_supplier.url_safety import validate_public_http_url
+                    p=urlsplit(url)
+                    if (p.scheme=='https' and host_key(url)==host_key('https://'+HOSTS[code])
+                            and not p.query and not p.fragment):
+                        validate_public_http_url(url)
+                        raise ProductTargetOutsideBatch('CANARY_URL_OUTSIDE_FROZEN_BATCH')
+                    if fetcher is not None:fetcher.stop('MANUAL_REDIRECT_TARGET_NOT_ALLOWED')
+                    raise ValueError('MANUAL_REDIRECT_TARGET_NOT_ALLOWED')
                 if scope_policy_active:
                     try:
                         from universal_supplier.url_safety import validate_public_http_url
@@ -506,10 +521,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         # bounded batches; unselected URLs remain provably NOT_REQUESTED.
         if entries and not termination:
             cp.add_urls([e['url'] for e in entries]);byurl={e['url']:e for e in entries}
-            if manual_resume and manual_resume.get('legacy_timeout'):
-                receipt=manual_resume['legacy_timeout']
+            receipt=(manual_resume or {}).get('legacy_redirect') or (manual_resume or {}).get('legacy_timeout')
+            if receipt:
                 if not quarantine_evidence_present(receipt,{'url':receipt['url']}):
-                    raise ValueError('DEFERRED_TIMEOUT_PROOF_REQUIRED')
+                    raise ValueError('MANUAL_ISOLATION_PROOF_REQUIRED')
+                if receipt==manual_resume.get('legacy_redirect') and backend.probe(byurl[receipt['url']],receipt)!='NOT_FOUND':
+                    raise ValueError('MANUAL_REDIRECT_SQL_ABSENCE_NOT_PROVEN')
                 cp.record_terminal([receipt])
             if scope_policy_active and original['mode']=='DISCOVERY':
                 from .source_recovery import scope_policy_exclusions
@@ -542,6 +559,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if mode=='RESUME':
                 classified,plan=reconcile()
                 if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR')
+                if retry_network is not None:
+                    if plan['offline_pending']:raise ValueError('MANUAL_NETWORK_RETRY_SCOPE_CHANGED')
+                    cp.retry_network(retry_network)
                 from . import automation_execution as _automation
                 reauth=_automation.reauthorized_uncertain(code,owner,sha)
                 if reauth:
@@ -626,7 +646,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 # A coherent page with a contradictory model is a semantic
                 # quarantine, not evidence that the parser/site structure broke.
                 # Keep the original consecutive threshold for parse/HTTP failures.
-                consecutive_card_errors=0 if value['isolation']['category'] in ('identity','matching') else consecutive_card_errors+1
+                missing_card=manual and category=='http' and record['http_status'] in (404,410)
+                consecutive_card_errors=0 if missing_card or value['isolation']['category'] in ('identity','matching') else consecutive_card_errors+1
                 if consecutive_card_errors>=rate.consecutive_error_threshold or mass_identity_failure(cp.state['terminal'],gate_size):
                     fetcher.stop('SOURCE_CARD_ERROR_THRESHOLD')
             for item in offline:
@@ -643,6 +664,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 # A manually deferred timeout can be visited once more at the
                 # tail. The product identity limit remains the frozen manifest.
                 dispatch_limit=limit*2 if manual and rate.max_attempts>1 else limit
+                if retry_network is not None:dispatch_limit=len(retry_network)
                 while cp.state['frontier'] and fetched_count<dispatch_limit and not fetcher.aborted():
                     if clock.monotonic()>=deadline:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');break
                     if fetcher.network_pause.is_set() and not wait_for_network():break
@@ -654,14 +676,21 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     # Quarantine is not SQL proof. Keep narrow dispatch until
                     # enough eligible cards have actual COMMITTED readbacks.
                     batch=min(rate.max_concurrency,dispatch_limit-fetched_count,1000)
-                    if fetcher.network_probe:batch=1
+                    if fetcher.network_probe or retry_network is not None:batch=1
                     elif not gate_passed:batch=min(batch,max(1,gate_target-verified))
-                    urls=cp.claim_batch(batch);outcomes=fetch(urls)
+                    urls=cp.claim_batch(batch)
+                    if retry_network is not None:retry_target=urls[0]
+                    outcomes=fetch(urls)
                     # A paused executor can return claimed addresses without
                     # starting a GET. Those claims do not consume HTTP budget.
                     fetched_count+=sum(o.transport_started is not False for o in outcomes) if manual else len(urls)
                     for outcome in outcomes:
                         if defer_transport_error(cp,outcome):continue
+                        if manual and (outcome.error_diagnostics or {}).get('wire_outcome')=='REDIRECT_NOT_FOLLOWED':
+                            receipt=manual_redirect_receipt(origin,outcome.url,job.id,error_files[outcome.url])
+                            cp.record_terminal([receipt])
+                            consecutive_card_errors=0
+                            continue
                         if outcome.scope_refusal or outcome.dispatch_refusal or outcome.timeout_refusal:
                             if (not scope_policy_active or original['mode']!='REFRESH' or backend is None or
                                     outcome.response is not None or outcome.transport_started is not True):
@@ -725,7 +754,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         deferred_urls=[url for checkpoint in (cp,discovery) for url,item in checkpoint.state['terminal'].items()
                        if item['receipt'].get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS]
         deferred=len(deferred_urls)
-        result={'status':'partial' if termination or errors or remaining or deferred else 'succeeded','supplier_code':code,'collection_mode':mode,
+        quarantined=[x['receipt'] for x in cp.state['terminal'].values() if x['state']=='QUARANTINED']
+        result={'status':'partial' if termination or errors or remaining or deferred or (manual and quarantined) else 'succeeded','supplier_code':code,'collection_mode':mode,
             'crawl_run_id':run_id,'owner_job_id':owner,'input_sha256':sha,'checkpoint':str(cp.path),
             'manifest':str(manifest_path),'manifest_sha256':hashlib.sha256(manifest_path.read_bytes()).hexdigest(),'found':len(locals().get('entries',[])),
             'processed':sum(x['state']!='NOT_REQUESTED' for x in cp.state['terminal'].values()),'remaining':remaining,'discovery_visited':len(discovery.state['visited']),
@@ -736,8 +766,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             'external_catalog_completeness':'NOT_PROVEN','deactivation_allowed':False,
             'sql_committed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values()),
             'deferred':deferred,'deferred_urls':deferred_urls,'network_pauses':network_pauses,
-            'sql_committed_this_job':len(committed),'rows':rows,'errors':len(errors)+sum(x['state']=='QUARANTINED' for x in cp.state['terminal'].values()),'error_details':errors,
-            'quarantined':[x['receipt'] for x in cp.state['terminal'].values() if x['state']=='QUARANTINED'],
+            'network_retry_count':len(retry_network) if retry_network is not None else None,
+            'sql_committed_this_job':len(committed),'rows':rows,'errors':len(errors)+len(quarantined),'error_details':errors,
+            'quarantined':quarantined,
             'collection_complete':not termination and not errors and not remaining and not deferred
                                   and not any(x['state']!='COMMITTED' for x in cp.state['terminal'].values()),
             'sql_counts':sql_counts if counts_known else None,

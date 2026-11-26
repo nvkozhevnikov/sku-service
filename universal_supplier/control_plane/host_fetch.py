@@ -11,7 +11,7 @@ from contextvars import ContextVar
 import hashlib,json,math,os,threading
 from .rate_control import (DomainRatePolicy,DomainRateLimiter,RequestMetrics,
     CircuitBreaker,CircuitOpen,SystemClock,RequestAborted,request_with_resilience,retry_after_seconds)
-from universal_supplier.http_capture import has_blocking_interstitial
+from universal_supplier.http_capture import UnfollowedProductRedirect, has_blocking_interstitial
 from .transport_diagnostics import MANUAL_DISCONNECT, manual_transport_category
 
 # Request-local approval from an authenticated, audited manual launch. Never
@@ -194,6 +194,16 @@ class BoundedHostFetcher:
                             and isinstance(error,RequestAborted) and diagnostics is not None):
                         diagnostics={**exception_evidence(error),'source':self.source,'host':self.host,
                             'request_scope':request_scope,'response_available':False,'wire_outcome':'UNKNOWN'}
+                    if (isinstance(error,UnfollowedProductRedirect) and self.manual_product_attempts
+                            and request_scope=='product' and not self.prevent_unknown_retry):
+                        diagnostics.update(wire_outcome='REDIRECT_NOT_FOLLOWED',
+                            redirect={'status':error.status,'target_sha256':error.target_sha256})
+                        with self._lock:
+                            self.metrics.record_status(error.status,self.clock.monotonic()-request_started)
+                            self.breaker.success()
+                            self._product_transport_failures=0
+                            self.network_probe=False
+                        raise RequestAborted('PRODUCT_REDIRECT_OUTSIDE_BATCH') from error
                     if self.prevent_unknown_retry and not isinstance(error,RequestAborted):
                         # In ordinary approved automation an entered transport
                         # without a response is UNKNOWN, never a retry candidate.

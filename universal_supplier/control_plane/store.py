@@ -404,6 +404,8 @@ class PostgresControlPlaneStore:
             cursor.execute("""SELECT cr.*,s.name AS supplier_name,
                 (SELECT max(j.id) FROM crawl_jobs j WHERE j.crawl_run_id=cr.id
                  AND j.settings_snapshot ? 'manual_collection') AS manual_job_id,
+                (SELECT max(j.id) FROM crawl_jobs j WHERE j.supplier_id=cr.supplier_id
+                 AND j.status<>'skipped_already_queued') AS latest_supplier_job_id,
                 EXISTS (SELECT 1 FROM crawl_jobs j WHERE j.crawl_run_id=cr.id AND j.status='running'
                     AND j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection') AS manual_job_expired
                 FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id WHERE cr.id=%s""", (run_id,))

@@ -6,7 +6,9 @@ from http.client import IncompleteRead, RemoteDisconnected
 import json
 from pathlib import Path
 import socket
+from types import SimpleNamespace
 from urllib.error import URLError
+from urllib.request import Request
 
 import pytest
 
@@ -21,9 +23,10 @@ from test_source_runtime import Backend
 from universal_supplier.control_plane.manual_collection import MANUAL_EXECUTION, ManualRequest, verify
 from universal_supplier.control_plane.queue import CrawlJob, EnqueueResult
 from universal_supplier.control_plane.security import AuthUser
-from universal_supplier.control_plane.source_resume import manual_transport_receipt
+from universal_supplier.control_plane.source_backend import SourceBackend
+from universal_supplier.control_plane.source_resume import manual_redirect_receipt, manual_transport_receipt
 from universal_supplier.control_plane.source_runtime import LEASED_HOST, engine_fingerprint, run_source
-from universal_supplier.http_capture import HttpResponse
+from universal_supplier.http_capture import HttpResponse, _BoundedRedirectHandler
 
 
 @pytest.fixture(autouse=True)
@@ -40,7 +43,8 @@ def offline(monkeypatch,tmp_path):
 def native_manual(*, fail_tail=False, end_window=False, block=False, robots_replies=None, robots_limit=2,
                   product_error=TimeoutError, second_error=None, all_cards_fail=False,
                   card_count=3, initial_network_failures=0, duration=100, block_card=None,
-                  stop_during_cooldown=False):
+                  stop_during_cooldown=False, redirect_target=None, redirect_card=1,
+                  first_card_failures=1, missing_cards=0):
     code='partner_st'
     base='https://partner-st.ru'
     rate_values={'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0}
@@ -94,8 +98,14 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
             number=int(url.removesuffix('/').rsplit('-',1)[-1])
             calls.append(number)
             backend.product_started_at.append(clock.monotonic())
+            if number==redirect_card and redirect_target:
+                handler=_BoundedRedirectHandler(validator,self.before_request)
+                handler.redirect_request(Request(url),None,302,'Found',{},redirect_target)
+                pytest.fail('The new address must not be followed')
+            if number<=missing_cards:
+                return HttpResponse(url,404,'text/plain',b'missing')
             if (all_cards_fail or sum(type(item) is int for item in calls)<=initial_network_failures
-                    or (number==1 and (calls.count(1)==1 or fail_tail))):
+                    or (number==1 and (calls.count(1)<=first_card_failures or fail_tail))):
                 raise product_error('no response')
             if number==2 and second_error and calls.count(2)==1:
                 raise second_error('connection reset')
@@ -171,6 +181,112 @@ def test_timeout_then_reset_does_not_stop_remaining_cards():
     assert calls==[1,2,3,1,2]
     assert result['status']=='succeeded' and result['deferred']==0
     assert result['sql_committed']==len(backend.writes)==3
+
+
+def test_manual_redirect_to_unlisted_product_skips_only_old_card():
+    run,job,backend,calls=native_manual(robots_replies=iter((200,)),
+                                       redirect_target='https://partner-st.ru/item-new/')
+    result=run(job)
+    assert calls==['robots',1,2,3]
+    assert len(result['canary']['product_requests'])==3
+    assert result['status']=='partial' and result['termination_reason'] is None
+    assert result['sql_committed']==len(backend.writes)==2 and result['remaining']==0
+    assert result['deferred']==0 and result['network_pauses']==0
+    receipt,=result['quarantined']
+    assert receipt['isolation']['category']=='manual_out_of_scope_redirect'
+    evidence=Path(result['checkpoint']).parent/'transport-errors'/receipt['redirect_evidence']['file']
+    assert manual_redirect_receipt(receipt['origin'],receipt['url'],job.id,evidence)==receipt
+    entry=job.settings_snapshot['source_input']['entries'][0]
+    class Cursor:
+        capture_exists=False
+        def execute(self,query,args):
+            assert 'supplier_http_captures' in query and 'entity_change_history' in query
+            assert args==(receipt['url'],job.id,job.supplier_code,entry['source_product_id'],entry['source_external_id'])
+        def fetchone(self):
+            return (job.settings_snapshot['source_input'],self.capture_exists,False,False)
+    cursor=Cursor()
+    sql_backend=SourceBackend.__new__(SourceBackend)
+    sql_backend.code=job.supplier_code
+    sql_backend.repo=SimpleNamespace(connection=SimpleNamespace(cursor=lambda:nullcontext(cursor)))
+    assert sql_backend.probe(entry,receipt)=='NOT_FOUND'
+    cursor.capture_exists=True
+    assert sql_backend.probe(entry,receipt)=='UNKNOWN'
+    evidence.write_bytes(b'{}')
+    with pytest.raises(ValueError,match='MANUAL_REDIRECT_PROOF_REQUIRED'):
+        manual_redirect_receipt(receipt['origin'],receipt['url'],job.id,evidence)
+
+
+def test_consecutive_removed_cards_do_not_stop_manual_collection():
+    run,job,backend,calls=native_manual(robots_replies=iter((200,)),card_count=6,missing_cards=5)
+    result=run(job)
+    assert calls==['robots',1,2,3,4,5,6]
+    assert result['termination_reason'] is None and result['remaining']==0
+    assert result['status']=='partial' and result['sql_committed']==len(backend.writes)==1
+
+
+def test_manual_redirect_does_not_refetch_a_saved_address_inside_batch():
+    run,job,backend,calls=native_manual(robots_replies=iter((200,)),redirect_card=2,
+        redirect_target='https://partner-st.ru/item-1/',first_card_failures=0)
+    result=run(job)
+    assert calls==['robots',1,2,3] and result['termination_reason'] is None
+    assert result['sql_committed']==len(backend.writes)==2
+    assert result['quarantined'][0]['isolation']['category']=='manual_out_of_scope_redirect'
+
+
+@pytest.mark.parametrize('try_committed',[False,True])
+def test_network_only_retry_preserves_saved_cards_and_can_recover(try_committed):
+    run,job,backend,calls=native_manual(robots_replies=iter((200,200)),first_card_failures=2)
+    first=run(job)
+    assert first['remaining']==0 and first['deferred']==1 and first['sql_committed']==2
+    snapshot=job.settings_snapshot
+    checkpoint=json.loads(Path(first['checkpoint']).read_bytes())
+    retry=[entry['url'] for entry in snapshot['source_input']['entries'][:2 if try_committed else 1]]
+    resumed=replace(job,id=2,settings_snapshot={
+        **snapshot,'manual_resume':{'previous_engine':snapshot['source_input']['engine_sha256'],
+                                     'checkpoint_sha256':checkpoint['checksum'],'retry_network_urls':retry},
+        'crawl_settings':{**snapshot['crawl_settings'],'collection_mode':'RESUME',
+                          'resume_owner_job_id':1,'resume_input_sha256':first['input_sha256']}})
+    result=run(resumed)
+    if try_committed:
+        assert calls==['robots',1,2,3,1] and result['sql_committed']==2
+        assert result['termination_reason']=='MANUAL_NETWORK_RETRY_SCOPE_CHANGED'
+    else:
+        assert calls==['robots',1,2,3,1,'robots',1]
+        assert result['status']=='succeeded' and result['sql_committed']==len(backend.writes)==3
+        assert result['sql_committed_this_job']==1 and result['network_retry_count']==1
+        assert result['canary']['product_requests']==[retry[0]]
+
+
+@pytest.mark.parametrize('target', ['https://example.net/item-new/', 'https://partner-st.ru/item-new/?token=test'])
+def test_manual_unapproved_redirect_keeps_hard_stop(target):
+    run,job,backend,calls=native_manual(robots_replies=iter((200,)),redirect_target=target)
+    result=run(job)
+    assert calls==['robots',1] and not backend.writes
+    assert result['termination_reason']=='MANUAL_REDIRECT_TARGET_NOT_ALLOWED'
+    assert not result['quarantined'] and not result['resume_available']
+
+
+def test_legacy_scope_archive_requires_the_original_last_dispatched_address(tmp_path):
+    from universal_supplier.control_plane.source_runtime import job_dir
+    source='kami';job_id=17;url='https://www.stanki.ru/catalog/test-1/'
+    origin={'source':source,'job_id':job_id,'manifest_sha256':'a'*64}
+    reason='CANARY_URL_OUTSIDE_FROZEN_BATCH'
+    folder=job_dir(source,job_id)
+    evidence=folder/'transport-errors'/('b'*64+'.json')
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text(json.dumps({'url':url,'job_id':job_id,'owner_job_id':job_id,
+        'input_sha256':origin['manifest_sha256'],'transport_started':True,'http_status':None,
+        'diagnostics':{'source':source,'request_scope':'product','response_available':False,'wire_outcome':'UNKNOWN',
+                       'original_exception':{'type':'ValueError','module':'builtins','message':reason}}}))
+    (folder/'FIRST_STOP.json').write_text(json.dumps({'job_id':job_id,'reason':reason}))
+    result={'supplier_code':source,'owner_job_id':job_id,'input_sha256':origin['manifest_sha256'],
+            'termination_reason':reason,'resume_uncertain':[url],'canary':{'product_requests':[url]}}
+    (folder/'result.json').write_text(json.dumps(result))
+    assert manual_redirect_receipt(origin,url,job_id,evidence,legacy=True)['state']=='QUARANTINED'
+    result['canary']['product_requests'].append('https://www.stanki.ru/catalog/unrelated/')
+    (folder/'result.json').write_text(json.dumps(result))
+    with pytest.raises(ValueError,match='MANUAL_REDIRECT_PROOF_REQUIRED'):
+        manual_redirect_receipt(origin,url,job_id,evidence,legacy=True)
 
 
 def test_old_transport_receipt_must_match_terminal_error():
@@ -331,6 +447,34 @@ def test_partial_collection_separates_network_and_matching_for_operator(tmp_path
     assert payload['matching_conflicts']==1 and payload['other_card_issues']==1
     assert 'quarantined' not in payload
     assert c.post('/api/jobs/214/progress').status_code==403
+
+
+def test_drained_manual_collection_offers_a_separate_retry_action(tmp_path,monkeypatch):
+    monkeypatch.setenv('STERBRUST_MANUAL_COLLECTION_ENABLED','YES')
+    c,store=client(tmp_path,monkeypatch)
+    details={'id':105,'supplier_name':'КАМИ','status':'partial','supplier_id':5812,'manual_job_id':214,
+             'metadata':{'source_runtime':{'remaining':0,'deferred':2}},'errors':[]}
+    monkeypatch.setattr(store,'run',lambda run_id:details)
+    page=c.get('/runs/105')
+    assert 'Повторить сетевые ошибки' in page.text and 'name="retry_network" value="yes"' in page.text
+    assert 'Продолжить сбор' not in page.text
+    requests=[]
+    def enqueue(*args,**kwargs):
+        requests.append(kwargs)
+        return EnqueueResult(215,'queued')
+    c.app.state.queue.enqueue=enqueue
+    monkeypatch.setattr('universal_supplier.control_plane.manual_collection.launch',lambda *args,**kwargs:None)
+    posted=c.post('/suppliers/5812/manual-start',data={'csrf_token':csrf(page),'collection_mode':'RESUME',
+        'resume_job_id':'214','retry_network':'yes'},follow_redirects=False)
+    assert posted.status_code==303 and 'job_id=215' in posted.headers['location']
+    assert len(requests)==1 and requests[0]['manual_request'].retry_network
+    assert requests[0]['source_mode']=='RESUME' and requests[0]['resume_job_id']==214
+    details['metadata']['source_runtime']['remaining']=3
+    page=c.get('/runs/105')
+    assert 'Продолжить сбор' in page.text and 'Повторить сетевые ошибки' not in page.text
+    details['latest_supplier_job_id']=217
+    page=c.get('/runs/105')
+    assert 'Продолжить сбор' not in page.text and '/runs?job_id=217' in page.text
 
 
 def test_expired_job_action_is_scoped_and_requires_csrf(tmp_path,monkeypatch):
