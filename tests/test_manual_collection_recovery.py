@@ -447,6 +447,21 @@ def test_job_progress_polls_and_api_omits_private_metadata(tmp_path,monkeypatch)
     assert response.headers['cache-control']=='no-store'
 
 
+def test_runs_shows_selected_job_and_other_active_run_together(tmp_path,monkeypatch):
+    c,store=client(tmp_path,monkeypatch)
+    monkeypatch.setattr(store,'runs',lambda: [
+        {'id':220,'entry_type':'job','supplier_name':'Векпром','status':'running'},
+        {'id':110,'entry_type':'run','supplier_name':'КАМИ','status':'running',
+         'metadata':{'source_runtime':{'remaining':4816},'progress':{'total':5264,'succeeded':448}}},
+    ])
+    page = c.get('/runs?job_id=220')
+    assert page.status_code==200
+    assert page.text.count('data-collection-progress="/api/jobs/220/progress"') == 1
+    job_row = page.text.split('id="job-220"',1)[1].split('</tr>',1)[0]
+    assert 'data-collection-progress="/api/jobs/220/progress"' in job_row and 'data-run-link' in job_row
+    assert 'data-collection-progress="/api/runs/110/progress"' in page.text
+
+
 def test_partial_collection_separates_network_and_matching_for_operator(tmp_path,monkeypatch):
     c,store=client(tmp_path,monkeypatch,role='OPERATOR')
     receipts=[
