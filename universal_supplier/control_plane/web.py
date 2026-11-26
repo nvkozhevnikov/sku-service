@@ -261,7 +261,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     def current_user(request: Request):
         data = payload(request)
         if not data: return None
-        if not auth_required: return AuthUser(0, "test", "Тестовый администратор", "ADMIN")
+        if not auth_required:
+            return AuthUser(0,'local','Локальный просмотр','VIEWER') if getattr(type(store),'local_monitoring_review',False) else AuthUser(0, "test", "Тестовый администратор", "ADMIN")
         user = admin_store.user_by_id(int(data["uid"]))
         # A session is valid only while its session_version matches the user's (bumped on logout/revocation).
         return user if user and user.is_active and user.role == data.get("role") and data.get("sv") == user.session_version else None
@@ -276,8 +277,13 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     def context(request: Request, **values):
         data = payload(request)
         read_only_source = bool(getattr(type(store), "read_only", False))
+        local_review = getattr(type(store), 'local_monitoring_review', False)
         return {"request": request, "csp_nonce":getattr(request.state,'csp_nonce',''), "current_user": current_user(request), "csrf_token": data.get("csrf", "") if data else "",
-            "safety_banner": "СИНТЕТИЧЕСКАЯ QA-БАЗА · НЕ LIVE · СБОР ЗАБЛОКИРОВАН" if os.environ.get('CONTROL_PLANE_QA_INSTANCE')=='YES' else "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
+            "safety_banner": "СИНТЕТИЧЕСКАЯ QA-БАЗА · НЕ LIVE · СБОР ЗАБЛОКИРОВАН" if os.environ.get('CONTROL_PLANE_QA_INSTANCE')=='YES'
+                else "ЛОКАЛЬНЫЙ ПРОСМОТР · ИЗМЕНЕНИЯ И ФОНОВЫЙ СБОР ВЫКЛЮЧЕНЫ" if local_review
+                else "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
+            "local_monitoring_review": local_review,
+            "fixture_preview": getattr(type(store), 'fixture_preview', False),
             "commercial_qa_available": bool(getattr(commercial_qa_service, "enabled", False)),
             "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
             "monitoring_available": competitor_service is not None,
@@ -332,6 +338,12 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             if result['status']=='queued' and 'text/html' in request.headers.get('accept',''):
                 return RedirectResponse('/release-jobs',status_code=303)
             return JSONResponse(result,status_code=202 if result['status']=='queued' else 409)
+
+    if competitor_service is not None:
+        app.state.monitoring_template_context=context
+        app.state.monitoring_templates=templates
+        from .competitor_ui import register_monitoring
+        register_monitoring(app, templates, context, guard, competitor_service,competitor_collection,check_csrf)
 
     @app.middleware("http")
     async def block_qa_source_writes(request: Request, call_next):
@@ -1481,7 +1493,10 @@ def create_unavailable_app(message: str) -> FastAPI:
     return app
 
 
-try:
-    app = create_app()
-except RuntimeError as error:
-    app = create_unavailable_app(str(error))
+if os.environ.get('CONTROL_PLANE_SKIP_DEFAULT_APP')=='YES':
+    app = None  # Explicit local factory launcher; no default supplier DB bootstrap.
+else:
+    try:
+        app = create_app()
+    except RuntimeError as error:
+        app = create_unavailable_app(str(error))
