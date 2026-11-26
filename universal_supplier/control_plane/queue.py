@@ -461,7 +461,10 @@ class PostgresJobQueue:
             # Existing host session lease remains the final network guard.
             cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
             cursor.execute("SELECT count(*) FROM crawl_jobs WHERE status='running'")
-            if cursor.fetchone()[0] >= 2:
+            # Global cap across worker processes: the same setting the
+            # orchestrator uses (default 2), not a hard-coded 2 (review K5).
+            from .scheduler_main import read_max_parallel_supplier_jobs
+            if cursor.fetchone()[0] >= read_max_parallel_supplier_jobs():
                 return None
             # Frozen deadlines remain evidence. An exact approved extension must
             # also govern queue expiry, before per-snapshot dispatch validation.
@@ -514,6 +517,9 @@ class PostgresJobQueue:
                 manual_validator(row[9])
             from . import automation_execution
             if automation_execution.ACTIVE is not None and not row[9].get('automation'):
+                # Deliberate hard stop: a session starts only with no foreign queued
+                # jobs (automation_execution.start), so one appearing mid-session
+                # breaks its approval and must stop the worker for an operator.
                 raise PermissionError('AUTOMATION_FOREIGN_ACTIVE_JOB')
             if row[9].get('automation'):
                 from .automation_execution import validate_job

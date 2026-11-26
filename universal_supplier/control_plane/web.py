@@ -7,8 +7,6 @@ import json
 import re
 import secrets
 from pathlib import Path
-import re
-import secrets
 from urllib.parse import parse_qs, quote, urlparse
 import tempfile
 import time
@@ -339,12 +337,6 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 return RedirectResponse('/release-jobs',status_code=303)
             return JSONResponse(result,status_code=202 if result['status']=='queued' else 409)
 
-    if competitor_service is not None:
-        app.state.monitoring_template_context=context
-        app.state.monitoring_templates=templates
-        from .competitor_ui import register_monitoring
-        register_monitoring(app, templates, context, guard, competitor_service,competitor_collection,check_csrf)
-
     @app.middleware("http")
     async def block_qa_source_writes(request: Request, call_next):
         from universal_supplier.partner_pilot import enabled
@@ -413,6 +405,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.exception_handler(PermissionError)
     async def runtime_guard_error(request,exc):
+        if exc.errno is not None:
+            # OS-level permission error (file/directory), not a runtime guard.
+            LOGGER.error("filesystem permission error on %s: %s", request.url.path, exc)
+            return PlainTextResponse('Нет доступа к файлу или папке на сервере; подробности в журнале.',status_code=500)
         text=str(exc)
         return PlainTextResponse(text if text.startswith(('CANARY_','AUTOMATION_','PANEL_')) else 'SQL safety guard blocked this action',status_code=503)
 
@@ -798,7 +794,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         if not enabled():raise HTTPException(403,'Тестовый режим не включён')
         item=next((x for x in store.suppliers() if int(x['id'])==supplier_id),None)
         if not item or item.get('code')!='partner_st':raise HTTPException(403,'Только Partner-ST')
-        Path(os.environ['PARTNER_PILOT_STOP_FILE']).touch(exist_ok=True)
+        stop_file=os.environ.get('PARTNER_PILOT_STOP_FILE','').strip()
+        if not stop_file:raise HTTPException(503,'Не задан PARTNER_PILOT_STOP_FILE: остановка пилота не настроена')
+        Path(stop_file).touch(exist_ok=True)
         return RedirectResponse('/runs',303)
 
     @app.get("/commercial-qa", response_class=HTMLResponse)

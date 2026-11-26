@@ -230,3 +230,70 @@ def test_competitor_http_body_is_capped(monkeypatch, tmp_path):
     session = HttpTransport(tmp_path, sleeper=lambda seconds: None).session
     from universal_supplier.public_connection import public_requests_adapter
     assert type(session.get_adapter("https://metalmaster.ru/")).__name__ == type(public_requests_adapter()).__name__
+
+
+# --- K5: the queue's global running cap follows MAX_PARALLEL_SUPPLIER_JOBS ------------------------
+
+class _ClaimCursor:
+    def __init__(self, running): self.running = running; self.sql = []; self._last = None
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def execute(self, sql, params=None): self.sql.append(sql); self._last = sql
+    def fetchone(self):
+        return (self.running,) if "count(*)" in self._last else None
+
+
+class _ClaimConnection:
+    def __init__(self, cursor): self._cursor = cursor
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def transaction(self):
+        from contextlib import nullcontext
+        return nullcontext()
+    def cursor(self): return self._cursor
+
+
+@pytest.mark.parametrize("setting,running,claims", [("2", 2, False), ("2", 1, True), ("4", 3, True), ("4", 4, False)])
+def test_claim_cap_uses_parallel_setting(monkeypatch, setting, running, claims):
+    from universal_supplier.control_plane.queue import PostgresJobQueue
+    from universal_supplier.control_plane import source_recovery
+    monkeypatch.setenv("MAX_PARALLEL_SUPPLIER_JOBS", setting)
+    monkeypatch.delenv(source_recovery.ENV + "_FILE", raising=False)
+    cursor = _ClaimCursor(running)
+    queue = PostgresJobQueue(None, connection_factory=lambda config, autocommit=True: _ClaimConnection(cursor))
+    assert queue.claim_next() is None
+    assert any("FOR UPDATE OF j SKIP LOCKED" in sql for sql in cursor.sql) is claims
+
+
+# --- N1-N3 -----------------------------------------------------------------------------------------
+
+def test_monitoring_registered_once_and_imports_not_repeated():
+    source = (ROOT / "universal_supplier/control_plane/web.py").read_text(encoding="utf-8")
+    assert source.count("register_monitoring(app") == 1
+    imports = [line for line in source.splitlines() if line.startswith(("import ", "from "))]
+    assert len(imports) == len(set(imports))
+
+
+def test_filesystem_permission_error_is_not_reported_as_sql_guard():
+    import asyncio
+    import errno
+    from universal_supplier.control_plane.admin_store import InMemoryAdminStore
+    from universal_supplier.control_plane.queue import InMemoryJobQueue
+    from universal_supplier.control_plane.store import UnavailableControlPlaneStore
+    from universal_supplier.control_plane.web import create_app
+    app = create_app(store=UnavailableControlPlaneStore("x"), queue=InMemoryJobQueue(),
+                     admin_store=InMemoryAdminStore(), auth_required=False)
+    handler = app.exception_handlers[PermissionError]
+    request = type("R", (), {"url": type("U", (), {"path": "/x"})()})()
+    fs = asyncio.run(handler(request, PermissionError(errno.EACCES, "Permission denied", "/srv/reports")))
+    assert fs.status_code == 500 and b"SQL safety guard" not in fs.body
+    guard = asyncio.run(handler(request, PermissionError("AUTOMATION_SCOPE_GROWTH")))
+    assert guard.status_code == 503 and guard.body == b"AUTOMATION_SCOPE_GROWTH"
+    other = asyncio.run(handler(request, PermissionError("RUNTIME_DML_FORBIDDEN")))
+    assert other.status_code == 503 and other.body == b"SQL safety guard blocked this action"
+
+
+def test_stop_pilot_without_stop_file_setting_is_a_clear_503():
+    source = (ROOT / "universal_supplier/control_plane/web.py").read_text(encoding="utf-8")
+    assert "os.environ['PARTNER_PILOT_STOP_FILE']" not in source
+    assert "Не задан PARTNER_PILOT_STOP_FILE" in source
