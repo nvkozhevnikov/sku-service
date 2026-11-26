@@ -88,7 +88,7 @@ def test_configured_future_host_login_and_csrf_mutation(monkeypatch):
     assert response.status_code == 303
     from universal_supplier.control_plane.security import SessionSigner
     csrf = SessionSigner(SECRET).read(client.cookies.get(SessionSigner.cookie_name))["csrf"]
-    assert client.post("/settings/users", data={"csrf_token":csrf,"username":"viewer1","display_name":"Наблюдатель","password":"viewer-password-123","role":"VIEWER"}, follow_redirects=False).status_code == 303
+    assert client.post("/settings/users", data={"csrf_token":csrf,"current_password":PASSWORD,"username":"viewer1","display_name":"Наблюдатель","password":"viewer-password-123","role":"VIEWER"}, follow_redirects=False).status_code == 303
 
 
 def test_configured_host_does_not_weaken_csrf(monkeypatch):

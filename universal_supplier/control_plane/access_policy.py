@@ -23,6 +23,10 @@ PERMISSIONS = {
     "content.vk.publish": "Контент-студия: подготовка и подтверждение ВК",
     "content.site.export": "Контент-студия: HTML для сайта",
 }
+SECTION_EXPORT_PERMISSIONS = {
+    "review": "matching.read", "suppliers": "catalog.read", "runs": "catalog.read",
+    "quality": "catalog.read", "properties": "catalog.read",
+}
 LEGACY_READ = frozenset(k for k in PERMISSIONS if k.endswith(".read") and not k.startswith('content.'))
 
 
@@ -46,9 +50,15 @@ def request_permission(path, method):
         return "accounts.admin"
     if path.startswith("/applications"):
         return "applications.read"
-    if path.startswith(("/competitor-monitoring", "/news")):
+    if path.startswith(("/competitor-monitoring", "/news", "/api/competitor-monitoring", "/cabinet/competitor-runs")):
         return "competitor.collect" if write else "competitor.read"
-    if path.startswith(("/exports", "/rc-final", "/xml")):
+    # Section exports carry the permission of the section they export, not xml.read.
+    section = re.fullmatch(r"/exports/(review|suppliers|runs|quality|properties)\.[A-Za-z0-9]+", path)
+    if section:
+        return SECTION_EXPORT_PERMISSIONS[section.group(1)]
+    if path.startswith("/changes/export."):
+        return "reports.read"
+    if path.startswith(("/exports", "/rc-final", "/xml", "/sterbrust-preview")):
         return "xml.generate" if write else "xml.read"
     if path.startswith(("/review", "/automatic-matching", "/matching")):
         return "matching.manage" if write else "matching.read"
@@ -57,6 +67,7 @@ def request_permission(path, method):
     if path == "/" or path.startswith((
         "/suppliers", "/products", "/runs", "/data-quality", "/properties",
         "/reparse", "/commercial-qa", "/live11", "/source-", "/parser-", "/release-jobs",
+        "/api/commercial-qa", "/api/live11", "/cabinet/sources", "/api/cabinet/", "/cabinet/quality",
     )):
         return "supplier.manage" if write else "catalog.read"
     return "accounts.admin"  # new/unclassified endpoints fail closed for limited profiles

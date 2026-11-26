@@ -174,7 +174,8 @@ def create_app(directory, login_code=None, *, store=None, ai_vault=None, vk_vaul
 
     @app.get('/api/sources/browser-module-info')
     def browser_module_info():
-        return {'folder':str((STATIC.parent/'browser_import').resolve()),'permissions':'Страницы Sterbrust и локальная Studio. Для нового адреса панели требуется адресная настройка модуля. Без cookie, паролей и публикации.'}
+        # Folder name only: the absolute server path is not shown to readers (review 2026-11-26 B8).
+        return {'folder':'browser_import','permissions':'Страницы Sterbrust и локальная Studio. Для нового адреса панели требуется адресная настройка модуля. Без cookie, паролей и публикации.'}
 
     @app.get('/api/sources/browser-module')
     def browser_module_zip():

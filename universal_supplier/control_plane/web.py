@@ -1420,6 +1420,16 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.post("/settings/users")
     async def create_user_route(request: Request):
         user = guard(request, {"ADMIN"}); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
+        # Same re-authentication as POST /users: a live admin session alone must
+        # not be enough to create another persistent account (review 2026-11-26 B3).
+        reauth_key = ("reauth:" + user.username, request.client.host if request.client else "")
+        if login_throttle.locked(reauth_key):
+            raise HTTPException(429, "Слишком много попыток подтверждения пароля")
+        found = admin_store.user_by_username(user.username)
+        if not found or found[0].id != user.id or not verify_password(values.get("current_password", ""), found[1]):
+            login_throttle.failure(reauth_key)
+            raise HTTPException(403, "Текущий пароль неверен")
+        login_throttle.reset(reauth_key)
         from .access_policy import validate_new_password
         try: validate_new_password(values.get("password",""),values.get("password",""))
         except ValueError as error: return page_error(request,str(error))

@@ -74,3 +74,120 @@ def test_023_content_manager_matches_builtin_and_only_touches_the_019_seed():
     assert sorted(new_value) == sorted(builtin)
     assert "AND permissions = '[\"competitor.read\",\"applications.read\"]'::jsonb" in sql
     assert sql.startswith("BEGIN;") and sql.rstrip().endswith("COMMIT;")
+
+
+# --- K2: every panel route has an explicit permission ------------------------------------------
+
+PUBLIC_OR_SELF = {"/login", "/logout", "/health", "/ready", "/account/password", "/{path:path}"}
+ADMIN_BY_DESIGN = ("/users", "/roles", "/settings/users")
+
+
+def _panel_routes():
+    import re
+    for source in sorted((ROOT / "universal_supplier/control_plane").glob("*.py")):
+        text = source.read_text(encoding="utf-8")
+        for match in re.finditer(r"@(?:app|router)\.(get|post|put|patch|delete|api_route)\(\s*['\"]([^'\"]+)['\"]", text):
+            method = "GET" if match.group(1) == "api_route" else match.group(1).upper()
+            yield method, match.group(2)
+
+
+def test_no_panel_route_falls_through_to_the_admin_default():
+    import re
+    from universal_supplier.control_plane.access_policy import request_permission
+    unmapped = sorted({(method, path) for method, path in _panel_routes()
+                       if path not in PUBLIC_OR_SELF and not path.startswith(ADMIN_BY_DESIGN)
+                       and request_permission(re.sub(r"\{[^}]+\}", "1", path), method) == "accounts.admin"})
+    assert unmapped == []
+
+
+@pytest.mark.parametrize("path,method,expected", [
+    ("/api/commercial-qa/runs/7", "GET", "catalog.read"),
+    ("/api/live11/status", "GET", "catalog.read"),
+    ("/cabinet/sources/ltt_msk", "GET", "catalog.read"),
+    ("/api/cabinet/sources/ltt_msk", "GET", "catalog.read"),
+    ("/cabinet/sources/ltt_msk/enqueue", "POST", "supplier.manage"),
+    ("/cabinet/quality", "GET", "catalog.read"),
+    ("/cabinet/competitor-runs", "GET", "competitor.read"),
+    ("/api/competitor-monitoring/run", "GET", "competitor.read"),
+    ("/sterbrust-preview", "GET", "xml.read"),
+    ("/changes/export.csv", "GET", "reports.read"),
+    # B4: section exports follow their section, not xml.read
+    ("/exports/review.csv", "GET", "matching.read"),
+    ("/exports/suppliers.xlsx", "GET", "catalog.read"),
+    ("/exports/runs.csv", "GET", "catalog.read"),
+    ("/exports/quality.csv", "GET", "catalog.read"),
+    ("/exports/properties.xlsx", "GET", "catalog.read"),
+    ("/exports/xml", "GET", "xml.read"),
+    ("/exports/xml/download", "GET", "xml.read"),
+])
+def test_permission_map(path, method, expected):
+    from universal_supplier.control_plane.access_policy import request_permission
+    assert request_permission(path, method) == expected
+
+
+def test_xml_only_profile_cannot_export_other_sections():
+    from types import SimpleNamespace
+    from universal_supplier.control_plane.access_policy import allowed, request_permission
+    xml_only = SimpleNamespace(role="VIEWER", permissions={"xml.read"})
+    assert allowed(xml_only, request_permission("/exports/xml", "GET"))
+    for entity in ("review", "suppliers", "runs", "quality", "properties"):
+        assert not allowed(xml_only, request_permission(f"/exports/{entity}.csv", "GET")), entity
+
+
+# --- B3: legacy user creation needs the current password ---------------------------------------
+
+def test_legacy_user_creation_requires_current_password():
+    from fastapi.testclient import TestClient
+    from test_security_review_group5 import _app, _csrf, _login, PASSWORD
+    app, admin = _app()
+    client = _login(app, "admin1")
+    form = {"csrf_token": _csrf(client), "username": "second_admin", "display_name": "X",
+            "password": "Another-Strong-Pass-1", "role": "ADMIN"}
+    assert client.post("/settings/users", data=form, follow_redirects=False).status_code == 403
+    assert client.post("/settings/users", data={**form, "current_password": "wrong"}, follow_redirects=False).status_code == 403
+    assert not admin.user_by_username("second_admin")
+    response = client.post("/settings/users", data={**form, "current_password": PASSWORD}, follow_redirects=False)
+    assert response.status_code == 303 and admin.user_by_username("second_admin")
+
+
+# --- B6/B7/B8: Content Studio -------------------------------------------------------------------
+
+class _Req:
+    def __init__(self, method, query=None):
+        self.method = method; self.query_params = query or {}; self.headers = {"x-csrf-token": "t"}
+
+
+def _auth(permissions):
+    from types import SimpleNamespace
+    from content_studio.shared_auth import SharedAuth
+    from universal_supplier.control_plane.access_policy import allowed
+    user = SimpleNamespace(role="OPERATOR", permissions=set(permissions), must_change_password=False, id=5)
+    store = SimpleNamespace(access=lambda *args: True)
+    return SharedAuth(lambda request: user, lambda request: {"csrf": "t"}, allowed, store)
+
+
+PID = "a" * 32
+
+
+def test_final_site_export_needs_site_export_permission():
+    from fastapi import HTTPException
+    auth = _auth({"content.read", "content.export"})
+    auth.authorize(_Req("GET", {"kind": "transfer"}), f"/api/projects/{PID}/export")
+    with pytest.raises(HTTPException) as error:
+        auth.authorize(_Req("GET", {"kind": "final"}), f"/api/projects/{PID}/export")
+    assert error.value.status_code == 403
+    _auth({"content.read", "content.export", "content.site.export"}).authorize(
+        _Req("GET", {"kind": "final"}), f"/api/projects/{PID}/export")
+
+
+def test_import_needs_media_permission():
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:
+        _auth({"content.read", "content.edit"}).authorize(_Req("POST"), "/api/import")
+    assert error.value.status_code == 403
+    _auth({"content.read", "content.edit", "content.media"}).authorize(_Req("POST"), "/api/import")
+
+
+def test_browser_module_info_has_no_absolute_path():
+    source = (ROOT / "content_studio/app.py").read_text(encoding="utf-8")
+    assert "{'folder':'browser_import'," in source and "browser_import').resolve()" not in source

@@ -40,6 +40,12 @@ class SharedAuth:
         if needed=='accounts.admin':valid=user.role=='ADMIN'
         else:valid=self.allowed(user,needed)
         if not valid:raise HTTPException(403,'Недостаточно прав на это действие в Контент-студии.')
+        # Actions that need a second permission on top of the path one (review 2026-11-26 B6/B7).
+        extra=[]
+        if path.endswith('/export') and request.query_params.get('kind')=='final':extra.append('content.site.export')
+        if path=='/api/import':extra.append('content.media')  # an import package also stores photos
+        if user.role!='ADMIN' and any(not self.allowed(user,item) for item in extra):
+            raise HTTPException(403,'Недостаточно прав на это действие в Контент-студии.')
         if request.method not in ('GET','HEAD','OPTIONS') and not hmac.compare_digest(request.headers.get('x-csrf-token',''),csrf):
             raise HTTPException(403,'Сессия устарела. Обновите страницу Unified RC.')
         project=re.search(r'^/api/projects/([0-9a-f]{32})(?:/|$)',path)
