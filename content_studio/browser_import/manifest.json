@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "STERBRUST — импорт в Content Studio",
+  "version": "1.1.0",
+  "description": "Читает название и описание собственных страниц Sterbrust для локальной Content Studio. Без публикации, паролей и cookie.",
+  "permissions": ["scripting"],
+  "host_permissions": ["https://sterbrust.com/*", "https://www.sterbrust.com/*", "https://sterbrust.ru/*", "https://www.sterbrust.ru/*"],
+  "background": {"service_worker": "worker.js"},
+  "content_scripts": [{"matches": ["http://127.0.0.1:58206/*", "http://127.0.0.1:58207/*", "http://127.0.0.1:58161/content-studio/*", "http://127.0.0.1:58162/content-studio/*"], "js": ["bridge.js"], "run_at": "document_idle"}]
+}

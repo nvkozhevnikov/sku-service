@@ -150,6 +150,17 @@ def _render(template: str, **context) -> str:
     env.filters.update(ru=web.russian_label, product_kind_ru=web.product_kind_label,
                        relation_ru=web.relation_type_label, safe_http_url=web.safe_http_url)
     env.globals["url_for"] = lambda *args, **kwargs: "/static/x"
+    # Same helpers create_app registers, so templates render as in the panel.
+    from universal_supplier.control_plane import presentation
+    env.filters.update(msk=presentation.display_timestamp, number=presentation.compact_number)
+    env.globals.update(safe_http_url=web.safe_http_url, phase_summary=presentation.phase_summary,
+                       price_label=presentation.price_label, duration_label=presentation.duration_label,
+                       run_collection_progress=presentation.run_collection_progress,
+                       collection_notice=presentation.collection_notice,
+                       supplier_display_name=presentation.supplier_display_name,
+                       supplier_status=presentation.supplier_status, moscow_datetime=presentation.moscow_datetime,
+                       job_message=presentation.job_message)
+    context.setdefault("safety_banner", "")
     return env.get_template(template).render(request=None, current_user=None, **context)
 
 

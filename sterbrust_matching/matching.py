@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from itertools import combinations, product
 import re
 from typing import Any, Iterable
 
@@ -11,6 +12,8 @@ from .property_normalization import (
     PROPERTY_DATA_QUALITY_WARNING,
     PROPERTY_IDENTITY_CONFLICT,
     compare_property,
+    resolve_policy,
+    IDENTITY_CRITICAL,
 )
 from .product_identity import (
     OWN_MODEL,
@@ -27,6 +30,7 @@ from .product_identity import (
     mains_voltage_band,
     optimum_title_articles,
     primary_millimeters,
+    property_values,
 )
 
 
@@ -66,16 +70,28 @@ def _property_identity_quality(source: Product, candidate: Product) -> tuple[dic
     conflicts: dict[str, Any] = {}
     warnings: dict[str, Any] = {}
     evidence: dict[str, Any] = {}
-    for key in sorted(set(source.properties) & set(candidate.properties)):
-        left, right = source.properties[key], candidate.properties[key]
-        if left in (None, "") or right in (None, ""):
+    for key in sorted(set(source.properties) | set(candidate.properties)):
+        left = property_values(source.properties.get(key))
+        right = property_values(candidate.properties.get(key))
+        if resolve_policy(key).importance == IDENTITY_CRITICAL and any(
+            not comparison.compatible or comparison.classification == PROPERTY_DATA_QUALITY_WARNING
+            for values in (left, right) for a, b in combinations(values, 2)
+            for comparison in (compare_property(a, b, key),)
+        ):
+            conflicts[f"property:{key}"] = {
+                "result": "PROPERTY_AMBIGUOUS_DUPLICATE_VALUES",
+                "source_values": left, "candidate_values": right, "compatible": False,
+            }
+        if not left or not right:
             continue
-        comparison = compare_property(left, right, key)
-        evidence[key] = comparison.evidence()
-        if comparison.classification == PROPERTY_IDENTITY_CONFLICT:
-            conflicts[f"property:{key}"] = comparison.evidence()
-        elif comparison.classification == PROPERTY_DATA_QUALITY_WARNING:
-            warnings[f"PROPERTY_{key.upper()}_DATA_QUALITY_WARNING"] = comparison.evidence()
+        comparisons = [compare_property(a, b, key) for a, b in product(left, right)]
+        details = [comparison.evidence() for comparison in comparisons]
+        evidence[key] = details[0] if len(details) == 1 else {"values": details}
+        for comparison in comparisons:
+            if comparison.classification == PROPERTY_IDENTITY_CONFLICT:
+                conflicts.setdefault(f"property:{key}", comparison.evidence())
+            elif comparison.classification == PROPERTY_DATA_QUALITY_WARNING:
+                warnings[f"PROPERTY_{key.upper()}_DATA_QUALITY_WARNING"] = comparison.evidence()
     return conflicts, warnings, evidence
 
 
@@ -83,6 +99,14 @@ def _candidate_id_order(key: object) -> tuple[int, int, str]:
     """Deterministic ID order: numeric IDs by value, then other IDs as text."""
     text = str(key or "")
     return (0, int(text), text) if text.isdigit() else (1, 0, text)
+
+
+def _evidence_id_order(key: object) -> tuple[int, int, str]:
+    """Order emitted IDs only; never alter candidate ranking or raw ID values."""
+    text = str(key) if key is not None else ""
+    if re.fullmatch(r"[0-9]+", text) and int(text) > 0:
+        return (0, int(text), text)
+    return (1, 0, text)
 
 
 def _best_similarity_key(row: tuple) -> tuple:
@@ -135,10 +159,10 @@ def _identity_conflicts(source: Product, candidate: Product) -> dict[str, Any]:
     )
     conflicts.update(category_conflicts)
     source_voltage_text = source.name + " " + " ".join(
-        f"{key} {value}" for key, value in sorted(source.properties.items())
+        " ".join((key, *property_values(value))) for key, value in sorted(source.properties.items())
     )
     candidate_voltage_text = candidate.name + " " + " ".join(
-        f"{key} {value}" for key, value in sorted(candidate.properties.items())
+        " ".join((key, *property_values(value))) for key, value in sorted(candidate.properties.items())
     )
     source_band = mains_voltage_band(source_voltage_text)
     candidate_band = mains_voltage_band(candidate_voltage_text)
@@ -391,7 +415,7 @@ def match_product(source: Product, candidates: Iterable[Product], existing_link:
             return MatchResult(
                 "REVIEW", "DUPLICATE_SUPPLIER_ARTICLE", 1.0, None,
                 {"supplier_code": source.supplier_code, "normalized_article": source_article,
-                 "candidate_keys": [candidate.key for candidate in exact_supplier_rows],
+                 "candidate_keys": sorted((candidate.key for candidate in exact_supplier_rows), key=_evidence_id_order),
                  "candidate_count": len(exact_supplier_rows)},
                 {}, False,
             )
@@ -452,7 +476,7 @@ def match_product(source: Product, candidates: Iterable[Product], existing_link:
         return MatchResult(status, method, confidence, row[0].key,
                            {"brand_equal": row[3], "model_equal": row[4], "manufacturer_article_equal": row[2], "name_similarity": round(row[5], 4)}, {}, True)
     if len(strong) > 1:
-        return MatchResult("REVIEW", "NON_UNIQUE_STRONG_CANDIDATES", 0.8, None, {"candidate_keys": [r[0].key for r in strong]}, {}, False)
+        return MatchResult("REVIEW", "NON_UNIQUE_STRONG_CANDIDATES", 0.8, None, {"candidate_keys": sorted((r[0].key for r in strong), key=_evidence_id_order)}, {}, False)
     if conflict_rows:
         best = min(conflict_rows, key=_best_similarity_key)
         if best[3] and best[4] and set(best[1]).issubset({"product_kind", "model_role"}):

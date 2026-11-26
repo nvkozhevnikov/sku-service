@@ -1,0 +1,119 @@
+import json
+from contextlib import nullcontext
+from fastapi.testclient import TestClient
+from universal_supplier.control_plane.presentation import phase_summary,price_label,mark_quality_repeats
+from universal_supplier.control_plane.web import create_app
+from universal_supplier.control_plane.store import PostgresControlPlaneStore,UnavailableControlPlaneStore
+
+
+def test_http_success_never_implies_sql_success_or_missing_zero():
+    r={'status':'failed','fetched_count':0,'metadata':{'failure':'SQL CHECK failed','failed_stage':'sql_ingest_seconds','http_phase':{'successful_cards':50,'cards_per_minute':28.416,'request_metrics':{'requests_total':51,'http_2xx':51}}}}
+    s=phase_summary(r)
+    assert s['parsed']==50 and s['sql_count'] is None and s['sql_state']=='Ошибка SQL'
+    assert s['matching'] is None and s['matching_status']=='не запускался'
+    assert s['http_requested']==51 and s['http_successful']==51
+    assert phase_summary({})['http_speed'] is None
+
+
+def test_committed_ingest_zero_is_a_real_zero():
+    assert phase_summary({'fetched_count':0,'metadata':{'default_offer_counts':{}}})['sql_count']==0
+
+
+def test_price_states_zero_and_missing():
+    assert price_label({'price':0,'currency':'RUB'})=='0 RUB'
+    assert price_label({'price':0,'price_state':'price_on_request'})=='По запросу'
+    assert price_label({'price':None})=='Цена не указана'
+
+
+def test_quality_badge_only_for_equal_semantic_profile_not_every_same_run():
+    rows=[{'id':6,'supplier_id':1,'crawl_run_id':12,'metrics':{'a':1}},{'id':5,'supplier_id':1,'crawl_run_id':12,'metrics':{'a':1}},{'id':7,'supplier_id':1,'crawl_run_id':12,'metrics':{'a':2}}]
+    out=mark_quality_repeats(rows)
+    assert [x['duplicate_profile'] for x in out]==[True,False,False]
+    assert 'duplicate_profile' not in rows[0]
+
+
+def test_real_run_route_separates_all_phases_and_escapes_sql_error():
+    class Store(UnavailableControlPlaneStore):
+        def run(self,id):return {'id':id,'supplier_name':'Partner','status':'failed','fetched_count':0,'errors':[],'metadata':{'failure':'<SQL failed>','http_phase':{'successful_cards':50},'failed_stage':'sql_ingest_seconds'}}
+    c=TestClient(create_app(store=Store('offline'),auth_required=False));r=c.get('/runs/12')
+    assert r.status_code==200 and 'PostgreSQL сохранено' in r.text and 'Ошибка SQL' in r.text
+    assert 'не запускался' in r.text and 'Ошибок нет.' not in r.text
+    assert '&lt;SQL failed&gt;' in r.text and '<SQL failed>' not in r.text
+
+
+def test_history_covers_offer_events_and_separates_timestamps_for_partner():
+    class Cursor:
+        def __enter__(self):return self
+        def __exit__(self,*a):pass
+        def execute(self,q,args):self.q=q
+        def fetchall(self):
+            if 'entity_change_history' in self.q:
+                assert 'LEFT JOIN offers' in self.q
+                return [{'changed_at':'2026-10-20','field_group':'commercial','old_value':{},'new_value':{},'crawl_run_id':12}]
+            return [{'observed_at':'2026-10-19','price_state':'price_on_request','price':None,'currency':'RUB','availability_normalized':'unknown','capture_id':1,'supplier_code':'partner_st'}]
+    class Connection:
+        def __enter__(self):return self
+        def __exit__(self,*a):pass
+        def cursor(self):return Cursor()
+    s=object.__new__(PostgresControlPlaneStore);s._connect=lambda:Connection()
+    rows=s.product_history('partner_st','296');observation=next(r for r in rows if r.get('capture_id'))
+    assert observation['changed_at'] is None and observation['observed_at']=='2026-10-19'
+
+
+class PanelStore(UnavailableControlPlaneStore):
+    read_only=False
+    def __init__(self,code='partner_st'):super().__init__('offline');self.code=code;self.filters=[];self.saves=[]
+    def suppliers(self):return [{'id':1,'code':self.code,'name':'Supplier','rate_settings':{},'crawl_settings':{},'enabled':True,'job_id':99,'job_status':'stale_failed','job_error_message':'SOURCE_BLOCKED_HTTP_429','products':50}]
+    def dashboard(self):return self.suppliers()
+    def runs(self,limit=100,job_status=None):
+        self.filters.append(job_status)
+        return [{'id':99,'entry_type':'job','supplier_name':'Supplier','status':job_status or 'stale_failed','crawl_run_id':None,'error_message':'SOURCE_BLOCKED_HTTP_429'}]
+    def save_schedule(self,*args):self.saves.append(args)
+
+
+def test_job_without_run_has_no_fabricated_run_link_and_valid_filter_only():
+    store=PanelStore();c=TestClient(create_app(store=store,auth_required=False))
+    r=c.get('/runs?job_status=queued')
+    assert r.status_code==200 and 'job 99' in r.text and '/runs/99' not in r.text and 'SOURCE_BLOCKED_HTTP_429' in r.text
+    assert store.filters[-1]=='queued'
+    c.get('/runs?job_status=stale_failed');assert store.filters[-1] is None
+
+
+def test_pilot_buttons_and_full_action_match_backend_mode(monkeypatch):
+    store=PanelStore();c=TestClient(create_app(store=store,auth_required=False))
+    monkeypatch.setenv('STERBRUST_PARTNER_PILOT','YES')
+    r=c.get('/suppliers/1');assert r.status_code==200 and 'name="launch_mode" value="test"' in r.text and 'id="supplier-start"' not in r.text
+    monkeypatch.delenv('STERBRUST_PARTNER_PILOT')
+    r=c.get('/suppliers/1');assert r.status_code==200 and 'name="launch_mode" value="test"' not in r.text and 'id="supplier-start"' not in r.text
+
+
+def test_manifest_copy_and_conservative_scheduler_fail_closed(monkeypatch):
+    monkeypatch.delenv('STERBRUST_PARTNER_PILOT',raising=False)
+    store=PanelStore('beka_mak');c=TestClient(create_app(store=store,auth_required=False))
+    monkeypatch.delenv('STERBRUST_SOURCE_RUNTIME_ENABLED',raising=False)
+    r=c.get('/suppliers/1');assert r.status_code==200 and 'Исполнитель сбора выключен' in r.text and 'name="collection_mode"' not in r.text
+    r=c.post('/scheduler/1',data={'min_request_interval_seconds':'1','max_concurrency':'1'},headers={'origin':'http://testserver'})
+    assert r.status_code==400 and not store.saves
+
+
+def test_orchestrator_preserves_wrapper_terminal_message_without_inventing_run():
+    from types import SimpleNamespace
+    from universal_supplier.control_plane.orchestrator import Orchestrator
+    from universal_supplier.control_plane.adapter_registry import AdapterRegistry
+    from universal_supplier.control_plane.queue import CrawlJob
+    class Queue:
+        lease_seconds=30
+        def __init__(self):self.completed=[]
+        def heartbeat(self,*a):return True
+        def complete(self,*a,**kw):self.completed.append((a,kw))
+    q=Queue();registry=AdapterRegistry();registry.register('beka_mak',lambda *a:{'status':'partial','termination_reason':'SOURCE_BLOCKED_HTTP_429','discovery_complete':False})
+    job=CrawlJob(99,1,'beka_mak','beka_mak','https://beka-mak.su/','manual','full','running',None,{})
+    Orchestrator(object(),queue=q,registry=registry,lease_factory=lambda domain:nullcontext(SimpleNamespace(acquired=True)))._run_job(job)
+    args,kw=q.completed[0]
+    assert args==(99,'partial') and kw['crawl_run_id'] is None
+    assert 'SOURCE_BLOCKED_HTTP_429' in kw['error_message'] and 'discovery_complete=false' in kw['error_message']
+
+
+def test_missing_matching_receipt_is_unknown_not_proof_of_no_execution():
+    row={'status':'succeeded','fetched_count':50,'metadata':{'mode':'OFFLINE_SQL_QA','default_offer_counts':{}}}
+    assert phase_summary(row)['matching_status']=='результат не записан'

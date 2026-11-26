@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from .adapters.partner_st import PartnerStAdapter
 from .control_plane.rate_control import (
-    Clock, DomainRatePolicy, MaxRunDurationExceeded,
+    Clock, DomainRatePolicy, MaxRunDurationExceeded, RequestAborted,
     PARTNER_ST_DEFAULT_RATE_POLICY, SystemClock,
 )
 from .http import HttpTransport
@@ -38,6 +38,7 @@ class LiveCrawlResult:
     requested_rate_policy: dict[str, Any] = field(default_factory=dict)
     effective_rate_policy: dict[str, Any] = field(default_factory=dict)
     termination_reason: str | None = None
+    captures: tuple[dict[str, Any], ...] = ()
 
 
 def run_partner_st_live(*, baseline: int | None, workers: int = 4,
@@ -47,19 +48,55 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
                         random_uniform: Callable[[float, float], float] | None = None,
                         transport_factory: Callable[..., HttpTransport] | None = None,
                         adapter: PartnerStAdapter | None = None,
-                        progress_callback: Callable[..., Any] | None = None) -> LiveCrawlResult:
+                        progress_callback: Callable[..., Any] | None = None,
+                        pilot: dict | None = None, evidence_root=None, stop_requested=None) -> LiveCrawlResult:
     """One real dynamic-sitemap, direct-HTTP Partner-ST full crawl.
 
     ``rate_policy`` is the authoritative immutable job snapshot.  The legacy
     ``workers``/``interval`` arguments remain available for older Stage 3B
     scripts, but they are never allowed to replace fields of a supplied policy.
     """
+    from .partner_pilot import validate_snapshot,safe_url
+    batch=validate_snapshot(pilot) if pilot is not None else None
+    if batch is not None and evidence_root is None:raise ValueError('PILOT_EVIDENCE_ROOT_REQUIRED')
     effective_policy = rate_policy or replace(
         PARTNER_ST_DEFAULT_RATE_POLICY,
         max_concurrency=workers,
         min_request_interval_seconds=interval,
     )
     runtime_clock = clock or SystemClock()
+    import threading
+    pilot_stop = threading.Event()
+    stop_lock = threading.Lock()
+    first_stop_reason = None
+
+    def record_stop(reason):
+        nonlocal first_stop_reason
+        with stop_lock:
+            if first_stop_reason is None:
+                first_stop_reason = reason
+                pilot_stop.set()
+                # Fresh per-job evidence directory: preserve the first cause,
+                # even if another worker or the operator changes the stop file.
+                if batch is not None:
+                    from pathlib import Path
+                    import json
+                    receipt = Path(evidence_root) / 'FIRST_STOP.json'
+                    receipt.parent.mkdir(parents=True, exist_ok=True)
+                    with receipt.open('x', encoding='utf-8') as stream:
+                        json.dump({'reason': reason,
+                                   'observed_at': datetime.now(timezone.utc).isoformat()}, stream)
+            pilot_stop.set()
+
+    def stopped():
+        if batch is None:
+            return False
+        if not pilot_stop.is_set() and stop_requested:
+            reason = stop_requested()
+            if reason:
+                record_stop(reason if isinstance(reason, str) else 'STOP_REQUESTED')
+        return pilot_stop.is_set()
+
     create_transport = transport_factory or HttpTransport
     adapter = adapter or PartnerStAdapter()
     started = datetime.now(timezone.utc).isoformat()
@@ -78,36 +115,95 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
         random_uniform=random_uniform,
         deadline=deadline,
         **transport_options,
+        **({"abort_requested": stopped} if batch is not None else {}),
     )
     if progress_callback:
         progress_callback("DISCOVERY")
-    discovery = adapter.discover(transport)
+    if batch is None:discovery = adapter.discover(transport)
+    else:
+        from .models import DiscoveryResult
+        discovery=DiscoveryResult('',(),(),tuple(r['url'] for r in batch))
     if progress_callback:
         progress_callback("FETCHING_PRODUCTS", total=len(discovery.product_urls))
     health = discovery_health(len(discovery.product_urls), baseline)
+    if batch is not None:health=replace(health,deactivation_allowed=False)
+    captures=[]
+    allowed={r['url']:r['external_id'] for r in batch} if batch else {}
+    def validate_target(url):
+        safe_url(url)
+        if url not in allowed:raise ValueError('PILOT_REDIRECT_OUTSIDE_BATCH')
+        return url
+    if batch is not None and not stopped():
+        from urllib.robotparser import RobotFileParser
+        from pathlib import Path
+        import json
+        robots_url='https://partner-st.ru/robots.txt'
+        def robots_target(url):
+            if url not in (robots_url,'https://www.partner-st.ru/robots.txt'):raise ValueError('PILOT_ROBOTS_REDIRECT')
+            return url
+        robots=transport.get_validated(robots_url,robots_target)
+        Path(evidence_root).mkdir(parents=True,exist_ok=True)
+        (Path(evidence_root)/'robots.json').write_text(json.dumps({'url':robots.final_url,'status':robots.status_code,'text':robots.text},ensure_ascii=False),encoding='utf-8')
+        if robots.status_code!=200:raise RuntimeError('PILOT_ROBOTS_HTTP_'+str(robots.status_code))
+        if '<html' in robots.text.lower():raise RuntimeError('PILOT_ROBOTS_NOT_TEXT')
+        rules=RobotFileParser();rules.parse(robots.text.splitlines())
+        delay=rules.crawl_delay('UniversalSupplier')
+        if delay and delay>effective_policy.min_request_interval_seconds:raise RuntimeError('PILOT_ROBOTS_REQUIRES_SLOWER_POLICY')
+        if not all(rules.can_fetch('UniversalSupplier',u) for u in allowed):raise RuntimeError('PILOT_ROBOTS_DISALLOWED')
     rows: list[dict[str, Any]] = []
     cards: list[ProductCard] = []
     failures: list[CrawlFailure] = []
 
     def deadline_expired() -> bool:
-        return runtime_clock.monotonic() >= deadline
+        return runtime_clock.monotonic() >= deadline or stopped()
 
+    stage_times = {}
     def process(item: tuple[int, str]):
         position, url = item
         # A future can be queued just before the deadline and start after it.
         # Refuse the HTTP call in that case as well.
         if deadline_expired():
             return position, None, None, None, True
+        import time
+        timings={'http_seconds':0.0,'parsing_seconds':0.0}
+        stage_times[position]=timings
         try:
-            fetched = transport.get(url)
+            began=time.perf_counter()
+            try:
+                fetched = transport.get(url) if batch is None else transport.get_validated(url,validate_target)
+            finally:timings['http_seconds']=time.perf_counter()-began
+            if batch is not None:
+                from .http_capture import has_blocking_interstitial,sanitise_html
+                from pathlib import Path
+                import hashlib
+                if fetched.status_code in (403,429) or has_blocking_interstitial(fetched.text.encode('utf-8')):
+                    record_stop('PILOT_SITE_BLOCKED')
+                evidence=sanitise_html(fetched.text.encode('utf-8'),'text/html; charset=utf-8')
+                h=hashlib.sha256(evidence).hexdigest();dest=Path(evidence_root)/(h+'.html');dest.parent.mkdir(parents=True,exist_ok=True)
+                if not dest.exists():dest.write_bytes(evidence)
+                captures.append({'url':url,'final_url':fetched.final_url,'http_status':fetched.status_code,'observed_at':datetime.now(timezone.utc).isoformat(),'response_sha256':hashlib.sha256(fetched.text.encode('utf-8')).hexdigest(),'response_hash_basis':'decoded_response_utf8','evidence_sha256':h,'evidence_ref':str(dest),'redirects':fetched.redirects,'elapsed_ms':fetched.elapsed_ms,'attempts':fetched.attempts})
             if fetched.status_code != 200:
                 failure = CrawlFailure(url, f"HTTP_{fetched.status_code}",
                                        f"HTTP status {fetched.status_code}", fetched.status_code)
                 return position, None, failure, fetched, False
-            return position, adapter.parse_product(fetched), None, fetched, False
+            began=time.perf_counter()
+            try:card=adapter.parse_product(fetched)
+            finally:timings['parsing_seconds']=time.perf_counter()-began
+            if batch is not None:
+                if card.external_id!=allowed[url] or card.supplier_code!='partner_st':
+                    record_stop('PILOT_SOURCE_ID_CHANGED');raise ValueError('PILOT_SOURCE_ID_CHANGED')
+                safe_url(card.canonical_url)
+                if card.price is None or card.price<=0:raise ValueError('PILOT_PRICE_UNPROVEN_NO_OVERWRITE')
+            return position, card, None, fetched, False
+        except RequestAborted:
+            if not stopped():
+                record_stop('STOP_REQUESTED')
+            return position, None, None, None, True
         except MaxRunDurationExceeded:
             return position, None, None, None, True
         except Exception as error:
+            if batch is not None and str(error).startswith(('PILOT_REDIRECT','PILOT_UNSAFE')):
+                record_stop(str(error))
             failure = CrawlFailure(url, error_type_name(error), str(error)[:1000], None)
             return position, None, failure, None, False
 
@@ -147,6 +243,7 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
                 if card:
                     cards.append(card)
                 rows.append({
+                    **stage_times.get(position,{}),
                     "position": position, "requested_url": url,
                     "final_url": fetched.final_url if fetched else "",
                     "http_status": fetched.status_code if fetched else "",
@@ -168,14 +265,14 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
                 submit_available()
 
     unscheduled = len(items) - cursor
-    termination_reason = "MAX_RUN_DURATION_EXCEEDED" if deadline_seen else None
+    actual_deadline_exceeded = runtime_clock.monotonic() >= deadline
+    termination_reason = first_stop_reason or ('MAX_RUN_DURATION_EXCEEDED' if actual_deadline_exceeded else None)
     if termination_reason:
         failures.append(CrawlFailure(
             getattr(adapter, "base_url", "https://partner-st.ru/"),
             termination_reason,
             (
-                f"monotonic crawl deadline of {effective_policy.max_run_duration_seconds:g}s "
-                f"was exceeded; unscheduled={unscheduled}, "
+                f"{termination_reason}; unscheduled={unscheduled}, "
                 f"cancelled={cancelled_after_deadline}, skipped={skipped_after_deadline}"
             ),
             None,
@@ -197,10 +294,12 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
         errors=tuple(failures),
         health=health,
         discovery_metadata={
+            "scope": "SAVED_URL_LIVE_NO_DISCOVERY" if batch else "FULL_DISCOVERY",
             "sitemap_index": discovery.sitemap_index_url,
             "sitemaps": list(discovery.sitemap_urls),
             "product_sitemaps": list(discovery.product_sitemap_urls),
-            "max_run_duration_exceeded": deadline_seen,
+            "max_run_duration_exceeded": actual_deadline_exceeded,
+            "stop_requested": first_stop_reason is not None,
             "unscheduled_product_count": unscheduled,
             "cancelled_product_count": cancelled_after_deadline,
             "skipped_product_count": skipped_after_deadline,
@@ -209,4 +308,5 @@ def run_partner_st_live(*, baseline: int | None, workers: int = 4,
         requested_rate_policy=policy_snapshot,
         effective_rate_policy=policy_snapshot,
         termination_reason=termination_reason,
+        captures=tuple(captures),
     )

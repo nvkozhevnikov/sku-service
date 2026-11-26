@@ -37,7 +37,7 @@ def make_app(admin_store=None):
 
 
 def login(app, username):
-    client = TestClient(app)
+    client = TestClient(app,base_url='https://testserver')
     assert client.post("/login", data={"username": username, "password": PASSWORD}, follow_redirects=False).status_code == 303
     return client
 
@@ -47,7 +47,7 @@ def csrf(client):
 
 
 def authorized(app, token):
-    client = TestClient(app); client.cookies.set(COOKIE, token)
+    client = TestClient(app,base_url='https://testserver'); client.cookies.set(COOKIE, token)
     return client.get("/settings", follow_redirects=False).status_code == 200
 
 
@@ -111,10 +111,27 @@ def test_revoke_requires_csrf():
 
 
 def test_postgres_admin_store_reads_and_bumps_session_version():
-    source = (ROOT / "universal_supplier/control_plane/admin_store.py").read_text(encoding="utf-8")
-    assert "is_active,session_version FROM app_users WHERE id=%s" in source
-    assert "is_active,session_version,password_hash FROM app_users WHERE username=%s" in source
-    assert "session_version=session_version+1" in source and "session_version=session_version+(%s AND is_active)::int" in source
+    record=dict(id=42,username="qa",display_name="QA",role="VIEWER",is_active=True,
+                session_version=7,password_hash="synthetic-only",must_change_password=False,
+                access_profile="OBSERVER",permissions=["catalog.read"])
+    calls=[]
+    class Cursor:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def execute(self,query,params=()):
+            calls.append((query,params))
+            if query.startswith("UPDATE app_users SET session_version="):record['session_version']+=1
+        def fetchone(self):return dict(record)
+    class Connection(Cursor):
+        def cursor(self):return Cursor()
+        def transaction(self):return self
+    store=PostgresAdminStore(object(),connection_factory=lambda *a,**k:Connection())
+    assert store.user_by_id(42).session_version==7
+    user,password=store.user_by_username(" QA ")
+    assert user.id==42 and password=="synthetic-only" and user.permissions==frozenset({"catalog.read"})
+    store.revoke_sessions(42,1,"QA")
+    assert store.user_by_id(42).session_version==8
+    assert calls[0][1]==(42,) and calls[1][1]==("qa",)
 
 
 def test_migration_017_adds_session_version_throttle_and_heartbeats():
@@ -153,10 +170,11 @@ def test_postgres_login_throttle_queries(monkeypatch):
     key = ("admin1", "10.0.0.5")
     assert throttle.locked(key) is True
     throttle.failure(key); throttle.reset(key)
-    sql = [entry[0] for entry in log]
-    assert sql[0].startswith("SELECT count(*) FROM login_failures WHERE throttle_key=%s") and log[0][1] == (throttle_digest(key), 900)
-    assert sql[1].startswith("DELETE FROM login_failures WHERE failed_at <=") and sql[2].startswith("INSERT INTO login_failures")
-    assert sql[3] == "DELETE FROM login_failures WHERE throttle_key=%s"
+    sql = [entry[0] for entry in log if not entry[0].startswith('SELECT EXISTS')]
+    assert sql[0].startswith("SELECT count(*) FROM login_failures WHERE throttle_key=%s AND cleared_at IS NULL")
+    assert sql[1].startswith("INSERT INTO login_failures")
+    assert sql[2] == "UPDATE login_failures SET cleared_at=now() WHERE throttle_key=%s AND cleared_at IS NULL"
+    assert not any('DELETE' in statement for statement in sql)
     assert all("admin1" not in str(params) for _, params in log)
 
 
@@ -250,7 +268,9 @@ def test_health_reports_components_without_changing_status_code(monkeypatch):
         def health(self): return {"application": "ok", "postgresql": "ok", "components": {"scheduler": {"status": "stale"}}, "degraded": True}
     app = create_app(store=Store("x"), queue=InMemoryJobQueue(), admin_store=InMemoryAdminStore(users(), []), session_secret=SECRET, auth_required=True)
     response = TestClient(app).get("/health")
-    assert response.status_code == 200 and response.json()["degraded"] is True
+    # Public probe: component states only (develop group 4), never versions or error text.
+    assert response.status_code == 200
+    assert response.json() == {"application": "ok", "postgresql": "ok", "components": {"scheduler": "stale"}, "degraded": True}
 
 
 def test_compose_orchestrators_have_heartbeat_healthcheck():

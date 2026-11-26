@@ -1,0 +1,1 @@
+{"status":"PASS","scope":"Russian source/status/history display only","test":"real DB shared login + release-jobs readback; no raw payload hash rendered","source_writes":0,"job_writes":0,"additional_unit_tests_passed":1}

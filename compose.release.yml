@@ -1,0 +1,75 @@
+name: sterbrust-unified-release
+# Linux host networking: PostgreSQL17.11 is an independent host service on55461.
+# No database container, migration, supplier HTTP or scheduler starts by default.
+services:
+  web:
+    image: sterbrust-unified-release:local
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      args:
+        RELEASE_GIT_SHA: ${RELEASE_GIT_SHA:-}
+    network_mode: host
+    restart: "no"
+    env_file: .env.release
+    environment:
+      STERBRUST_RUNTIME_CREDENTIALS: /run/secrets/supplier.json
+      STERBRUST_COMPETITOR_CONFIG: /run/secrets/competitor.json
+      SESSION_SIGNING_SECRET_FILE: /run/secrets/session.key
+      COMPETITOR_RUNTIME_DIR: /app/competitor-data/collection
+      STERBRUST_ALLOW_SUPPLIER_HTTP: "NO"
+      STERBRUST_ALLOW_SOURCE_WRITES: "NO"
+      SCHEDULER_ENABLED: "NO"
+      STERBRUST_WRITE_ENABLE: "NO"
+      ESOL_WRITE_ENABLE: "NO"
+      # Off until migration plan/owner policy is approved and applied explicitly.
+      CONTENT_STUDIO_ENABLED: ${CONTENT_STUDIO_ENABLED:-NO}
+      CONTENT_STUDIO_DATA_DIR: /app/content-data
+      CONTENT_STUDIO_SECRETS_DIR: /app/content-secrets
+      CONTENT_STUDIO_KEY_FILE: /run/secrets/content-studio.key
+      CONTENT_STUDIO_EXTERNAL_CALLS: "NO"
+    command: ["python", "scripts/rc_runtime.py"]
+    volumes:
+      - ./runtime-secrets:/run/secrets:ro
+      - ./deployment-contract.json:/run/config/deployment-contract.json:ro
+      - ./runtime-data/reports:/app/reports
+      - ./runtime-data/competitor-data:/app/competitor-data
+      - ./runtime-data/content-studio:/app/content-data
+      - ./runtime-secrets/content-studio:/app/content-secrets
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:58161/ready',timeout=5).read()"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+  competitor-worker:
+    image: sterbrust-unified-release:local
+    network_mode: host
+    profiles: [competitor]
+    restart: "no"
+    env_file: .env.release
+    environment:
+      STERBRUST_COMPETITOR_CONFIG: /run/secrets/competitor.json
+      COMPETITOR_RUNTIME_DIR: /app/competitor-data/collection
+    command: ["python", "scripts/rc_runtime.py", "--scheduled-competitors"]
+    volumes:
+      - ./runtime-secrets:/run/secrets:ro
+      - ./deployment-contract.json:/run/config/deployment-contract.json:ro
+      - ./runtime-data/competitor-data:/app/competitor-data
+  supplier-worker:
+    image: sterbrust-unified-release:local
+    network_mode: host
+    profiles: [supplier]
+    restart: "no"
+    env_file: .env.release
+    environment:
+      STERBRUST_RUNTIME_CREDENTIALS: /run/secrets/supplier.json
+    # Intentionally a non-executing preflight; replace command only with an exact
+    # operator-approved inspect/run approval+sha256+confirm invocation.
+    command: ["python", "scripts/supplier_system.py", "--help"]
+    volumes:
+      - ./runtime-secrets:/run/secrets:ro
+      - ./deployment-contract.json:/run/config/deployment-contract.json:ro
+      - ./runtime-data/reports:/app/reports

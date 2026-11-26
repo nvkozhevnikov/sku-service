@@ -1,0 +1,46 @@
+{% extends 'base.html' %}{% block content %}
+{% set cfg=parsing.settings %}{% set notice=collection_notice(parsing.live_blocked_reason) %}
+<a class="back" href="/suppliers/{{item.id}}">← К запуску сбора</a>
+<div class="pagehead"><h2>Настройки парсинга · {{item.name}}</h2></div>
+{% if saved %}<p class="notice">Настройки сохранены. Уже запущенные задания продолжают работать с прежними параметрами.</p>{% endif %}
+{% if request.query_params.get('host_saved') %}<p class="notice">Подтверждение сохранено. Проверка разрешения исполнителя показана ниже.</p>{% endif %}
+<section class="notice"><strong>{{notice.title}}</strong><p>{{notice.explanation}}</p><a href="/suppliers/{{item.id}}">Перейти к запуску</a></section>
+<form class="panel" method="post" action="/suppliers/{{item.id}}/parsing">
+<input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="revision" value="{{cfg.revision}}">
+<h3>Скорость сбора</h3><fieldset><legend>Пауза между запросами, сек.</legend><div class="collection-range">
+<label>От<input type="number" name="delay_min_seconds" value="{{cfg.delay_min_seconds|number}}" min="0.001" max="86400" step="0.001" required></label>
+<label>До<input type="number" name="delay_max_seconds" value="{{cfg.delay_max_seconds|number}}" min="0.001" max="86400" step="0.001" required></label></div></fieldset>
+<p class="form-hint">Меньше пауза — быстрее сбор. Правила сайта могут увеличить задержку. Количество карточек задаётся при запуске.</p>
+<details data-technical><summary>Дополнительные настройки</summary><section class="grid2">
+<article><h3>Запросы и повторы</h3>
+{% for key,label,step in [('max_concurrency','Параллельных запросов','1'),('request_timeout','Время ожидания ответа, сек.','0.01'),('retry_limit','Попыток для одного запроса, включая первую','1'),('backoff','Начальная пауза перед повтором, сек.','0.01'),('backoff_max','Максимальная пауза перед повтором, сек.','0.01'),('priority','Приоритет предложения','1')] %}
+<label>{{label}}<input type="number" name="{{key}}" value="{{cfg[key]|number}}" step="{{step}}" min="0" required></label>{% endfor %}
+<p>Правила сайта и остановка при ограничении доступа сохраняются.</p></article>
+<article><h3>Автоматическое расписание и выгрузки</h3>
+{% for key,label in [('schedule_enabled','Использовать подготовленное расписание'),('refresh_enabled','Обновлять известные карточки'),('discovery_enabled','Искать новые товары'),('export_updates','Создавать локальный XML обновлений'),('export_new_products','Создавать локальный XML новых товаров после сопоставления')] %}
+<label class="collection-check"><input type="checkbox" name="{{key}}" value="true" {% if cfg[key] %}checked{% endif %}> {{label}}</label>{% endfor %}
+<label>Обновление известных карточек каждые, сек.<input type="number" min="60" name="refresh_interval" value="{{cfg.refresh_interval}}" required></label>
+<label>Поиск новых товаров каждые, сек.<input type="number" min="60" name="discovery_interval" value="{{cfg.discovery_interval}}" required></label>
+<label>Предпочтительное время расписания<input type="time" name="start_time" value="{{cfg.start_time}}" required></label>
+<label>Часовой пояс расписания<input name="timezone" value="{{cfg.timezone}}" required></label>
+<p>Подготовка расписания сама по себе не включает автоматические запросы.</p></article></section>
+<h3>Допустимый возраст данных</h3>
+{% for key,label in [('price_ttl','Цена, сек.'),('availability_ttl','Наличие, сек.'),('content_ttl','Описание и характеристики, сек.')] %}
+<label>{{label}}<input type="number" min="1" name="{{key}}" value="{{cfg[key]}}" required></label>{% endfor %}
+</details>
+{% if current_user.role=='ADMIN' and not control_plane_read_only %}<button>Сохранить настройки</button>{% else %}<p>Изменение доступно администратору.</p>{% endif %}
+</form>
+{% if current_user.role=='ADMIN' and not control_plane_read_only and parsing.host_policy_sha256 %}
+<article class="panel"><h3>Подтверждение скорости</h3>
+{% if parsing.host_confirmation_saved %}<p>Выбранный профиль подтверждён в панели. Это не заменяет разрешение исполнителя.</p>{% else %}<p>Подтвердите сохранённые параметры нагрузки. Сбор автоматически не начнётся.</p>{% endif %}
+<form method="post" action="/suppliers/{{item.id}}/parsing/approve-host"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="revision" value="{{cfg.revision}}"><input type="hidden" name="policy_sha256" value="{{parsing.host_policy_sha256}}"><button class="secondary">Подтвердить сохранённую скорость</button></form>
+<details data-technical><summary>Профиль для администратора исполнителя</summary><p>Разрешение должно совпадать в панели и в исполнителе. После изменения скорости старое разрешение не подходит. Изменение настроек исполнителя требует отдельного согласования.</p><pre>{{parsing.host_reference}}
+{{parsing.host_policy_sha256}}
+{{parsing.live_blocked_reason}}</pre></details></article>
+{% endif %}
+<details data-technical><summary>Последние задания и история настроек</summary>
+<div class="tablewrap"><table><thead><tr><th>Режим</th><th>Задание</th><th>Статус</th><th>Сохранено</th><th>Запросов</th><th>Причина</th></tr></thead><tbody>
+{% for p in parsing.phases %}<tr><td>{{'Обновление карточек' if p.phase=='REFRESH' else 'Поиск новых товаров' if p.phase=='DISCOVERY' else 'Ранее созданное'}}</td><td>{{p.id}}</td><td>{{p.status|ru}}</td><td>{{p.runtime.get('sql_committed','Нет данных')}}</td><td>{{p.runtime.get('request_metrics',{}).get('requests_total','Нет данных')}}</td><td>{{job_message(p.error_message or p.runtime.get('termination_reason')) or '—'}}</td></tr>{% else %}<tr><td colspan="6">Заданий нет</td></tr>{% endfor %}
+</tbody></table></div>
+{% for h in parsing.history %}<details><summary>{{h.created_at|msk}} · {{'Настройки изменены' if h.action=='PARSING_SETTINGS_CHANGED' else 'Профиль подтверждён' if h.action=='HOST_POLICY_APPROVED' else 'Действие администратора'}}</summary><pre>{{h.before_state}}</pre><pre>{{h.after_state}}</pre></details>{% else %}<p>Изменений настроек ещё нет.</p>{% endfor %}
+</details>{% endblock %}

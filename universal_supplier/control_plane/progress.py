@@ -10,8 +10,11 @@ from typing import Any, Callable
 
 PHASE_LABELS_RU = {
     "QUEUED": "В очереди",
+    "PREPARING": "Подготовка задания",
+    "ROBOTS": "Проверка правил сайта",
     "DISCOVERY": "Поиск товаров",
     "FETCHING_PRODUCTS": "Загрузка товаров",
+    "NETWORK_COOLDOWN": "Пауза после сетевых сбоев. Сбор продолжится автоматически.",
     "INGESTING": "Сохранение данных",
     "MATCHING": "Сопоставление",
     "REVIEW_SYNC": "Синхронизация проверки",

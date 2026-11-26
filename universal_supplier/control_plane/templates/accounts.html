@@ -1,0 +1,44 @@
+{% extends 'base.html' %}{% block content %}
+<div class="pagehead"><div><h2>{{ title }}</h2></div></div>
+{% if mode=='password' %}
+<section class="panel"><p>{{ 'После первого входа необходимо изменить временный пароль.' if forced else 'После изменения все прежние сессии завершатся.' }}</p>
+<form method="post" action="/account/password" class="stack">
+<input type="hidden" name="csrf_token" value="{{csrf_token}}">
+<label>Текущий пароль<input type="password" name="current_password" autocomplete="current-password" required maxlength="128"></label>
+<label>Новый пароль<input type="password" name="new_password" autocomplete="new-password" required minlength="12" maxlength="128"></label>
+<label>Повторите новый пароль<input type="password" name="confirmation" autocomplete="new-password" required minlength="12" maxlength="128"></label>
+<p>12–128 символов; хотя бы три типа: строчные, прописные, цифры и специальные символы.</p><button>Изменить пароль и выйти</button></form></section>
+{% elif mode=='temporary' %}
+<section class="panel"><p>Одноразовый временный пароль пользователя №{{target_id}}. Передайте его безопасно; при входе потребуется смена. Пароль показан только сейчас.</p>
+<code>{{temporary_password}}</code><p><a href="/users">Вернуться к пользователям</a></p></section>
+{% elif mode=='users' %}
+<section class="panel"><h3>Учётные записи</h3><div class="tablewrap"><table><tr><th>Пользователь</th><th>Роль</th><th>Действия</th></tr>
+{% for u in users %}<tr><td>{{u.display_name}}<br>{{u.username}} · {{'активен' if u.is_active else 'отключён'}}{% if u.must_change_password %}<br>Требуется смена пароля{% endif %}</td><td>{{u.access_profile or u.role}}</td><td>
+<form action="/users/{{u.id}}/profile" method="post"><input type="hidden" name="csrf_token" value="{{csrf_token}}">
+<select name="profile">{% for p in profiles %}<option value="{{p.code}}" {{'selected' if p.code==u.access_profile else ''}}>{{p.name}}</option>{% endfor %}</select>
+<label>Ваш пароль для подтверждения<input type="password" name="current_password" autocomplete="current-password" required></label><button>Назначить роль</button></form>
+<form action="/users/{{u.id}}/reset-password" method="post"><input type="hidden" name="csrf_token" value="{{csrf_token}}">
+<label>Ваш пароль для сброса<input type="password" name="current_password" autocomplete="current-password" required></label><button>Сбросить пароль</button></form>
+{% if u.id!=current_user.id %}<form action="/settings/users/{{u.id}}/active" method="post"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="active" value="{{'false' if u.is_active else 'true'}}"><button>{{'Отключить' if u.is_active else 'Включить'}}</button></form>{% endif %}
+</td></tr>{% endfor %}</table></div></section>
+<section class="panel"><h3>Создать пользователя</h3><form method="post" action="/users" class="stack"><input type="hidden" name="csrf_token" value="{{csrf_token}}">
+<label>Логин<input name="username" required pattern="[a-z0-9][a-z0-9_.-]{2,63}"></label><label>Имя<input name="display_name" required maxlength="100"></label>
+<label>Роль<select name="profile">{% for p in profiles %}<option value="{{p.code}}">{{p.name}}</option>{% endfor %}</select></label>
+<label>Временный пароль<input type="password" name="new_password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+<label>Повторите временный пароль<input type="password" name="confirmation" required autocomplete="new-password"></label>
+<label>Ваш пароль для подтверждения<input type="password" name="current_password" required autocomplete="current-password"></label><button>Создать</button></form></section>
+{% elif mode=='roles' %}
+<section class="panel"><p>Администратор имеет все права приложения. Изменение разрешений завершает сессии пользователей роли. Права PostgreSQL не изменяются.</p>
+<table><tr><th>Код</th><th>Название</th><th>Разрешения</th></tr>{% for p in profiles %}<tr><td>{{p.code}}</td><td>{{p.name}}</td><td>{{p.permissions|join(', ')}}</td></tr>{% endfor %}</table></section>
+<section class="panel"><h3>Создать или изменить роль</h3><form method="post" action="/roles" class="stack"><input type="hidden" name="csrf_token" value="{{csrf_token}}">
+<label>Код роли<input name="code" required pattern="[A-Za-z][A-Za-z0-9_]{2,47}" maxlength="48"></label><label>Название<input name="name" required maxlength="100"></label>
+{% for key,label in permissions.items() %}<label><input type="checkbox" name="permission:{{key}}"> {{label}}</label>{% endfor %}
+<label>Ваш пароль для подтверждения<input type="password" name="current_password" autocomplete="current-password" required></label><button>Сохранить роль</button></form></section>
+{% elif mode=='applications' %}
+<section class="panel"><h3>Контент-студия — сайт и ВК</h3>
+<p><a href="/content-studio/">Открыть Контент-студию</a></p>
+{% if request.app.state.content_studio_available %}<p>Общая авторизация Unified RC, отдельные права на контент и PostgreSQL.</p>
+{% else %}<p>Раздел подготовлен. Перенос прежней SQLite в PostgreSQL ожидает разрешения; исходные материалы сохранены.</p>{% endif %}
+<p>Публикация требует проверки материала, нужных прав и отдельного подтверждения.</p></section>
+{% endif %}
+{% endblock %}

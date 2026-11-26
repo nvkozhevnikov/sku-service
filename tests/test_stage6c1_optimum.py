@@ -324,6 +324,7 @@ def test_optimum_request_metrics_cover_every_status_network_and_wait_bucket():
         "http_5xx": 1,
         "http_429": 1,
         "network_errors": 1,
+        "requests_aborted": 0,
         "retry_count": 0,
         "response_time_total_seconds": 0.0,
         "rate_limit_waits": 0,

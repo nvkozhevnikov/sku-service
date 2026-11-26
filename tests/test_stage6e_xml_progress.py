@@ -242,7 +242,12 @@ def test_progress_templates_compile():
     templates = Path(__file__).parents[1] / "universal_supplier" / "control_plane" / "templates"
     environment = Environment(loader=FileSystemLoader(templates))
     environment.filters["ru"] = str
+    from universal_supplier.control_plane.presentation import phase_summary, moscow_datetime
+    environment.filters["msk"] = moscow_datetime
+    environment.globals["phase_summary"] = phase_summary
     environment.globals["url_for"] = lambda *args, **kwargs: "/static"
+    from universal_supplier.control_plane.web import safe_http_url
+    environment.filters["safe_http_url"] = safe_http_url
     environment.get_template("run_detail.html")
     environment.get_template("runs.html")
     environment.get_template("supplier_detail.html")
@@ -254,11 +259,16 @@ def test_initial_discovery_progress_bar_is_indeterminate():
     templates = Path(__file__).parents[1] / "universal_supplier" / "control_plane" / "templates"
     environment = Environment(loader=FileSystemLoader(templates))
     environment.filters["ru"] = str
+    from universal_supplier.control_plane.presentation import phase_summary, moscow_datetime
+    environment.filters["msk"] = moscow_datetime
+    environment.globals["phase_summary"] = phase_summary
     environment.globals["url_for"] = lambda *args, **kwargs: "/static"
+    from universal_supplier.control_plane.web import safe_http_url
+    environment.filters["safe_http_url"] = safe_http_url
     item = SimpleNamespace(id=1, supplier_name="QA", started_at="now", finished_at=None,
                            status="running", metadata={"progress": {"phase_label_ru": "Поиск товаров",
                            "percent": None, "processed": 0, "total": None}}, discovered_count=0,
                            fetched_count=0, new_count=0, changed_count=0, error_count=0, errors=[])
-    rendered = environment.get_template("run_detail.html").render(item=item, current_user=None)
+    rendered = environment.get_template("run_detail.html").render(item=item, current_user=None, safety_banner="")
     progress_tag = rendered.split("<progress", 1)[1].split(">", 1)[0]
     assert "value=" not in progress_tag

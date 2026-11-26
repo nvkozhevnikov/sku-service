@@ -47,6 +47,8 @@ class PriceExtraction:
     product_identity: str
     source_url: str | None
     context_path: str | None
+    price_type: str = 'unknown'
+    price_type_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,7 @@ class ReadOnlySupplierProduct:
     listing_evidence: dict | None = None
     source_documents: tuple[tuple[str, str], ...] = ()
     enrichment_evidence: dict | None = None
+    source_quantity: int | None = None
 
 
 @dataclass(frozen=True)

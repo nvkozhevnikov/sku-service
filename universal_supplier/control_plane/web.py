@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 import logging
 import os
+import json
+import re
+import secrets
 from pathlib import Path
 import re
 import secrets
@@ -145,7 +148,8 @@ def safe_next(value: str | None) -> str:
     return "/" if parsed.scheme or parsed.netloc else value
 
 
-_ID_RE = re.compile(r"[0-9]+")
+# At most 18 digits: always fits PostgreSQL bigint.
+_ID_RE = re.compile(r"[0-9]{1,18}")
 
 
 def is_id(value) -> bool:
@@ -164,8 +168,6 @@ def session_cookie_secure() -> bool:
     return os.environ.get("CONTROL_PLANE_INSECURE_HTTP") != "YES"
 
 
-CONTENT_SECURITY_POLICY = ("default-src 'self'; script-src 'self' 'nonce-{nonce}'; frame-ancestors 'none'; "
-                           "base-uri 'none'; form-action 'self'")
 PUBLIC_COMPONENT_STATES = frozenset({"ok", "stale", "failing"})
 HEALTHY_DATABASE_STATES = frozenset({"ok", "demo_snapshot"})
 
@@ -205,7 +207,8 @@ def filters_from_request(request: Request, *, forced_decision: str = "") -> Prod
 
 def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None,
                session_secret: str | None = None, auth_required: bool | None = None,
-               commercial_qa_service=None) -> FastAPI:
+               commercial_qa_service=None, competitor_service=None, competitor_collection=None,
+               release_dispatch=None,cabinet_service=None,content_studio_options=None,manual_launcher=None) -> FastAPI:
     injected = store is not None; config = None
     if store is None:
         if os.environ.get("CONTROL_PLANE_DEMO_SNAPSHOT") == "YES":
@@ -222,6 +225,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         stage6e_service = PostgresStage6EService(config or store.config) if isinstance(store,PostgresControlPlaneStore) else InMemoryStage6EService()
     commercial_qa_service = commercial_qa_service or CommercialQaService.from_env()
     xml_service = XmlExportService(store)
+    preview_root=Path(os.environ.get('CONTROL_PLANE_EXPORT_ROOT',str(ROOT/'reports/xml-previews')))
     if session_secret:
         signer = SessionSigner(session_secret)
     elif auth_required:
@@ -233,11 +237,22 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     app.state.store = store; app.state.queue = queue; app.state.admin_store = admin_store; app.state.stage6e_service = stage6e_service
     app.state.auth_required = auth_required; app.state.direct_crawl_executions = 0
     app.state.commercial_qa_service = commercial_qa_service
-    login_throttle = app.state.login_throttle = PostgresLoginThrottle(admin_store.config) if isinstance(admin_store, PostgresAdminStore) else LoginThrottle()
+    app.state.competitor_monitoring_available = competitor_service is not None
+    login_throttle = app.state.login_throttle = PostgresLoginThrottle(admin_store.config,connection_factory=getattr(admin_store,'connection_factory',None)) if isinstance(admin_store, PostgresAdminStore) else LoginThrottle()
     app.mount("/static", StaticFiles(directory=PACKAGE / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE / "templates")
     templates.env.filters["ru"] = russian_label
+    templates.env.globals['safe_http_url']=safe_http_url
     templates.env.filters["product_kind_ru"] = product_kind_label
+    from .presentation import phase_summary, price_label, duration_label, mark_quality_repeats, display_timestamp, moscow_datetime, supplier_display_name, supplier_status, job_message
+    templates.env.globals.update(phase_summary=phase_summary,price_label=price_label,duration_label=duration_label)
+    templates.env.filters['msk'] = display_timestamp
+    from .presentation import compact_number, collection_notice, error_presentation
+    from .presentation import run_collection_progress
+    templates.env.globals['run_collection_progress'] = run_collection_progress
+    templates.env.filters['number'] = compact_number
+    templates.env.globals['collection_notice'] = collection_notice
+    templates.env.globals.update(supplier_display_name=supplier_display_name, supplier_status=supplier_status, moscow_datetime=moscow_datetime, job_message=job_message)
     templates.env.filters["relation_ru"] = relation_type_label
     templates.env.filters["safe_http_url"] = safe_http_url
 
@@ -261,31 +276,74 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     def context(request: Request, **values):
         data = payload(request)
         read_only_source = bool(getattr(type(store), "read_only", False))
-        return {"request": request, "current_user": current_user(request), "csrf_token": data.get("csrf", "") if data else "",
-            "safety_banner": "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
+        return {"request": request, "csp_nonce":getattr(request.state,'csp_nonce',''), "current_user": current_user(request), "csrf_token": data.get("csrf", "") if data else "",
+            "safety_banner": "СИНТЕТИЧЕСКАЯ QA-БАЗА · НЕ LIVE · СБОР ЗАБЛОКИРОВАН" if os.environ.get('CONTROL_PLANE_QA_INSTANCE')=='YES' else "ИМПОРТ В STERBRUST ОТКЛЮЧЁН — КОНТРАКТ ИМПОРТА НЕ ПОДТВЕРЖДЁН",
             "commercial_qa_available": bool(getattr(commercial_qa_service, "enabled", False)),
             "final_rc_available": bool(os.environ.get("FINAL_RC_ARTIFACTS_DIR")),
+            "monitoring_available": competitor_service is not None,
+            "cabinet_available":cabinet_service is not None,
+            "release_replay_available": release_dispatch is not None,
             "control_plane_read_only": read_only_source,
-            "csp_nonce": getattr(request.state, "csp_nonce", ""), **values}
+            "partner_pilot_enabled":__import__('universal_supplier.partner_pilot',fromlist=['enabled']).enabled(),
+            "manifest_sources":__import__('universal_supplier.control_plane.source_jobs',fromlist=['RUNTIME_SOURCES']).RUNTIME_SOURCES,
+            "source_runtime_enabled":__import__('universal_supplier.control_plane.source_runtime',fromlist=['runtime_enabled']).runtime_enabled(),
+            "manual_collection_enabled":__import__('universal_supplier.control_plane.manual_collection',fromlist=['enabled']).enabled(),
+            "source_wrappers":__import__('universal_supplier.control_plane.source_jobs',fromlist=['SOURCES']).SOURCES, **values}
 
-    @app.middleware("http")
-    async def security_headers(request: Request, call_next):
-        nonce = secrets.token_urlsafe(16)
-        request.state.csp_nonce = nonce
-        response = await call_next(request)
-        headers = response.headers
-        headers["X-Frame-Options"] = "DENY"
-        headers["X-Content-Type-Options"] = "nosniff"
-        headers["Referrer-Policy"] = "no-referrer"
-        headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY.format(nonce=nonce)
-        if headers.get("content-type", "").startswith("text/html"):
-            headers["Cache-Control"] = "no-store"
-        return response
+    @app.get('/automatic-matching', response_class=HTMLResponse)
+    def automatic_matching(request: Request):
+        guard(request)
+        import json
+        from universal_supplier.automatic_matching import runtime_matching_policy, POLICY_VERSION
+        policy = runtime_matching_policy(config or vars(store).get('config'))
+        report = None
+        report_path = os.environ.get('AUTOMATIC_MATCHING_REPORT')
+        if report_path:
+            try:
+                report = json.loads(Path(report_path).read_text(encoding='utf-8'))
+                if report.get('policy_version') != POLICY_VERSION:
+                    report = None
+            except (OSError, ValueError):
+                report = None
+        return templates.TemplateResponse(request, 'automatic_matching.html', context(request,
+            title='Автоматическое сопоставление', active='automatic_matching', policy=policy, report=report))
+
+    if competitor_service is not None:
+        app.state.monitoring_templates = templates
+        app.state.monitoring_template_context = context
+        from .competitor_ui import register_monitoring
+        register_monitoring(app, templates, context, guard, competitor_service,
+                            competitor_collection, check_csrf)
+
+    if release_dispatch is not None:
+        @app.get('/release-jobs', response_class=HTMLResponse)
+        def release_jobs(request: Request):
+            guard(request)
+            return templates.TemplateResponse(request, 'release_jobs.html', context(request,
+                title='Проверка сохранённых данных', active='release_jobs',
+                sources=release_dispatch.sources(), jobs=release_dispatch.history()))
+
+        @app.post('/release-jobs/enqueue')
+        async def release_enqueue(request: Request):
+            guard(request, MUTATING_ROLES); require_trusted_origin(request)
+            values=await form_values(request); check_csrf(request, values)
+            try: result=release_dispatch.enqueue(values.get('source_key',''),'OPERATOR_UI')
+            except ValueError as e: raise HTTPException(400,str(e))
+            if result['status']=='queued' and 'text/html' in request.headers.get('accept',''):
+                return RedirectResponse('/release-jobs',status_code=303)
+            return JSONResponse(result,status_code=202 if result['status']=='queued' else 409)
 
     @app.middleware("http")
     async def block_qa_source_writes(request: Request, call_next):
+        from universal_supplier.partner_pilot import enabled
+        if enabled() and request.method in {'POST','PUT','PATCH','DELETE'} and request.url.path not in {'/login','/logout'} and not (request.method=='POST' and request.url.path.startswith('/suppliers/') and (request.url.path.endswith('/start') or request.url.path.endswith('/stop-pilot'))):
+            return PlainTextResponse('Разрешён только тестовый запуск Partner-ST',status_code=403)
         allowed_posts = {"/login", "/logout", "/commercial-qa/runs"}
-        if getattr(type(store), "read_only", False) and request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in allowed_posts:
+        if competitor_collection is not None:
+            allowed_posts.add('/competitor-monitoring/runs')
+        if release_dispatch is not None:
+            allowed_posts.add('/release-jobs/enqueue')
+        if getattr(type(store), "read_only", False) and request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in allowed_posts and not request.url.path.startswith('/content-studio/'):
             if request.url.path.startswith("/suppliers/") and request.url.path.endswith("/start") and commercial_qa_service.enabled:
                 return HTMLResponse(
                     "<h1>Обычный запуск недоступен</h1>"
@@ -294,16 +352,57 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                     '<p><a href="/commercial-qa">Открыть ручной сбор</a></p>', status_code=403)
             return PlainTextResponse("Источник доступен только для чтения; обычные изменения заблокированы.", status_code=403)
         return await call_next(request)
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        request.state.csp_nonce=secrets.token_urlsafe(24)
+        from .access_policy import allowed, request_permission
+        path = request.url.path
+        public = path in {"/login", "/health", "/ready", "/favicon.ico"} or path.startswith("/static/")
+        user = current_user(request) if auth_required and not public else None
+        if auth_required and path.startswith('/content-studio') and not user:
+            response=JSONResponse({'error':'Требуется вход Unified RC.'},401) if '/api/' in path else RedirectResponse('/login?next='+quote(path),303)
+        elif user and user.must_change_password and path not in {"/account/password", "/logout"}:
+            response = RedirectResponse("/account/password", 303)
+        elif user and path not in {"/account/password", "/logout"} and not allowed(user, request_permission(path, request.method)):
+            response = PlainTextResponse("Недостаточно прав для этого раздела", status_code=403)
+        else:
+            response=await call_next(request)
+        studio_policy=response.headers.get('Content-Security-Policy') if path.startswith('/content-studio/') else None
+        response.headers.update({
+            'X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff',
+            # Chromium otherwise sends Origin:null on same-origin form POSTs.
+            # Keep the origin guard strict and suppress referrers off-site.
+            'Referrer-Policy':'same-origin','Cache-Control':'no-store',
+            'Content-Security-Policy':"default-src 'self'; script-src 'self' 'nonce-"+request.state.csp_nonce+"'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
+        if studio_policy:
+            response.headers['Content-Security-Policy']=studio_policy
+            if '/api/previews/' in path or '/preview-window/' in path:
+                response.headers['X-Frame-Options']='SAMEORIGIN'
+        return response
+
+    from .account_routes import register_accounts
+    register_accounts(app, templates, context, guard, check_csrf, signer,
+                      login_throttle, form_values, require_trusted_origin)
+    from .content_studio import attach as attach_content_studio
+    from .access_policy import allowed as content_allowed
+    attach_content_studio(app,current_user,payload,content_allowed,content_studio_options)
+
     def page_error(request: Request, message: str, status_code=400, details=""):
         user = current_user(request)
-        return templates.TemplateResponse(request, "error.html", context(request, message=message,
-            details=details if user and user.role == "ADMIN" else "", active=""), status_code=status_code)
+        error = error_presentation(message, request.url.path)
+        return templates.TemplateResponse(request, "error.html", context(request, message=error['title'], error=error,
+            details=(details or message) if user and user.role == "ADMIN" else "", active="suppliers"), status_code=status_code)
 
     @app.exception_handler(HTTPException)
     async def http_error(request, exc):
         if exc.status_code == 401 and request.method == "GET":
             return RedirectResponse("/login?next=" + quote(request.url.path), status_code=303)
         return page_error(request, str(exc.detail), exc.status_code)
+
+    @app.exception_handler(PermissionError)
+    async def runtime_guard_error(request,exc):
+        text=str(exc)
+        return PlainTextResponse(text if text.startswith(('CANARY_','AUTOMATION_','PANEL_')) else 'SQL safety guard blocked this action',status_code=503)
 
     @app.get("/login", response_class=HTMLResponse)
     def login_page(request: Request):
@@ -321,7 +420,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             try: admin_store.audit(user_id, action, "user", user_id if user_id is not None else throttle_key[0][:150], None,
                                    {"username": throttle_key[0][:150], "client": throttle_key[1], "reason": reason})
             except Exception: LOGGER.warning("could not audit %s", action, exc_info=True)
-        if login_throttle.locked(throttle_key):
+        try: locked = login_throttle.locked(throttle_key)
+        except PermissionError as error:
+            return PlainTextResponse(str(error), status_code=503)
+        if locked:
             audit_login("LOGIN_FAILED", None, "throttled")
             return templates.TemplateResponse(request, "login.html", context(request, users_exist=admin_store.users_exist(), error="Слишком много неудачных попыток входа. Повторите позже", active=""), status_code=429)
         found = admin_store.user_by_username(values.get("username", ""))
@@ -349,8 +451,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     def dashboard(request: Request):
         guard(request); suppliers = store.dashboard(); counts = admin_store.review_counts()
         counts["errors"] = sum(int(row.get("errors_30d") or 0) for row in suppliers)
-        counts["queued"] = sum(row.get("job_status") == "queued" for row in suppliers)
-        counts["running"] = sum(row.get("job_status") == "running" for row in suppliers)
+        counts["queued"] = sum(row.get("has_queued_job",row.get("job_status") == "queued") for row in suppliers)
+        counts["running"] = sum(row.get("has_running_job",row.get("job_status") == "running") for row in suppliers)
         return templates.TemplateResponse(request, "dashboard.html", context(request, suppliers=suppliers, review_counts=counts, active="dashboard"))
 
     @app.get("/products", response_class=HTMLResponse)
@@ -380,7 +482,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             details={kind:store.iter_export_detail(filters,kind) for kind in ("properties","images","documents","relations","matches","decisions")}
         else:
             materialized=list(rows); rows=materialized
-            details=store.export_details([int(row["source_product_id"]) for row in materialized if str(row.get("source_product_id","")).isdigit()])
+            details=store.export_details([int(row["source_product_id"]) for row in materialized if is_id(row.get("source_product_id",""))])
         admin_store.audit(user.id or None,"EXPORT_CREATED","products","xlsx",None,{"rows":total,"filters":dict(request.query_params),"write_only":True,"chunk_size":500})
         return Response(product_workbook(rows,details),media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":f'attachment; filename="{safe_export_filename("products","xlsx",filters.supplier)}"'})
 
@@ -450,21 +552,128 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/suppliers", response_class=HTMLResponse)
     def suppliers(request: Request):
-        guard(request); return templates.TemplateResponse(request, "suppliers.html", context(request, suppliers=store.suppliers(), active="suppliers"))
+        guard(request)
+        rows=store.suppliers();automation={}
+        if callable(getattr(type(store),'automation_overview',None)):automation=store.automation_overview(rows)
+        return templates.TemplateResponse(request, "suppliers.html", context(request, suppliers=rows,automation=automation,active="suppliers"))
+
+    @app.get('/scheduler/execution',response_class=HTMLResponse)
+    def automation_executions(request: Request):
+        guard(request)
+        from .automation_status import overview
+        return templates.TemplateResponse(request,'automation_execution.html',context(request,sessions=overview(),active='scheduler'))
+
+    @app.post('/scheduler/execution/{identifier}/stop')
+    async def automation_execution_stop(request: Request,identifier:str):
+        user=guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        values=await form_values(request);check_csrf(request,values)
+        from .automation_status import stop
+        try:stop(identifier)
+        except ValueError as error:return page_error(request,str(error))
+        admin_store.audit(user.id,'AUTOMATION_STOP_REQUESTED','execution',identifier,None,{'stop_requested':True})
+        return RedirectResponse('/scheduler/execution',303)
 
     @app.get("/suppliers/{supplier_id}", response_class=HTMLResponse)
     def supplier_detail(request: Request, supplier_id: int):
         guard(request); item = next((x for x in store.suppliers() if int(x["id"]) == supplier_id), None)
         if not item: raise HTTPException(404, "Поставщик не найден")
         policies = effective_crawl_settings(item.get("crawl_settings"))
-        return templates.TemplateResponse(request, "supplier_detail.html", context(request, item=item, policies=policies, active="suppliers"))
+        from .supplier_automation import public_settings
+        return templates.TemplateResponse(request, "supplier_detail.html", context(request, item=item,
+            parsing=public_settings(item), policies=policies, active="suppliers"))
+
+    @app.post('/suppliers/{supplier_id}/manual-start')
+    async def manual_start(request: Request,supplier_id: int):
+        user=guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        raw=await form_values(request);check_csrf(request,raw)
+        if getattr(type(store),'read_only',False):raise HTTPException(403,'Источник доступен только для чтения')
+        from .manual_collection import ManualRequest, launch
+        result=None
+        try:
+            count=optional_int(raw.get('max_products'),'Количество карточек')
+            mode=raw.get('collection_mode','REFRESH')
+            parent_id=optional_int(raw.get('resume_job_id'),'Номер задания')
+            hours=optional_int(raw.get('duration_hours'),'Лимит времени')
+            approval=ManualRequest(user,signer.secret.decode('utf-8'),raw.get('delay_min_seconds',''),raw.get('delay_max_seconds',''),
+                                   int(raw.get('revision','-1')),mode,hours,retry_network=raw.get('retry_network')=='yes')
+            approval.validate(supplier_id,count,'manual',mode)
+            result=queue.enqueue(supplier_id,trigger_type='manual',crawl_type='full',requested_by_user_id=user.id,
+                source_mode=mode,source_limit=count,resume_job_id=parent_id,manual_request=approval)
+            if result.enqueued:
+                if manual_launcher is not None:manual_launcher(result.job_id)
+                else:launch(result.job_id,key=signer.secret.decode('utf-8'))
+        except (ValueError,PermissionError,KeyError,TypeError) as error:
+            return page_error(request,str(error))
+        except Exception:
+            message = ('Задание сохранено. Откройте поставщика и нажмите «Запустить ожидающее задание».'
+                       if result and result.enqueued else 'Не удалось подготовить сбор. Повторите попытку позже.')
+            return page_error(request, message, 503)
+        target=result.job_id if result.enqueued else (result.deduplicated_job_id or result.job_id)
+        return RedirectResponse(f'/runs?job_id={target}&enqueue_status={result.status}',303)
+
+    @app.post('/suppliers/{supplier_id}/recover-queued-job')
+    async def recover_queued_job(request: Request, supplier_id: int):
+        user = guard(request, MUTATING_ROLES)
+        require_trusted_origin(request)
+        values = await form_values(request)
+        check_csrf(request, values)
+        if getattr(type(store), 'read_only', False):
+            raise HTTPException(403, 'Источник доступен только для чтения')
+        from .manual_collection import launch
+        from .source_runtime import runtime_enabled
+        if not runtime_enabled():
+            return page_error(request, 'SOURCE_RUNTIME_NOT_ENABLED', 403)
+        try:
+            job_id = optional_int(values.get('job_id'), 'Номер задания')
+            action = values.get('action')
+            if not job_id or job_id < 1 or action not in ('launch', 'cancel'):
+                raise ValueError('Выберите ожидающее задание и действие')
+            key = signer.secret.decode('utf-8')
+            queue.recover_queued_manual_job(supplier_id, job_id, user, key, cancel=action=='cancel')
+            if action == 'cancel':
+                return RedirectResponse(f'/suppliers/{supplier_id}', 303)
+            if manual_launcher is not None:
+                manual_launcher(job_id)
+            else:
+                launch(job_id, key=key)
+        except (PermissionError, ValueError) as error:
+            return page_error(request, str(error))
+        except Exception:
+            return page_error(request, 'Не удалось восстановить задание. Обновите страницу поставщика.', 503)
+        return RedirectResponse(f'/runs?job_id={job_id}', 303)
 
     @app.post("/suppliers/{supplier_id}/enabled")
     async def supplier_enabled(request: Request, supplier_id: int):
         user = guard(request, {"ADMIN"}); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
+        if getattr(type(store), 'read_only', False):raise HTTPException(403, 'Источник доступен только для чтения')
         before = next((x for x in store.suppliers() if int(x["id"]) == supplier_id), None); enabled = values.get("enabled") == "true"
         store.set_supplier_enabled(supplier_id, enabled); admin_store.audit(user.id, "SUPPLIER_ENABLED_CHANGED", "supplier", supplier_id, {"enabled": before.get("enabled") if before else None}, {"enabled": enabled}, values.get("comment") or None)
-        return RedirectResponse("/suppliers", 303)
+        return RedirectResponse(f"/suppliers/{supplier_id}" if values.get('return_to')=='source' else '/suppliers', 303)
+
+    @app.get('/suppliers/{supplier_id}/parsing',response_class=HTMLResponse)
+    def parsing_settings_page(request: Request,supplier_id: int):
+        guard(request)
+        if not hasattr(store,'parsing_settings'):raise HTTPException(503,'Настройки недоступны: подключён read-only snapshot')
+        try:item=store.parsing_settings(supplier_id)
+        except KeyError:raise HTTPException(404,'Поставщик не найден')
+        return templates.TemplateResponse(request,'supplier_parsing.html',context(request,
+            parsing=item,item=item['supplier'],saved=request.query_params.get('saved'),active='suppliers'))
+
+    @app.post('/suppliers/{supplier_id}/parsing')
+    async def parsing_settings_save(request: Request,supplier_id: int):
+        user=guard(request,{'ADMIN'});require_trusted_origin(request)
+        raw=await form_values(request);check_csrf(request,raw)
+        if getattr(store,'read_only',False) or not hasattr(store,'save_parsing_settings'):
+            raise HTTPException(403,'Подключён read-only источник; настройки не сохранены')
+        from .supplier_automation import BOOLEAN_FIELDS,INTEGER_FIELDS,NUMBER_FIELDS
+        try:
+            values={k:raw[k] for k in set(INTEGER_FIELDS)|set(NUMBER_FIELDS)|{'start_time','timezone'} if k in raw}
+            values.update({k:raw.get(k,'false') for k in BOOLEAN_FIELDS})
+            store.save_parsing_settings(supplier_id,values,int(raw['revision']),user.id or None)
+        except (KeyError,ValueError,TypeError) as error:
+            return page_error(request,'Настройки не сохранены: '+str(error))
+        target=f'/suppliers/{supplier_id}' if raw.get('return_to')=='source' else f'/suppliers/{supplier_id}/parsing'
+        return RedirectResponse(target+'?saved=1',303)
 
     @app.post("/suppliers/{supplier_id}/data-quality-policy")
     async def supplier_data_quality_policy(request: Request,supplier_id:int):
@@ -487,13 +696,98 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         admin_store.audit(user.id,"MISSING_POLICY_CHANGED","supplier",supplier_id,None,policy)
         return RedirectResponse(f"/suppliers/{supplier_id}?saved=1",303)
 
+    @app.get('/suppliers/{supplier_id}/source-canary',response_class=HTMLResponse)
+    def preview_source_canary(request:Request,supplier_id:int):
+        guard(request,MUTATING_ROLES)
+        from .source_runtime import runtime_enabled
+        if not runtime_enabled():raise HTTPException(403,'Режим collectors не включён')
+        if getattr(type(store),'read_only',False):raise HTTPException(403,'Источник доступен только для чтения')
+        limit=optional_int(request.query_params.get('max_products'),'количество карточек')
+        try:
+            from .source_canary import limit_value
+            limit_value(limit)
+            if not hasattr(queue,'preview_source_canary'):raise ValueError('Очередь не поддерживает безопасный preview canary')
+            preview=queue.preview_source_canary(supplier_id,limit,request.query_params.get('collection_mode','REFRESH'))
+        except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
+        return templates.TemplateResponse(request,'source_canary.html',context(request,preview=preview,supplier_id=supplier_id,active='suppliers'))
+
     @app.post("/suppliers/{supplier_id}/start")
     async def start_now(request: Request, supplier_id: int):
         user = guard(request, MUTATING_ROLES); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
         if values.get("crawl_type", "full") not in SUPPORTED_WEB_CRAWL_TYPES: raise HTTPException(400, "Можно поставить в очередь только полный сбор")
-        result = queue.enqueue(supplier_id, trigger_type="manual", crawl_type="full", requested_by_user_id=user.id or None)
+        from universal_supplier.partner_pilot import enabled,limit_value
+        mode=values.get('launch_mode','full')
+        if mode not in ('full','test','source','source_canary'):raise HTTPException(400,'Неизвестный режим запуска')
+        if enabled() and mode!='test':raise HTTPException(403,'Разрешён только ограниченный тест Partner-ST')
+        kwargs={}
+        if mode=='source_canary':
+            from .source_runtime import runtime_enabled
+            from .source_canary import limit_value
+            if not runtime_enabled():raise HTTPException(403,'Режим collectors не включён')
+            try:
+                limit=limit_value(optional_int(values.get('max_products'),'количество карточек'))
+                if values.get('collection_mode') not in ('REFRESH','DISCOVERY') or values.get('resume_job_id'):raise ValueError('Нужен REFRESH или DISCOVERY; RESUME запускается из checkpoint')
+                source=next((s for s in store.suppliers() if s['id']==supplier_id),None)
+                if not source or not source.get('enabled'):raise ValueError('Поставщик выключен; запуск canary заблокирован. Нужно отдельное подтверждение временного включения.')
+                kwargs.update(source_mode=values['collection_mode'],source_limit=limit,source_preview_sha256=values.get('source_preview_sha256',''))
+            except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
+        if mode=='source':
+            from .source_runtime import runtime_enabled
+            if not runtime_enabled():raise HTTPException(403,'Режим collectors не включён')
+            kwargs['source_mode']=values.get('collection_mode','')
+            if kwargs['source_mode'] not in ('REFRESH','DISCOVERY','RESUME'):raise HTTPException(400,'Неизвестный режим collector')
+            if kwargs['source_mode']=='RESUME':
+                raw=values.get('resume_job_id','')
+                if not raw.isascii() or not raw.isdecimal() or int(raw)<1:raise HTTPException(400,'Нужен исходный job')
+                kwargs['resume_job_id']=int(raw)
+            else:raise HTTPException(400,'Сначала подтвердите общий лимит и snapshot на странице подготовки сбора')
+        if mode=='test':
+            try:
+                raw=values.get('max_products','')
+                if not raw.isascii() or not raw.isdecimal():raise ValueError('Лимит должен быть целым числом от 1 до 50')
+                kwargs['pilot_limit']=limit_value(int(raw))
+                from universal_supplier.partner_pilot import rate_profile
+                kwargs['pilot_profile']=values.get('pilot_profile','conservative')
+                rate_profile(kwargs['pilot_profile'])
+            except ValueError as error:raise HTTPException(400,str(error))
+        try:result = queue.enqueue(supplier_id, trigger_type="manual", crawl_type="full", requested_by_user_id=user.id or None,**kwargs)
+        except (ValueError,PermissionError) as error:raise HTTPException(400,str(error))
         admin_store.audit(user.id or None, "MANUAL_CRAWL_ENQUEUED", "crawl_job", result.job_id, None, {"supplier_id": supplier_id, "crawl_type": "full", "status": result.status, "deduplicated_job_id": result.deduplicated_job_id}, values.get("comment") or None, str(uuid.uuid4()))
         return RedirectResponse(f"/runs?enqueue_status={result.status}&job_id={result.job_id}", 303)
+
+    @app.post('/suppliers/{supplier_id}/stop-source')
+    async def stop_source(request:Request,supplier_id:int):
+        guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        values=await form_values(request);check_csrf(request,values)
+        try:
+            raw=values.get('job_id','')
+            if not raw.isascii() or not raw.isdecimal() or int(raw)<1:raise ValueError('Нужен активный job')
+            queue.stop_source(supplier_id,int(raw))
+        except (ValueError,PermissionError,AttributeError) as error:raise HTTPException(400,str(error))
+        return RedirectResponse(f'/suppliers/{supplier_id}',303)
+
+    @app.post('/suppliers/{supplier_id}/close-expired-job')
+    async def close_expired_job(request: Request, supplier_id: int):
+        user=guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        values=await form_values(request);check_csrf(request,values)
+        if getattr(type(store),'read_only',False):raise HTTPException(403,'Источник доступен только для чтения')
+        try:
+            job_id=optional_int(values.get('job_id'),'Номер задания')
+            if not job_id:raise ValueError('Укажите номер прерванного задания')
+            queue.close_expired_manual_job(supplier_id,job_id,actor_id=user.id)
+        except (ValueError,PermissionError,AttributeError) as error:raise HTTPException(400,str(error))
+        return RedirectResponse(f'/suppliers/{supplier_id}',303)
+
+    @app.post('/suppliers/{supplier_id}/stop-pilot')
+    async def stop_pilot(request:Request,supplier_id:int):
+        from universal_supplier.partner_pilot import enabled
+        guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        values=await form_values(request);check_csrf(request,values)
+        if not enabled():raise HTTPException(403,'Тестовый режим не включён')
+        item=next((x for x in store.suppliers() if int(x['id'])==supplier_id),None)
+        if not item or item.get('code')!='partner_st':raise HTTPException(403,'Только Partner-ST')
+        Path(os.environ['PARTNER_PILOT_STOP_FILE']).touch(exist_ok=True)
+        return RedirectResponse('/runs',303)
 
     @app.get("/commercial-qa", response_class=HTMLResponse)
     def commercial_qa_page(request: Request):
@@ -592,24 +886,84 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/runs", response_class=HTMLResponse)
     def runs(request: Request):
-        guard(request); return templates.TemplateResponse(request, "runs.html", context(request, runs=store.runs(), active="runs", enqueue_status=request.query_params.get("enqueue_status"), job_id=request.query_params.get("job_id")))
+        guard(request)
+        job_status=request.query_params.get('job_status')
+        rows=store.runs(job_status=job_status) if job_status in ('queued','running') else store.runs()
+        job_id=request.query_params.get("job_id")
+        return templates.TemplateResponse(request, "runs.html", context(request, runs=rows, active="runs", job_id=job_id if is_id(job_id) else None))
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):
-        guard(request); item = store.run(run_id)
+        from .manual_collection import ManualRequest, TERMINAL, enabled as manual_enabled
+        from .presentation import MANUAL_RESUME_BLOCKERS, collection_issue_message
+        from .source_runtime import runtime_enabled
+        from .transport_diagnostics import safe_message
+        user = guard(request); item = store.run(run_id)
         if not item: raise HTTPException(404, "Запуск не найден")
-        return templates.TemplateResponse(request, "run_detail.html", context(request, item=item, active="runs"))
+        parent_id = item.get('manual_job_id')
+        if not parent_id and request.query_params.get('check_source_resume')=='1' and (item.get('metadata') or {}).get('source_runtime'):
+            from copy import deepcopy
+            item=deepcopy(item)
+            try:
+                queue.source_resume_status(item['metadata']['job_id'])
+                item['metadata']['source_runtime']['resume_available']=True
+                item['metadata']['source_runtime']['resume_check']='SQL и checkpoint сверены; повторная сверка перед enqueue'
+            except (ValueError,PermissionError,KeyError,AttributeError) as error:
+                item['metadata']['source_runtime']['resume_available']=False
+                item['metadata']['source_runtime']['resume_check']='Продолжение заблокировано: '+str(error)
+        metadata = item.get('metadata') or {}
+        runtime = metadata.get('source_runtime') or {}
+        manual_resume_available = None
+        manual_resume_blocker = None
+        if (parent_id and item.get('latest_supplier_job_id', parent_id) == parent_id
+                and item['status'] in TERMINAL and user.role in MUTATING_ROLES
+                and not getattr(type(store), 'read_only', False) and manual_enabled() and runtime_enabled()):
+            remaining = runtime.get('remaining') or runtime.get('discovery_remaining') or runtime.get('resume_available')
+            retry_network = (item['status'] == 'partial' and runtime.get('remaining') == 0
+                             and not runtime.get('termination_reason') and bool(runtime.get('deferred')))
+            if remaining or retry_network:
+                approval = ManualRequest(user, signer.secret.decode('utf-8'), '', '', -1, 'RESUME',
+                                         retry_network=not remaining)
+                try:
+                    queue.manual_resume_status(item['supplier_id'], parent_id, approval)
+                except Exception as error:
+                    code = str(error) if isinstance(error, (ValueError, PermissionError)) else ''
+                    manual_resume_blocker = MANUAL_RESUME_BLOCKERS.get(
+                        code, 'Не удалось подтвердить сохранённую очередь. Обновите страницу или обратитесь к администратору.')
+                else:
+                    manual_resume_available = 'retry_network' if approval.retry_network else 'continue'
+        receipts = runtime.get('quarantined') or []
+        progress = run_collection_progress(metadata)
+        issues = []
+        for receipt in receipts[:50]:
+            proof = (receipt.get('isolation') or {}).get('rejection_proof') or {}
+            linked_id = proof.get('sterbrust_product_id')
+            issues.append({'message': collection_issue_message(receipt),
+                           'url': safe_http_url(safe_message(receipt.get('url') or '')),
+                           'linked_id': linked_id if is_id(linked_id) else None})
+        return templates.TemplateResponse(request, "run_detail.html",
+            context(request, item=item, active="runs", collection_progress=progress,
+                    collection_issues=issues, collection_issues_total=len(receipts),
+                    manual_resume_available=manual_resume_available, manual_resume_blocker=manual_resume_blocker))
+
+    def progress_response(item):
+        if item is None:raise HTTPException(404, "Запуск не найден")
+        allowed={"run_id","supplier_name","run_status","job_status","phase","phase_label_ru","status",
+                 "total","processed","succeeded","errors","percent","saved_percent","deferred","durable_progress","rate_per_second",
+                 "matching_conflicts","other_card_issues",
+                 "eta_seconds","eta_human_ru","elapsed_seconds","fetch_elapsed_seconds","updated_at"}
+        return JSONResponse({key:value for key,value in item.items() if key in allowed},headers={'Cache-Control':'no-store'})
+
+    @app.get("/api/jobs/{job_id}/progress")
+    def job_progress(request: Request,job_id: int):
+        guard(request)
+        return progress_response(store.job_progress(job_id) if hasattr(store,'job_progress') else None)
 
     @app.get("/api/runs/{run_id}/progress")
     def run_progress(request: Request, run_id: int):
         guard(request)
         item = store.run_progress(run_id) if hasattr(store, "run_progress") else None
-        if item is None:
-            raise HTTPException(404, "Запуск не найден")
-        allowed = {"run_id", "supplier_name", "run_status", "phase", "phase_label_ru", "status",
-                   "total", "processed", "succeeded", "errors", "percent", "rate_per_second",
-                   "eta_seconds", "eta_human_ru", "elapsed_seconds", "fetch_elapsed_seconds", "updated_at"}
-        return JSONResponse({key: value for key, value in item.items() if key in allowed})
+        return progress_response(item)
 
     @app.get("/scheduler", response_class=HTMLResponse)
     def scheduler_page(request: Request):
@@ -618,6 +972,16 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         suppliers = store.suppliers()
         for supplier in suppliers: supplier["schedule_controls"] = schedule_to_controls(supplier.get("cron_expression"))
         return templates.TemplateResponse(request, "scheduler.html", context(request, suppliers=suppliers, active="scheduler", advanced=advanced, saved=request.query_params.get("saved")))
+
+    @app.post('/suppliers/{supplier_id}/parsing/approve-host')
+    async def parsing_host_approval(request: Request,supplier_id: int):
+        user=guard(request,{'ADMIN'});require_trusted_origin(request)
+        raw=await form_values(request);check_csrf(request,raw)
+        if getattr(store,'read_only',False) or not hasattr(store,'approve_parsing_host'):raise HTTPException(403,'Read-only источник')
+        try:store.approve_parsing_host(supplier_id,int(raw['revision']),raw['policy_sha256'],user.id or None)
+        except (KeyError,ValueError) as error:return page_error(request,'Профиль не утверждён: '+str(error))
+        target=f'/suppliers/{supplier_id}' if raw.get('return_to')=='source' else f'/suppliers/{supplier_id}/parsing'
+        return RedirectResponse(target+'?host_saved=1',303)
 
     @app.post("/scheduler/{supplier_id}")
     async def scheduler_save(request: Request, supplier_id: int):
@@ -635,6 +999,14 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 "backoff_base_seconds":float(raw.get("backoff_base_seconds","0.5")),"backoff_max_seconds":float(raw.get("backoff_max_seconds","8")),
                 "respect_retry_after":raw.get("respect_retry_after","true")=="true","consecutive_error_threshold":int(raw.get("consecutive_error_threshold","5")),
                 "cooldown_seconds":float(raw.get("cooldown_seconds","30")),"max_run_duration_seconds":float(raw.get("max_run_duration_seconds","7200"))}
+            from .source_jobs import SOURCES
+            source=next((r for r in store.suppliers() if r['id']==supplier_id),None)
+            if source and source['code'] in SOURCES:
+                if not raw.get('min_request_interval_seconds'):raise HTTPException(400,'Укажите интервал утверждённой host policy')
+                from .host_fetch import compile_policy
+                from .source_discovery import HOSTS
+                try:compile_policy(source['code'],source.get('base_url') or 'https://'+HOSTS[source['code']],values,approval=(source.get('crawl_settings') or {}).get('host_policy_approval'))
+                except PermissionError as error:raise ValueError('Профиль host не утверждён: '+str(error))
             DomainRatePolicy.from_mapping(values)
         except (TypeError, ValueError) as error:
             suppliers = store.suppliers()
@@ -643,6 +1015,94 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         store.save_schedule(supplier_id, values); admin_store.audit(user.id, "SCHEDULE_CHANGED", "supplier_schedule", supplier_id, None, values)
         return RedirectResponse("/scheduler?saved=1", 303)
 
+    @app.get('/exports/previews',response_class=HTMLResponse)
+    def dual_previews_page(request: Request):
+        guard(request)
+        from universal_supplier.dual_preview import latest,publication_status
+        from universal_supplier.export_history import listing
+        manifest=None;error=None
+        try:manifest=latest(preview_root,attempt=(preview_root/'latest_attempt.json').exists())
+        except FileNotFoundError:pass
+        except (ValueError,KeyError,OSError):error='PREVIEW_INTEGRITY_ERROR: артефакт не выдан'
+        return templates.TemplateResponse(request,'dual_previews.html',context(request,
+            preview=manifest,publication=publication_status(preview_root),history=listing(preview_root),error=error,active='xml_export'))
+
+    @app.get('/exports/previews/history/{artifact_id}')
+    def historical_preview(request: Request,artifact_id:str):
+        guard(request)
+        from universal_supplier.export_history import read
+        try:raw=read(preview_root,artifact_id)
+        except (ValueError,KeyError,OSError):raise HTTPException(404,'HISTORY_UNAVAILABLE')
+        return Response(raw,media_type='application/xml',headers={'Content-Disposition':'attachment; filename="historical-not-current.xml"','X-Sterbrust-Import-Allowed':'false','X-Sterbrust-Artifact-Status':'HISTORICAL_NOT_CURRENT'})
+
+    @app.get('/exports/previews/diagnostics/download')
+    def preview_diagnostics(request: Request):
+        guard(request)
+        from universal_supplier.dual_preview import latest
+        try:manifest=latest(preview_root,attempt=True)
+        except (ValueError,KeyError,OSError):raise HTTPException(409,'PREVIEW_DIAGNOSTICS_UNAVAILABLE')
+        return Response(json.dumps(manifest,ensure_ascii=False,default=str),media_type='application/json',headers={'Content-Disposition':'attachment; filename="current-preview-exclusions.json"','X-Sterbrust-Import-Allowed':'false'})
+
+    @app.get('/exports/previews/preserved/{kind}')
+    def preserved_preview(request: Request,kind:str):
+        guard(request)
+        from universal_supplier.dual_preview import latest,NAMES
+        if kind not in NAMES:raise HTTPException(404,'Неизвестный XML')
+        try:data=latest(preview_root,kind)
+        except (ValueError,KeyError,OSError):raise HTTPException(409,'PRESERVED_PREVIEW_UNAVAILABLE')
+        return Response(data,media_type='application/xml',headers={'Content-Disposition':'attachment; filename="preserved-not-current.xml"','X-Sterbrust-Import-Allowed':'false','X-Sterbrust-Artifact-Status':'HISTORICAL_NOT_CURRENT_REVALIDATION_REQUIRED'})
+
+    @app.get('/exports/previews/candidates/download')
+    def preserved_candidates(request: Request):
+        guard(request)
+        from universal_supplier.dual_preview import latest
+        try:
+            cohort=json.loads((preview_root/'historical_new_candidates.json').read_text(encoding='utf-8'))
+            current=latest(preview_root,attempt=True)
+            rows={r['source_product_id']:r for r in current['record_trace']['new_products']}
+            members=[{**member,'current':rows.get(member['source_product_id'],
+                {'selected':False,'reasons':['SOURCE_ROW_MISSING_REQUIRES_REVIEW']})} for member in cohort['members']]
+        except (ValueError,KeyError,OSError):raise HTTPException(409,'CANDIDATE_DIAGNOSTICS_UNAVAILABLE')
+        return Response(json.dumps({**cohort,'as_of':current['generated_at'],'members':members,'import_allowed':False},ensure_ascii=False),
+            media_type='application/json',headers={'Content-Disposition':'attachment; filename="preserved-new-candidates.json"','X-Sterbrust-Import-Allowed':'false'})
+
+    @app.post('/exports/previews/generate')
+    async def dual_previews_generate(request: Request):
+        user=guard(request,MUTATING_ROLES);require_trusted_origin(request)
+        raw=await form_values(request);check_csrf(request,raw)
+        try:manifest=xml_service.publish_previews(preview_root)
+        except (ValueError,KeyError,OSError) as error:return page_error(request,'XML не заменён: '+str(error))
+        admin_store.audit(user.id or None,'LOCAL_PREVIEW_EXPORTED','xml_preview',manifest['version'],None,
+            {'counts':manifest['counts'],'checksums':manifest['checksums'],'import_allowed':False})
+        return RedirectResponse('/exports/previews',303)
+
+    @app.get('/exports/previews/{kind}/download')
+    def dual_previews_download(request: Request,kind: str):
+        guard(request)
+        from universal_supplier.dual_preview import latest,NAMES
+        if kind not in NAMES:raise HTTPException(404,'Неизвестный XML-предпросмотр')
+        try:data=latest(preview_root,kind,attempt=(preview_root/'latest_attempt.json').exists(),require_continuity=True)
+        except FileNotFoundError:raise HTTPException(404,'XML ещё не сформирован')
+        except (ValueError,KeyError,OSError):raise HTTPException(409,'PREVIEW_INTEGRITY_ERROR')
+        return Response(data,media_type='application/xml',headers={'Content-Disposition':f'attachment; filename="{NAMES[kind]}"','X-Sterbrust-Import-Allowed':'false','X-Sterbrust-Artifact-Status':'LATEST_ATTEMPT_NOT_IMPORT_READY'})
+
+    @app.get('/suppliers/{supplier_id}/freshness',response_class=HTMLResponse)
+    def supplier_freshness(request: Request,supplier_id: int):
+        guard(request)
+        if not hasattr(store,'dual_preview_snapshot'):raise HTTPException(503,'Freshness требует PostgreSQL snapshot')
+        from universal_supplier.commercial_freshness import assess
+        from .supplier_automation import settings_for
+        snapshot=store.dual_preview_snapshot()
+        item=next((s for s in snapshot['suppliers'] if s['id']==supplier_id),None)
+        if not item:raise HTTPException(404,'Поставщик не найден')
+        cfg=settings_for(item);seen=set();rows=[]
+        for row in snapshot['records']:
+            if row['supplier_id']!=supplier_id or row['source_product_id'] in seen:continue
+            seen.add(row['source_product_id'])
+            rows.append({'product':row,'freshness':assess(row,cfg,snapshot['as_of'])})
+        return templates.TemplateResponse(request,'supplier_freshness.html',context(request,
+            item=item,rows=rows,as_of=snapshot['as_of'],active='suppliers'))
+
     @app.get("/settings", response_class=HTMLResponse)
     def settings(request: Request):
         user = guard(request); return templates.TemplateResponse(request, "settings.html", context(request, users=admin_store.list_users() if user.role == "ADMIN" else [], audit=admin_store.audit_events() if user.role == "ADMIN" else [], active="settings"))
@@ -650,7 +1110,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.get("/data-quality", response_class=HTMLResponse)
     def data_quality(request: Request):
         guard(request); history=stage6e_service.quality_history(request.query_params.get("supplier") or None,10) if hasattr(stage6e_service,"quality_history") else []
-        return templates.TemplateResponse(request,"data_quality.html",context(request,rows=stage6e_service.quality(),history=history,active="data_quality"))
+        return templates.TemplateResponse(request,"data_quality.html",context(request,rows=stage6e_service.quality(),history=mark_quality_repeats(history),active="data_quality"))
 
     @app.get("/rules", response_class=HTMLResponse)
     def rules(request: Request):
@@ -948,7 +1408,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.post("/settings/users")
     async def create_user_route(request: Request):
         user = guard(request, {"ADMIN"}); require_trusted_origin(request); values = await form_values(request); check_csrf(request, values)
-        try: admin_store.create_user(values.get("username", ""), values.get("display_name", ""), hash_password(values.get("password", "")), values.get("role", "VIEWER"), actor_id=user.id)
+        from .access_policy import validate_new_password
+        try: validate_new_password(values.get("password",""),values.get("password",""))
+        except ValueError as error: return page_error(request,str(error))
+        try: admin_store.create_user(values.get("username", ""), values.get("display_name", ""), hash_password(values.get("password", "")), values.get("role", "VIEWER"), actor_id=user.id, must_change_password=True)
         except (ValueError, KeyError) as error: return page_error(request, str(error))
         return RedirectResponse("/settings?user_saved=1", 303)
 
@@ -997,6 +1460,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     @app.get("/ready")
     def ready():
         status = store.health(); ok = status.get("postgresql") in HEALTHY_DATABASE_STATES; return JSONResponse({"ready":ok}, status_code=200 if ok else 503)
+    if cabinet_service is not None:
+        from .cabinet import register_cabinet
+        register_cabinet(app,templates,context,guard,cabinet_service,check_csrf,preserve_supplier_landing=True)
     return app
 
 

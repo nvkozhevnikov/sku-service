@@ -1,0 +1,9 @@
+{
+  "format": "sterbrust-deployment/v1",
+  "host": "127.0.0.1",
+  "port": 55461,
+  "database": "rc_verify_vi_20261019",
+  "version": "17.11",
+  "system_identifier": "REPLACE_FROM_PG_CONTROL_SYSTEM",
+  "pgdata": "/replace/from/show_data_directory"
+}

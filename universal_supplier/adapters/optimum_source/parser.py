@@ -129,11 +129,16 @@ class OptimumProductParser:
         return clean_text(node.get("content") or _text(node)) if node is not None else None
 
     def parse_commercial(self, doc) -> Commercial:
-        product = _first(doc.xpath("//*[@itemtype='https://schema.org/Product' or @itemtype='http://schema.org/Product']"))
+        product = _first(doc.xpath(f"//*[{_class('c-catalog-element')}]"))
         if product is None:
-            product = doc
+            return Commercial()  # No own-product scope; recommendations are not evidence.
         current = self.parse_price_raw(doc)
-        currency = _first(product.xpath(".//*[@itemprop='priceCurrency']/@content")) or "RUB"
+        currency = _first(product.xpath(".//*[@itemprop='priceCurrency']/@content"))
+        if not currency:
+            currency_text=' '.join((_text(node) or '') for node in product.xpath(f".//*[{_class('catalog-element-price')}]"))
+            currencies={code for code,pattern in (('RUB',r'₽|\bруб\b|\bRUB\b'),('USD',r'\bUSD\b'),('EUR',r'€|\bEUR\b'))
+                if re.search(pattern,currency_text,re.I)}
+            currency=next(iter(currencies)) if len(currencies)==1 else None
         old_node = _first(product.xpath(f".//*[{_class('catalog-element-price-base')} or {_class('catalog-element-price-discount-old')}]"))
         old_price = decimal_price(_text(old_node))
         price = decimal_price(current)
@@ -141,10 +146,7 @@ class OptimumProductParser:
             old_price = None
         quantity_node = _first(product.xpath(f".//*[{_class('catalog-element-quantity')} or {_class('catalog-element-quantity-value-text')}]"))
         raw = _text(quantity_node)
-        if not raw:
-            candidates = doc.xpath("//*[contains(translate(normalize-space(string(.)),'ПОДЗАКВНАЛИЧИ','подзаквналичи'),'под заказ') or contains(normalize-space(string(.)),'В наличии') or contains(normalize-space(string(.)),'СНЯТ С ПРОИЗВОДСТВА')]")
-            candidates = [x for x in candidates if len(list(x.iter())) < 8]
-            raw = _text(candidates[-1]) if candidates else None
+        # Do not borrow a stock label from the global recommendations/cart.
         normalized, quantity = availability(raw)
         return Commercial(price=price, old_price=old_price, currency=currency,
                           availability_raw=raw, availability_normalized=normalized, quantity=quantity)

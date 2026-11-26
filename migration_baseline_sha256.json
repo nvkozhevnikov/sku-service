@@ -1,0 +1,11 @@
+{
+  "algorithm": "SHA256",
+  "purpose": "Self-contained immutability baseline for migrations 001-005",
+  "files": {
+    "001_suppliers_and_crawls.sql": "9b2bf82bee42832615a6ed5dc0d4be5902c408963c5d77b683f08b3ef9b5a9f7",
+    "002_products_and_offers.sql": "5fec752af623d3752dfddacfdf907fc6a53d5e7f527657986979be6567c50d15",
+    "003_catalog_details.sql": "0ea332b8d566d24ef93835e7526951bd8dabda498406733fbf706f421b73cb64",
+    "004_history_errors_and_feeds.sql": "3731fe4fa2f1708586b4c5fe81e9c640b0d2fb735ba72298e455f586f06155ec",
+    "005_indexes.sql": "345b0d3094360adbd702086d7c8bfc513ea1c2bcf577ac95b4f873f5619b0bb9"
+  }
+}

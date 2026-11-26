@@ -1,0 +1,37 @@
+{
+  "persisted_current_auto": 834,
+  "after_not_auto": 452,
+  "new_patch_auto_to_not_auto": 126,
+  "already_not_auto_before_patch": 326,
+  "all_with_links_auto_downgrades_by_source": {
+    "kami": 117,
+    "optimum": 33,
+    "partner_st": 46,
+    "uss_stanko": 14
+  },
+  "all_with_links_downgrade_conflict_keys": {
+    "category_property:motor_power": 34,
+    "category_property:voltage": 136,
+    "model": 22,
+    "category_property:max_turning_diameter": 37,
+    "category_property:travel_x": 2,
+    "category_property:travel_y": 4,
+    "NAME_CANDIDATE_ONLY": 2,
+    "category_property:max_drilling_diameter": 24,
+    "category_property:spindle_bore": 4,
+    "brand": 1,
+    "category_property:table_size": 3,
+    "category_property:travel_z": 3,
+    "category_property:tool_range": 1
+  },
+  "promotions_with_links": 102,
+  "promotion_methods": {
+    "IDENTITY_CONFLICT -> EXISTING_LINK": 101,
+    "IDENTITY_CONFLICT -> BRAND_MODEL": 1
+  },
+  "physical_catalog_and_sterbrust_id_projection_sha256": "024de318535aa9bd8140dc0132e1af1cff0b320a382b24df4c85797bcd2d1185",
+  "canonical_ids_written": 0,
+  "manual_decisions_in_snapshot": 0,
+  "manual_proof_scope": "No real manual rows in this copied snapshot. Synthetic manual-preservation tests passed; not a replay of real manual decisions.",
+  "release_gate": "NOT_VERIFIED_PENDING_LINUX_AND_CHURN_REVIEW"
+}

@@ -1,0 +1,19 @@
+{
+  "evidence_class": "REPOSITORY-VERIFIED + LIVE-VERIFIED copied read-only DB",
+  "before_sha": "58152e4bd390361d3e97ee475bae78a91295e241",
+  "after_F01_SHA": "0c0164a5ea49659a895866766731bf83adddea76",
+  "decisions_each": 24240,
+  "transitions": {
+    "with_existing_links|DECISION_OR_CANDIDATE_CHANGED": 452,
+    "fresh|DECISION_OR_CANDIDATE_CHANGED": 542,
+    "with_existing_links|AUTO_TO_REVIEW_OR_CONFLICT": 210,
+    "with_existing_links|NOT_AUTO_TO_AUTO": 102,
+    "fresh|AUTO_TO_REVIEW_OR_CONFLICT": 207,
+    "fresh|NOT_AUTO_TO_AUTO": 14
+  },
+  "manual_rows": 0,
+  "manual_ids_changed": [],
+  "source_link_writes": 0,
+  "external_http": 0,
+  "scope_note": "Exact original F01/F03 patch comparison; unified integration changes excluded."
+}

@@ -38,7 +38,7 @@ def _forbidden_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -
     mapped = getattr(address, "ipv4_mapped", None)
     if mapped is not None:
         address = mapped
-    return (address.is_private or address.is_loopback or address.is_link_local or address.is_reserved
+    return (not address.is_global or address.is_private or address.is_loopback or address.is_link_local or address.is_reserved
             or address.is_multicast or address.is_unspecified)
 
 
@@ -76,6 +76,7 @@ def validate_public_http_url(url: str, allowed_hosts: Iterable[str] | None = Non
     if resolve_dns and literal is None:
         # A resolver failure is a network error (OSError), not an unsafe URL.
         infos = (resolver or socket.getaddrinfo)(host, port or (443 if parsed.scheme.lower() == "https" else 80))
+        if not infos:raise UnsafeUrlError('DNS не вернул публичных адресов')
         for *_, sockaddr in infos:
             if _forbidden_address(ipaddress.ip_address(sockaddr[0])):
                 raise UnsafeUrlError("DNS указывает на локальный или служебный адрес")

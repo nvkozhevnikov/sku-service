@@ -29,7 +29,7 @@ def make_client(role="ADMIN", service=None):
     admin=InMemoryAdminStore([{"id":1,"username":"user1","display_name":"Пользователь","role":role,"is_active":True,"password_hash":hash_password("Safe-password-2026",salt=b"0123456789abcdef")}])
     app=create_app(store=SnapshotControlPlaneStore(control_plane_snapshot_dir()),queue=InMemoryJobQueue(),admin_store=admin,
                    stage6e_service=service or InMemoryStage6EService(),session_secret="stage6e-test-secret-at-least-32-bytes",auth_required=True)
-    client=TestClient(app); assert client.post("/login",data={"username":"user1","password":"Safe-password-2026"},follow_redirects=False).status_code==303
+    client=TestClient(app,base_url='https://testserver'); assert client.post("/login",data={"username":"user1","password":"Safe-password-2026"},follow_redirects=False).status_code==303
     return client,admin
 
 

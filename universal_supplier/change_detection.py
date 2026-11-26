@@ -79,3 +79,42 @@ def card_group_values(card: ProductCard) -> dict[str, Any]:
                        "currency": card.currency, "availability_raw": card.availability_raw,
                        "availability_normalized": card.availability_normalized, "quantity": card.quantity},
     }
+
+
+def history_json(value: Any) -> str:
+    """The exact JSON payload used by the history writer (Decimal -> string)."""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str, allow_nan=False)
+
+
+def history_values_equal(old: Any, new: Any) -> bool:
+    """JSONB equality for generated JSON: typed booleans and exact numeric values."""
+    def key(value):
+        if value is None:return ('null',)
+        if isinstance(value,bool):return ('boolean',value)
+        if isinstance(value,Decimal):return ('number',value)
+        if isinstance(value,str):return ('string',value)
+        if isinstance(value,list):return ('array',tuple(key(x) for x in value))
+        return ('object',tuple(sorted((k,key(v)) for k,v in value.items())))
+    decode=lambda v:json.loads(history_json(v),parse_int=Decimal,parse_float=Decimal)
+    return key(decode(old))==key(decode(new))
+
+
+def commercial_history_value(value: Any) -> Any:
+    """Canonical decimal spelling for commercial history, without rounding."""
+    if not isinstance(value,dict):return value
+    value=dict(value)
+    for field in ('price','old_price','quantity'):
+        raw=value.get(field)
+        if raw is None or isinstance(raw,bool):continue
+        try:number=Decimal(str(raw))
+        except Exception:continue
+        if number.is_finite():
+            text=format(number,'f')
+            if '.' in text:text=text.rstrip('0').rstrip('.')
+            value[field]='0' if number==0 else text
+    return value
+
+
+def commercial_values_equal(old: Any, new: Any) -> bool:
+    """Compare actual offer columns, ignoring only decimal formatting."""
+    return history_values_equal(commercial_history_value(old),commercial_history_value(new))

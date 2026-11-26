@@ -1,4 +1,5 @@
 import pytest
+from sterbrust_matching.normalization import normalize_model
 from copy import deepcopy
 from universal_supplier.beka_operator_decisions import *
 from scripts.audit_beka_visible_identity import load,OUT

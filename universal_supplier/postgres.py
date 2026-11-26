@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from universal_supplier.partner_pilot import connect_postgres
 from universal_supplier.effective_identity import effective_manual_mapping_sql,accepted_current_mapping_sql,effective_identity_mapping_sql
 
 import json
@@ -12,7 +14,7 @@ from sterbrust_matching.decision_history import decision_fingerprint, warning_fi
 from sterbrust_matching.product_identity import PROPERTY_POLICIES, canonical_property_name
 from sterbrust_matching.property_normalization import DEFAULT_PROPERTY_POLICIES
 
-from .change_detection import card_group_values, card_hashes
+from .change_detection import card_group_values, card_hashes, history_json, history_values_equal, commercial_values_equal, commercial_history_value
 from .commercial import ReadOnlySupplierProduct
 from .commercial_persistence import HttpCapture, observation_from_snapshot, product_card_from_snapshot
 from .models import ProductCard
@@ -33,8 +35,18 @@ SUPPLIER_CONFIGS = {
     "beka_mak": ("Beka-Mak", "https://beka-mak.su/", "beka_mak"),
     "beka_mak_tr": ("Bekamak manufacturer reference", "https://www.bekamak.com/", "beka_mak_tr"),
     "kami": ("КАМИ", "https://www.stanki.ru/", "kami"),
+    "vekprom": ("Векпром", "https://vekprom.ru/", "vekprom"),
+    # LTT regional network + USS-Stanko (source-integration stage 2026-10-13).
+    # Separate namespaces per operator decision: regional LTT sites keep their
+    # own prices/stock; USS-Stanko never reuses manufacturer namespaces.
+    "ltt_msk": ("LTT Москва", "https://ltt-msk.ru/", "ltt_msk"),
+    "ltt_sib": ("LTT Сибирь", "https://lttsib.ru/", "ltt_sib"),
+    "ltt_yug": ("LTT Юг", "https://ltt-yug.ru/", "ltt_yug"),
+    "uss_stanko": ("USS-Stanko", "https://uss-stanko.com/", "uss_stanko"),
+    "ivstankomaster": ("Ивстанкомастер", "https://ivstankomaster.ru/", "ivstankomaster"),
 }
-PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr", "kami"})
+PASSIVE_COMMERCIAL_SUPPLIERS = frozenset({"intervesp", "beka_mak", "beka_mak_tr", "kami", "vekprom",
+                                           "ltt_msk", "ltt_sib", "ltt_yug", "uss_stanko", "ivstankomaster"})
 
 
 def should_quarantine_automatic_link(previous_auto_accepted: bool, new_status: str) -> bool:
@@ -122,7 +134,7 @@ class PostgresRepository:
         import psycopg
         # Plain SELECT statements must never open an implicit outer transaction
         # that can absorb later connection.transaction() blocks as savepoints.
-        self.connection = psycopg.connect(**config.kwargs(), autocommit=True)
+        self.connection = connect_postgres(config, autocommit=True)
 
     def gate(self) -> dict:
         with self.connection.cursor() as cursor:
@@ -168,7 +180,7 @@ class PostgresRepository:
     def _ensure_passive_commercial_supplier(cursor, supplier_code: str) -> int:
         """Create only the isolated namespace; never touch Sterbrust identifiers."""
         name, base_url, adapter_name = SUPPLIER_CONFIGS[supplier_code]
-        if supplier_code == 'kami':
+        if supplier_code in {'kami', 'ltt_msk', 'ltt_sib', 'ltt_yug', 'uss_stanko', 'ivstankomaster'}:
             # Exact KAMI capture replay must not consume the supplier sequence.
             cursor.execute('SELECT id FROM suppliers WHERE code=%s FOR UPDATE', (supplier_code,))
             existing = cursor.fetchone()
@@ -191,22 +203,24 @@ class PostgresRepository:
             raise RuntimeError("passive commercial supplier disappeared during creation")
         return existing[0]
 
-    def persist_commercial_observation(self, product: ReadOnlySupplierProduct, capture: HttpCapture) -> dict[str, Any]:
+    def persist_commercial_observation(self, product: ReadOnlySupplierProduct, capture: HttpCapture, *, source_run_id: int | None = None) -> dict[str, Any]:
         """Persist one captured public-price observation after explicit DB authorisation.
 
         The method is intentionally inert until called by a future, separately
         authorised isolated-DB workflow.  It does not invoke matching,
         reconciliation, offer selection, a scheduler, or any external service.
+        source_run_id opts the collector into the separately checked running-job
+        fact-update contract; legacy passive callers still refuse linked writes.
         """
         card = product_card_from_snapshot(product, capture)
         observation = observation_from_snapshot(product, capture)
-        return self._persist_passive_observation(card, observation, capture)
+        return self._persist_passive_observation(card, observation, capture, source_run_id=source_run_id)
 
-    def persist_kami_observation(self, card: ProductCard, capture: HttpCapture) -> dict[str, Any]:
+    def persist_kami_observation(self, card: ProductCard, capture: HttpCapture, *, source_run_id: int | None = None) -> dict[str, Any]:
         """KAMI-only explicit writer; caller must preflight the new isolated target."""
         from .kami_persistence import prepare_observation
         card, observation = prepare_observation(card, capture)
-        return self._persist_passive_observation(card, observation, capture)
+        return self._persist_passive_observation(card, observation, capture, source_run_id=source_run_id)
 
     def materialize_kami_saved_content(self, card: ProductCard, capture: HttpCapture) -> bool:
         """Explicit offline content re-extraction; does not fabricate a new GET.
@@ -256,14 +270,25 @@ class PostgresRepository:
             self._replace_details(cursor, saved[0], product_id, offer_id, card, capture.observed_at.isoformat())
             return True
 
-    def _persist_passive_observation(self, card, observation, capture) -> dict[str, Any]:
+    def _persist_passive_observation(self, card, observation, capture, *, source_run_id=None, commercial_only=False) -> dict[str, Any]:
+        from .commercial import PriceState
         observed_at = capture.observed_at.isoformat()
-        if card.supplier_code not in PASSIVE_COMMERCIAL_SUPPLIERS:
+        if commercial_only:
+            from .control_plane.commercial_refresh import authorize_card
+            authorize_card(card,capture)
+            if source_run_id is None:raise RuntimeError('COMMERCIAL_REFRESH_RUN_REQUIRED')
+            observation=replace(observation,extraction_evidence={**observation.extraction_evidence,'commercial_only':True})
+        if card.supplier_code not in PASSIVE_COMMERCIAL_SUPPLIERS and not commercial_only:
             raise ValueError("commercial persistence is limited to passive suppliers")
         region = capture.region_code or ""
         counts = IngestCounts()
         with self.connection.transaction(), self.connection.cursor() as cursor:
-            supplier_id = self._ensure_passive_commercial_supplier(cursor, card.supplier_code)
+            if commercial_only:
+                cursor.execute('SELECT id FROM suppliers WHERE code=%s AND enabled FOR UPDATE',(card.supplier_code,))
+                found=cursor.fetchone()
+                if not found:raise RuntimeError('COMMERCIAL_REFRESH_ENABLED_SOURCE_REQUIRED')
+                supplier_id=found[0]
+            else:supplier_id = self._ensure_passive_commercial_supplier(cursor, card.supplier_code)
             if card.supplier_code == "intervesp":
                 from .intervesp_listing import persistence_identity
                 resolved = persistence_identity(cursor, supplier_id, card)
@@ -279,6 +304,11 @@ class PostgresRepository:
                 (supplier_id, card.external_id),
             )
             existing = cursor.fetchone()
+            runtime = None
+            if source_run_id is not None:
+                from .source_update import prepare_update
+                runtime = prepare_update(self, cursor, supplier_id, source_run_id, card, observation, capture, existing,**({'commercial_only':True} if commercial_only else {}))
+                card = runtime.card
             kami_content_changed = True
             kami_commercial_changed = True
             if existing:
@@ -293,7 +323,7 @@ class PostgresRepository:
                     return {"ingest_counts": counts, "source_product_id": source_product_id,
                             "capture_id": exact_capture[0], "observation_id": None,
                             "observation_created": False, "projection_updated": False, "exact_noop": True}
-                if catalog_product_id is not None:
+                if catalog_product_id is not None and runtime is None:
                     raise RuntimeError("commercial persistence refuses a catalog-linked source product")
                 projection_region = str((raw_data or {}).get("_commercial_projection_region", ""))
                 projection_updated = projection_region == region and (last_success_at is None or capture.observed_at >= last_success_at)
@@ -311,10 +341,11 @@ class PostgresRepository:
                            last_http_status=%s,updated_at=now() WHERE id=%s""",
                         (card.sku, card.name, card.requested_url, card.canonical_url,
                          json.dumps(next_raw, ensure_ascii=False), observed_at, observed_at,
-                         card.supplier_code != 'kami' or kami_content_changed, observed_at,
+                         runtime.product_changed if runtime else card.supplier_code != 'kami' or kami_content_changed, observed_at,
                          card.http_status, source_product_id),
                     )
-                    counts.changed_products += int(card.supplier_code != 'kami' or kami_content_changed)
+                    counts.changed_products += int(runtime.product_changed if runtime else card.supplier_code != 'kami' or kami_content_changed)
+                    if runtime and not runtime.product_changed:counts.unchanged_products += 1
             else:
                 projection_updated = True
                 next_raw = dict(card.raw_data)
@@ -372,11 +403,20 @@ class PostgresRepository:
                          price_known, card.currency or None,
                          availability_known, card.availability_raw, availability_known, card.availability_normalized,
                          json.dumps(card.raw_data, ensure_ascii=False),
-                         observed_at, observed_at, card.supplier_code != 'kami' or kami_commercial_changed,
+                         observed_at, observed_at, runtime.commercial_changed if runtime else card.supplier_code != 'kami' or kami_commercial_changed,
                          observed_at, offer_id),
                     )
-                    counts.changed_offers += int(card.supplier_code != 'kami' or kami_commercial_changed)
-            if card.supplier_code == "kami" and projection_updated and kami_content_changed:
+                    counts.changed_offers += int(runtime.commercial_changed if runtime else card.supplier_code != 'kami' or kami_commercial_changed)
+                    if runtime and not runtime.commercial_changed:counts.unchanged_offers += 1
+            if projection_updated:
+                # Legacy observations keep their CHECK-constrained public type;
+                # the selected offer may carry a separately proved business type.
+                if observation.price_state in {PriceState.NUMERIC_PUBLIC, PriceState.PRICE_ON_REQUEST}:
+                    cursor.execute('UPDATE offers SET price_type=%s,price_raw=%s,price_source=%s WHERE id=%s',
+                        (card.price_type,observation.price_raw,observation.price_source,offer_id))
+            if runtime and projection_updated:
+                runtime.apply(self, cursor, supplier_id, source_product_id, offer_id, observed_at, counts)
+            if runtime is None and card.supplier_code == "kami" and projection_updated and kami_content_changed:
                 # KAMI content is visible to existing product/panel queries;
                 # other supplier projections and their accepted state are untouched.
                 cursor.execute(
@@ -414,6 +454,28 @@ class PostgresRepository:
         return {"ingest_counts": counts, "source_product_id": source_product_id, "offer_id": offer_id,
                 "capture_id": capture_id, "observation_id": observation_id, "observation_created": True,
                 "projection_updated": projection_updated, "exact_noop": False}
+
+    def record_partner_pilot_captures(self,cards,captures):
+        """Append real HTTP evidence for just the ingested pilot cards; never reproject."""
+        import hashlib
+        from psycopg.types.json import Jsonb
+        records={r['url']:r for r in captures}
+        with self.connection.transaction(),self.connection.cursor() as q:
+            for card in cards:
+                r=records[card.requested_url]
+                q.execute("SELECT sp.id,sp.supplier_id,o.id FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id JOIN offers o ON o.source_product_id=sp.id AND o.offer_kind='default' WHERE s.code='partner_st' AND sp.external_id=%s",(card.external_id,))
+                sid,supplier,offer=q.fetchone()
+                fp=hashlib.sha256(json.dumps(r,sort_keys=True).encode()).hexdigest()
+                q.execute("SELECT id FROM supplier_http_captures WHERE source_product_id=%s AND capture_fingerprint=%s",(sid,fp))
+                if q.fetchone():continue
+                q.execute("""INSERT INTO supplier_http_captures(supplier_id,source_product_id,requested_url,final_url,http_status,content_type,observed_at,capture_fingerprint,response_sha256,evidence_sha256,evidence_ref,redirect_urls,diagnostics)
+                VALUES(%s,%s,%s,%s,%s,'text/html; charset=utf-8',%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (supplier,sid,r['url'],r['final_url'],r['http_status'],r['observed_at'],fp,r['response_sha256'],r['evidence_sha256'],r['evidence_ref'],Jsonb(list(r['redirects'])),Jsonb({'response_hash_basis':r['response_hash_basis'],'capture_scope':'detail','job_mode':'SAVED_URL_LIVE'})))
+                capture=q.fetchone()[0]
+                payload=card.as_jsonable();eh=hashlib.sha256(json.dumps(payload,sort_keys=True,default=str).encode()).hexdigest()
+                q.execute("""INSERT INTO offer_commercial_observations(supplier_id,source_product_id,offer_id,capture_id,observed_at,extraction_fingerprint,price_state,price,old_price,currency,availability_raw,availability_normalized,extraction_evidence)
+                VALUES(%s,%s,%s,%s,%s,%s,'numeric_public',%s,%s,%s,%s,%s,%s)""",
+                (supplier,sid,offer,capture,r['observed_at'],eh,card.price,card.old_price,card.currency,card.availability_raw,card.availability_normalized,Jsonb({'parser':'PartnerStAdapter','url':card.requested_url,'evidence_sha256':r['evidence_sha256']})))
 
     def start_crawl_run(self, *, started_at: str, baseline_discovered_count: int | None,
                         metadata: dict[str, Any] | None = None,
@@ -482,7 +544,13 @@ class PostgresRepository:
                discovery_health: DiscoveryHealth | None = None, discovered_urls: list[str] | None = None,
                error_count: int = 0, supplier_code: str | None = None,
                schema_signals: list[str] | None = None,
-               crawl_settings: dict[str, Any] | None = None) -> IngestCounts:
+               crawl_settings: dict[str, Any] | None = None, bounded: bool = False) -> IngestCounts:
+        import time
+        self.last_ingest_timings={'history_seconds':0.0}
+        def record_history(*args):
+            began=time.perf_counter()
+            try:return self._record_history(*args)
+            finally:self.last_ingest_timings['history_seconds']+=time.perf_counter()-began
         counts = IngestCounts()
         card_codes = {card.supplier_code for card in cards}
         if supplier_code is None:
@@ -492,7 +560,10 @@ class PostgresRepository:
         if card_codes and card_codes != {supplier_code}:
             raise ValueError("cross-supplier card batch is forbidden")
         with self.connection.transaction(), self.connection.cursor() as cursor:
-            supplier_id = self.ensure_supplier(supplier_code)
+            if bounded:
+                if supplier_code not in ('partner_st','optimum'):raise ValueError('BOUNDED_NATIVE_ONLY')
+                cursor.execute("SELECT id FROM suppliers WHERE code=%s",(supplier_code,));supplier_id=cursor.fetchone()[0]
+            else:supplier_id = self.ensure_supplier(supplier_code)
             url_to_product: dict[str, int] = {}
             observed_ids: set[int] = set()
             for card in cards:
@@ -565,9 +636,15 @@ class PostgresRepository:
                 else:
                     counts.unchanged_products += 1
                 cursor.execute(
-                    "SELECT id, commercial_hash, raw_data FROM offers WHERE source_product_id=%s AND offer_kind='default'", (product_id,)
+                    """SELECT id, commercial_hash, raw_data,
+                       jsonb_build_object('sku',sku,'price',price::text,'old_price',old_price::text,
+                         'currency',currency,'availability_raw',availability_raw,
+                         'availability_normalized',availability_normalized,'quantity',quantity::text)
+                       FROM offers WHERE source_product_id=%s AND offer_kind='default'""", (product_id,)
                 )
                 previous_offer = cursor.fetchone()
+                old_commercial = previous_offer[3] if previous_offer else None
+                commercial_changed = previous_offer is not None and not commercial_values_equal(old_commercial,values['commercial'])
                 price_type, price_raw, price_source = self._price_provenance(card)
                 offer_raw_data = {"source": f"{supplier_code} default offer",
                                   "_stage3b": {"commercial_value": values["commercial"]}}
@@ -587,19 +664,19 @@ class PostgresRepository:
                          price_source=EXCLUDED.price_source,
                         raw_data=EXCLUDED.raw_data, commercial_hash=EXCLUDED.commercial_hash,
                         last_seen_at=EXCLUDED.last_seen_at, last_success_at=EXCLUDED.last_success_at,
-                        last_changed_at=CASE WHEN offers.commercial_hash IS DISTINCT FROM EXCLUDED.commercial_hash
+                        last_changed_at=CASE WHEN %s
                           THEN EXCLUDED.last_changed_at ELSE offers.last_changed_at END, active=true, missed_crawls=0,
                         updated_at=now() RETURNING id""",
                     (supplier_id, product_id, card.external_id, card.sku, card.name, card.price, card.old_price,
                       card.currency or None, card.availability_raw, card.availability_normalized, card.quantity,
                       price_type, price_raw, price_source,
                      json.dumps(offer_raw_data, ensure_ascii=False, default=str), hashes["commercial"], hashes["identity"],
-                     observed_at, observed_at, observed_at, observed_at),
+                     observed_at, observed_at, observed_at, observed_at, commercial_changed),
                 )
                 offer_id = cursor.fetchone()[0]
                 if previous_offer is None:
                     counts.new_offers += 1
-                elif previous_offer[1] != hashes["commercial"]:
+                elif commercial_changed:
                     counts.changed_offers += 1
                 else:
                     counts.unchanged_offers += 1
@@ -609,15 +686,14 @@ class PostgresRepository:
                         history_group = "other" if changed_group == "options" else changed_group
                         new_value = values[history_group]
                         old_value = old_values.get(history_group)
-                        if old_value != new_value:
-                            self._record_history(cursor, crawl_run_id, supplier_id, product_id, None,
-                                                 history_group, old_value, new_value, observed_at)
+                        if record_history(cursor, crawl_run_id, supplier_id, product_id, None,
+                                                history_group, old_value, new_value, observed_at):
                             counts.change_history_events += 1
-                if crawl_run_id is not None and previous_offer is not None and previous_offer[1] != hashes["commercial"]:
-                    old_commercial = ((previous_offer[2] or {}).get("_stage3b") or {}).get("commercial_value")
-                    self._record_history(cursor, crawl_run_id, supplier_id, None, offer_id,
-                                         "commercial", old_commercial, values["commercial"], observed_at)
-                    counts.change_history_events += 1
+                if crawl_run_id is not None and commercial_changed:
+                    if record_history(cursor, crawl_run_id, supplier_id, None, offer_id,
+                                            "commercial", commercial_history_value(old_commercial),
+                                            commercial_history_value(values["commercial"]), observed_at):
+                        counts.change_history_events += 1
                 self._upsert_product_urls(cursor, product_id, card, observed_at)
                 if previous is None or product_changed:
                     self._replace_details(cursor, supplier_id, product_id, offer_id, card, observed_at)
@@ -636,10 +712,11 @@ class PostgresRepository:
                          card.http_status, json.dumps({"final_url": card.final_url,
                                                        "canonical_url": card.canonical_url}, ensure_ascii=False)),
                     )
-            self._upsert_navigation_relations(cursor, supplier_id, cards, url_to_product, observed_at)
-            self._bootstrap_canonical_properties(cursor)
-            self._reconcile_supplier_properties(cursor, supplier_id)
-            self._reconcile_sterbrust_property_evidence(cursor)
+            if not bounded:
+                self._upsert_navigation_relations(cursor, supplier_id, cards, url_to_product, observed_at)
+                self._bootstrap_canonical_properties(cursor)
+                self._reconcile_supplier_properties(cursor, supplier_id)
+                self._reconcile_sterbrust_property_evidence(cursor)
             if crawl_run_id is not None:
                 discovered_count = len(discovered_urls if discovered_urls is not None else cards)
                 cursor.execute("SELECT crawl_settings,base_url FROM suppliers WHERE id=%s", (supplier_id,))
@@ -650,7 +727,7 @@ class PostgresRepository:
                     schema_signals=schema_signals or [], crawl_settings=frozen, base_url=base_url,
                 )
                 allow_missing = bool(
-                    discovery_health and discovery_health.deactivation_allowed
+                    not bounded and discovery_health and discovery_health.deactivation_allowed
                     and anomaly.allow_missing_consequences
                 )
                 missing_policy = MissingPolicy.from_mapping((frozen or {}).get("missing_policy"))
@@ -885,8 +962,9 @@ class PostgresRepository:
                ON CONFLICT(source_product_id) DO UPDATE SET consecutive_confirmed=0,
                 last_evidence_type='SEEN',state='ACTIVE',first_missing_at=NULL,
                 last_observed_at=EXCLUDED.last_observed_at,last_crawl_run_id=EXCLUDED.last_crawl_run_id,
-                history=(missing_observations.history || %s::jsonb)""",
-            (product_id, observed_at, crawl_run_id, event, event),
+                history=(missing_observations.history || EXCLUDED.history)
+               WHERE NOT (missing_observations.history @> EXCLUDED.history)""",
+            (product_id, observed_at, crawl_run_id, event),
         )
 
     @staticmethod
@@ -912,6 +990,10 @@ class PostgresRepository:
                                  *, schema_signals: list[str],
                                  crawl_settings: dict[str, Any] | None = None,
                                  base_url: str | None = None):
+        # Serialize this run's profile check/insert, including associated diagnostics.
+        # Caller holds the ingest transaction; no global or cross-supplier lock.
+        cursor.execute("SELECT id FROM crawl_runs WHERE id=%s AND supplier_id=%s FOR UPDATE",
+                       (crawl_run_id, supplier_id))
         cursor.execute(
             """SELECT d.products_seen,d.products_parsed,d.metrics
                FROM data_quality_snapshots d JOIN crawl_runs r ON r.id=d.crawl_run_id
@@ -945,6 +1027,16 @@ class PostgresRepository:
         anomaly = detect_anomalies(previous, current, thresholds, schema_signals=sorted(automatic_signals))
         metrics = {"fill_rates": dict(current.fill_rates), **{f"{key}_fill_rate": value for key, value in current.fill_rates.items()}}
         cursor.execute(
+            """SELECT id FROM data_quality_snapshots
+               WHERE supplier_id=%s AND crawl_run_id=%s
+                 AND products_seen=%s AND products_parsed=%s AND metrics=%s::jsonb
+                 AND anomaly_codes=%s AND critical=%s LIMIT 1""",
+            (supplier_id, crawl_run_id, current.products_seen, current.products_parsed,
+             json.dumps(metrics), list(anomaly.codes), anomaly.critical),
+        )
+        if cursor.fetchone() is not None:
+            return anomaly
+        cursor.execute(
             """INSERT INTO data_quality_snapshots
                (supplier_id,crawl_run_id,products_seen,products_parsed,metrics,anomaly_codes,critical)
                VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s)""",
@@ -973,18 +1065,20 @@ class PostgresRepository:
     def _record_history(cursor, crawl_run_id: int, supplier_id: int,
                         source_product_id: int | None, offer_id: int | None,
                         field_group: str, old_value: Any, new_value: Any,
-                        changed_at: str) -> None:
-        if old_value == new_value:
-            return
+                        changed_at: str) -> bool:
+        if history_values_equal(old_value,new_value):
+            return False
+        old_json,new_json=history_json(old_value),history_json(new_value)
         cursor.execute(
             """INSERT INTO entity_change_history
                (crawl_run_id, supplier_id, source_product_id, offer_id, field_group,
                 old_value, new_value, changed_at)
-               VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s)""",
+               SELECT %s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s
+               WHERE %s::jsonb IS DISTINCT FROM %s::jsonb""",
             (crawl_run_id, supplier_id, source_product_id, offer_id, field_group,
-             json.dumps(old_value, ensure_ascii=False, default=str),
-             json.dumps(new_value, ensure_ascii=False, default=str), changed_at),
+             old_json,new_json,changed_at,old_json,new_json),
         )
+        return cursor.rowcount == 1
 
     @staticmethod
     def _upsert_product_urls(cursor, product_id: int, card: ProductCard, observed_at: str) -> None:
@@ -1212,12 +1306,14 @@ class PostgresRepository:
         return result
 
     def persist_match(self, decision: dict, validated_at: str,
-                      supplier_code: str = PARTNER_CODE) -> str:
+                      supplier_code: str = PARTNER_CODE, *, preserve_existing_links: bool = False) -> str:
         """Persist one current decision without duplicating unchanged history."""
-        return self.persist_match_decision(decision, validated_at, supplier_code)[0]
+        return self.persist_match_decision(decision, validated_at, supplier_code,
+                                           preserve_existing_links=preserve_existing_links)[0]
 
     def persist_match_decision(self, decision: dict, validated_at: str,
-                               supplier_code: str = PARTNER_CODE) -> tuple[str, dict]:
+                               supplier_code: str = PARTNER_CODE, *,
+                               preserve_existing_links: bool = False) -> tuple[str, dict]:
         """Like persist_match, plus the effective decision actually stored.
 
         Guards under the row locks (protected manual mapping, operator
@@ -1250,6 +1346,11 @@ class PostgresRepository:
             if source_row is None:
                 raise RuntimeError(f"source product not ingested: {decision['source_external_id']}")
             source_id = source_row[0]
+            if preserve_existing_links and source_row[1] is not None:
+                # Recheck after acquiring the source lock. A plan made before
+                # a concurrent operator/automatic acceptance cannot replace,
+                # quarantine, or append history for that now-existing mapping.
+                return "PRESERVED_EXISTING_MAPPING", decision
             catalog_id = None
             if candidate_key:
                 cursor.execute("SELECT catalog_product_id FROM sterbrust_products WHERE sterbrust_product_id=%s", (candidate_key,))

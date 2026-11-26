@@ -18,10 +18,29 @@ from .change_detection import stable_hash
 from .commercial import PriceState, ReadOnlySupplierProduct
 from sterbrust_matching.normalization import normalize_model
 from .models import ProductCard
+from .price_semantics import price_type_proof
 
 
-_AVAILABILITY = {"InStock": "in_stock", "OutOfStock": "out_of_stock", "PreOrder": "preorder",
-                 "Incoming": "incoming", "BackOrder": "backorder"}
+_AVAILABILITY = {"instock": "in_stock", "outofstock": "out_of_stock", "preorder": "preorder",
+                 "incoming": "incoming", "backorder": "backorder", "discontinued":"discontinued"}
+
+
+def normalize_availability(value: str | None) -> str:
+    """Canonical schema.org availability token -> storage vocabulary.
+
+    Single source of truth for how adapter availability values (``InStock``,
+    ``OutOfStock``, ...) are persisted to ``offers.availability_normalized`` /
+    ``offer_commercial_observations.availability_normalized``; anything missing
+    or unmapped persists as ``"unknown"``. QA gates must reuse this helper
+    instead of re-deriving expectations locally.
+    """
+    raw=(value or '').strip()
+    if '://' in raw:
+        parsed=urlparse(raw)
+        if parsed.scheme not in ('http','https') or parsed.hostname not in ('schema.org','www.schema.org') or parsed.query or parsed.fragment:
+            return 'unknown'
+    token=raw.rstrip('/').rsplit('/',1)[-1].casefold()
+    return _AVAILABILITY.get(token, "unknown")
 _SECRET_TEXT_RE = re.compile(r"(?:sessid|bitrix_sessid|cookie|authorization|access_token|api[_-]?key|token)", re.I)
 
 
@@ -179,7 +198,7 @@ def product_card_from_snapshot(product: ReadOnlySupplierProduct, capture: HttpCa
         _safe_text(diagnostic, "price extraction diagnostics")
     price = extraction.current_price if extraction.state == PriceState.NUMERIC_PUBLIC else None
     old_price = extraction.old_price if extraction.state == PriceState.NUMERIC_PUBLIC else None
-    availability = _AVAILABILITY.get(product.availability or "", "unknown")
+    availability = normalize_availability(product.availability)
     raw_data = {
         "source_identity": {
             "raw_model": _safe_text(product.raw_supplier_model or product.supplier_model or "", "raw_supplier_model"),
@@ -209,6 +228,8 @@ def product_card_from_snapshot(product: ReadOnlySupplierProduct, capture: HttpCa
             "source_path": extraction.source_path,
             "diagnostics": extraction.diagnostics,
             "context_path": extraction.context_path,
+            "business_price_type": extraction.price_type_evidence or price_type_proof(
+                    extraction.raw_text,source_path=extraction.source_path),
         },
     }
     if product.description_text or product.technical_properties or product.source_images or product.source_category or product.source_documents:
@@ -243,9 +264,9 @@ def product_card_from_snapshot(product: ReadOnlySupplierProduct, capture: HttpCa
         canonical_url=canonical_url, http_status=capture.http_status,
         redirect_urls=capture.redirects, price=price, old_price=old_price,
         currency=extraction.currency or "", availability_raw=product.availability or "",
-        availability_normalized=availability, quantity=None, description_text=product.description_text, description_html="",
+        availability_normalized=availability, quantity=product.source_quantity, description_text=product.description_text, description_html="",
         brand=product.source_brand, manufacturer="", raw_data=raw_data,
-        price_type="unknown", price_raw=extraction.raw_text,
+        price_type=raw_data['price_extraction']['business_price_type']['classification'] if price is not None else 'unknown', price_raw=extraction.raw_text,
         price_source=extraction.source_path or "",
     )
 
@@ -266,6 +287,33 @@ def observation_from_snapshot(product: ReadOnlySupplierProduct, capture: HttpCap
         price_raw=extraction.raw_text, price_source=extraction.source_path,
         extraction_evidence=evidence, unusable_price_reasons=tuple(reasons), region_code=capture.region_code,
     )
+
+
+def native_observation(card: ProductCard, capture: HttpCapture) -> CommercialObservation:
+    """One native parser->observation contract, retaining public raw evidence.
+
+    Migration015 deliberately pins the legacy price_type column to unknown.
+    A proved business type lives in extraction_evidence; no constraint is waived.
+    """
+    from .price_semantics import price_type_proof
+    from decimal import InvalidOperation
+    currency=card.currency if re.fullmatch('[A-Z]{3}',card.currency or '') else None
+    try:numeric=card.price is not None and card.price.is_finite() and card.price>0 and currency is not None
+    except (InvalidOperation,AttributeError):numeric=False
+    raw=card.price_raw or (str(card.price) if card.price is not None else '')
+    request=bool(re.search(r'цен[ауы]\s+по\s+запросу|уточняйте|запросить\s+цену',raw,re.I))
+    state=PriceState.NUMERIC_PUBLIC if numeric else PriceState.ZERO_INVALID if card.price==0 else (
+        PriceState.PRICE_ON_REQUEST if request else PriceState.PARSE_ERROR if card.price is not None else PriceState.MISSING)
+    proof=(card.raw_data or {}).get('price_type_evidence') or price_type_proof(raw,source_path=card.price_source)
+    evidence={'parser':card.supplier_code,'evidence_sha256':capture.evidence_sha256,
+        'state':state.value,'raw_text':raw,'source_path':card.price_source,'business_price_type':proof}
+    basis=(card.raw_data or {}).get('price_basis') or ('from_price' if re.match(r'^\s*от\s+\d',raw,re.I) else None)
+    if basis:evidence['price_basis']=basis
+    return CommercialObservation(card.supplier_code,card.external_id,capture.observed_at,capture.response_sha256,
+        stable_hash({'capture':capture.fingerprint,'card':card.as_jsonable(),'extraction':evidence}),state,
+        card.price if numeric else None,card.old_price if numeric and card.old_price is not None and card.old_price>0 else None,
+        currency,card.availability_raw,card.availability_normalized,'unknown',raw,card.price_source,evidence,
+        ('FROM_PRICE_NOT_AN_EXACT_EXECUTION_PRICE',) if basis=='from_price' else (),capture.region_code)
 
 
 @dataclass

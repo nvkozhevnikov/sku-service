@@ -32,6 +32,7 @@ backups/
 preview-backup/
 tmp/
 exports/
+competitor-data/
 reports/
 /release/
 /outputs/

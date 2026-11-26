@@ -36,6 +36,8 @@ def prepare_observation(card, capture):
                                  'evidence_ref': capture.evidence_ref, 'observed_at': capture.observed_at.isoformat()}
     extraction = {'state': raw['price_state'], 'price_basis': raw['price_basis'], 'price_raw': card.price_raw,
                   'price_source': card.price_source, 'variant_or_group': raw['card_kind'] != 'SINGLE_PRODUCT'}
+    from .price_semantics import price_type_proof
+    extraction['business_price_type']=raw.get('price_type_evidence') or price_type_proof(card.price_raw,source_path=card.price_source)
     raw['price_extraction'] = extraction
     # Capture timestamps/HTML/session changes are observations, not product changes.
     raw['_kami_content_fact_hash'] = stable_hash({

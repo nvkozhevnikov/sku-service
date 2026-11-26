@@ -1,0 +1,3538 @@
+{
+  "db_name": "sterbrust_unified_rc_20261019",
+  "postgres_version": "17.11",
+  "snapshot_cutoff": "2026-10-19",
+  "created_by_engine_commit": "f9a29bb46b70e13d9198e545edc5ac8464f0fa6e",
+  "source_manifest_sha256": "9f416a9b15aa16c8b85df617ac0f57e8b4dcc4c2fcfda52888329f8ca520636f",
+  "per_namespace": [
+    [
+      "beka_mak",
+      109,
+      109
+    ],
+    [
+      "beka_mak_tr",
+      78,
+      78
+    ],
+    [
+      "intervesp",
+      1642,
+      1642
+    ],
+    [
+      "kami",
+      5264,
+      5264
+    ],
+    [
+      "ltt_msk",
+      369,
+      365
+    ],
+    [
+      "ltt_sib",
+      1266,
+      1266
+    ],
+    [
+      "ltt_yug",
+      591,
+      591
+    ],
+    [
+      "optimum",
+      1353,
+      1353
+    ],
+    [
+      "partner_st",
+      1225,
+      1225
+    ],
+    [
+      "uss_stanko",
+      227,
+      227
+    ]
+  ],
+  "max_observed_at": "2026-10-15 10:41:58.824438+03:00",
+  "database_state": {
+    "public": {
+      "app_users": [
+        1,
+        "e2ffa9abdddbd981e2cc715726d7be32"
+      ],
+      "audit_events": [
+        4,
+        "5c1cb45d8671f271f6797637585f8de9"
+      ],
+      "brand_aliases": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "brands": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "business_rules": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "candidate_rejections": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "canonical_properties": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "catalog_offer_selection": [
+        121,
+        "380aea8caa6157ff8d2a4911b6d6c6fb"
+      ],
+      "catalog_product_identifiers": [
+        59427,
+        "a5916f1d020f8ad1f9e78706255d860f"
+      ],
+      "catalog_products": [
+        59427,
+        "64ad9d1199601c0b0fdb700f4d9f4252"
+      ],
+      "category_filter_profile_properties": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "category_filter_profiles": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "component_heartbeats": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "crawl_errors": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "crawl_jobs": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "crawl_run_items": [
+        5146,
+        "59261f025af5c00f4ff3cd838edcafbc"
+      ],
+      "crawl_runs": [
+        5,
+        "3f128c42bc5de12f46fe6051581dbe26"
+      ],
+      "data_quality_snapshots": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "diagnostic_evidence_snapshots": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "entity_change_history": [
+        1,
+        "defc30da486aa8976801696d47476d70"
+      ],
+      "feed_runs": [
+        1,
+        "3a2970b71cf2825d73659843400070b3"
+      ],
+      "field_observations": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "field_update_policies": [
+        9,
+        "a9db24b5d7f204b510dcd93820f86b72"
+      ],
+      "login_failures": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "manufacturers": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "missing_observations": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "offer_commercial_observations": [
+        12901,
+        "20f4b8a04b4245411e966b9f7601af4c"
+      ],
+      "offers": [
+        12124,
+        "0ec28fc8bf4612c1a0b59a35af826e31"
+      ],
+      "product_category_path_nodes": [
+        13472,
+        "80f45de7186f4e9e903771e2d05b900b"
+      ],
+      "product_category_paths": [
+        7839,
+        "024bdbcf9007bf9ee30a4695f8f8ceda"
+      ],
+      "product_identity_decisions": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "product_matches": [
+        8871,
+        "aa3bf61f7f857b9f8376c09a0ab820fb"
+      ],
+      "product_media": [
+        42826,
+        "b6f3e59c03d925d8de04e5c88c025426"
+      ],
+      "product_properties": [
+        101532,
+        "d91b737475185b0e9713cf5ae792791d"
+      ],
+      "rc_migration_map": [
+        9976,
+        "2e6319f318dc29eb3aaf38bd41e7b72b"
+      ],
+      "rc_replay_jobs": [
+        48,
+        "a060bb2ef57af96d4556e8abdc7b9d71"
+      ],
+      "reparse_previews": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "review_cases": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "review_decisions": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "schema_migrations": [
+        17,
+        "1cffe76f9829e2946e95913f83fbc2a7"
+      ],
+      "source_product_categories": [
+        13470,
+        "797592e0aaa8ed4031f61f73d70e88ed"
+      ],
+      "source_product_option_values": [
+        5789,
+        "360f3805bb101d2a0e675489e3c5372a"
+      ],
+      "source_product_options": [
+        699,
+        "bfe4930fa749f445e47668d764664ac2"
+      ],
+      "source_product_relations": [
+        5270,
+        "d951ab5374262a944e76ed0354535370"
+      ],
+      "source_product_urls": [
+        2574,
+        "d25e868c4d6a0b909364f97d97e2b9ad"
+      ],
+      "source_products": [
+        12124,
+        "2d0cc05fc483e6c495aa06a98354ffd5"
+      ],
+      "sterbrust_product_supplier_identifiers": [
+        30420,
+        "8ce1b52d7a5ba5aa148bd3b9f85657c6"
+      ],
+      "sterbrust_products": [
+        59427,
+        "03286d28cdbec22655f59b033d69839b"
+      ],
+      "sterbrust_property_mappings": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "sterbrust_snapshot_runs": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "supplier_categories": [
+        608,
+        "3a3c22e6412d8d906d26e7cc72ec6a43"
+      ],
+      "supplier_http_captures": [
+        12901,
+        "0ea6c025dd27a3cd68f4e86078fe7cc3"
+      ],
+      "supplier_property_mappings": [
+        0,
+        "d41d8cd98f00b204e9800998ecf8427e"
+      ],
+      "supplier_schedules": [
+        2,
+        "ec048b9ec8a58336482c328e67a5ba1e"
+      ],
+      "suppliers": [
+        10,
+        "4de3d66887d0fed66075800738d2b879"
+      ]
+    },
+    "competitor": {
+      "competitor_ai_analysis": [
+        998,
+        "313b7bb7822fb5a556c2529804959f5f"
+      ],
+      "competitor_campaign_items": [
+        20285,
+        "2e1586b7771b2031a18f1107f77ef474"
+      ],
+      "competitor_historical_seeds": [
+        5264,
+        "11b536ab426b9d8c8a7a7fea6400f43c"
+      ],
+      "competitor_meta": [
+        1,
+        "97de3df6088820c541d3d25cda9e6e62"
+      ],
+      "competitor_observations": [
+        1339,
+        "f6d7a4ac6af08b983bbba190051a440a"
+      ],
+      "competitor_page_versions": [
+        998,
+        "709258a6f579426fa8d5faa79a6cb6f9"
+      ],
+      "competitor_pages": [
+        280,
+        "6de2a1a67822891237992fe58b431150"
+      ],
+      "competitor_runs": [
+        33,
+        "5042c63faa9b1170ec490cd9f41b2db4"
+      ],
+      "competitor_source_surfaces": [
+        815,
+        "0ccbdaeb139c85e1512b50d1acbaf986"
+      ],
+      "competitor_sources": [
+        12,
+        "81432ccacbf25781f69f2908122f6d6e"
+      ],
+      "rc_identity": [
+        1,
+        "e7d24ce7ce344b8d218e2a4dba7d161a"
+      ]
+    },
+    "sequences": {
+      "competitor.competitor_ai_analysis_id_seq": [
+        11672,
+        true
+      ],
+      "competitor.competitor_campaign_items_id_seq": [
+        20325,
+        true
+      ],
+      "competitor.competitor_observations_id_seq": [
+        1825,
+        true
+      ],
+      "competitor.competitor_page_versions_id_seq": [
+        1825,
+        true
+      ],
+      "competitor.competitor_pages_id_seq": [
+        1825,
+        true
+      ],
+      "competitor.competitor_runs_id_seq": [
+        53,
+        true
+      ],
+      "competitor.competitor_source_surfaces_id_seq": [
+        1956,
+        true
+      ],
+      "competitor.competitor_sources_id_seq": [
+        82,
+        true
+      ],
+      "public.app_users_id_seq": [
+        1,
+        true
+      ],
+      "public.audit_events_id_seq": [
+        4,
+        true
+      ],
+      "public.brand_aliases_id_seq": [
+        1,
+        false
+      ],
+      "public.brands_id_seq": [
+        1,
+        false
+      ],
+      "public.business_rules_id_seq": [
+        1,
+        false
+      ],
+      "public.candidate_rejections_id_seq": [
+        1,
+        false
+      ],
+      "public.canonical_properties_id_seq": [
+        1,
+        false
+      ],
+      "public.catalog_product_identifiers_id_seq": [
+        59427,
+        true
+      ],
+      "public.catalog_products_id_seq": [
+        59551,
+        true
+      ],
+      "public.category_filter_profiles_id_seq": [
+        1,
+        false
+      ],
+      "public.crawl_errors_id_seq": [
+        1,
+        false
+      ],
+      "public.crawl_jobs_id_seq": [
+        1,
+        false
+      ],
+      "public.crawl_runs_id_seq": [
+        5,
+        true
+      ],
+      "public.data_quality_snapshots_id_seq": [
+        1,
+        false
+      ],
+      "public.diagnostic_evidence_snapshots_id_seq": [
+        1,
+        false
+      ],
+      "public.entity_change_history_id_seq": [
+        1,
+        true
+      ],
+      "public.feed_runs_id_seq": [
+        1,
+        true
+      ],
+      "public.login_failures_id_seq": [
+        1,
+        false
+      ],
+      "public.manufacturers_id_seq": [
+        1,
+        false
+      ],
+      "public.offer_commercial_observations_id_seq": [
+        12941,
+        true
+      ],
+      "public.offers_id_seq": [
+        14893,
+        true
+      ],
+      "public.product_category_paths_id_seq": [
+        7840,
+        true
+      ],
+      "public.product_matches_id_seq": [
+        8875,
+        true
+      ],
+      "public.product_media_id_seq": [
+        42871,
+        true
+      ],
+      "public.product_properties_id_seq": [
+        101596,
+        true
+      ],
+      "public.rc_replay_jobs_id_seq": [
+        48,
+        true
+      ],
+      "public.reparse_previews_id_seq": [
+        1,
+        false
+      ],
+      "public.review_cases_id_seq": [
+        1,
+        false
+      ],
+      "public.review_decisions_id_seq": [
+        1,
+        false
+      ],
+      "public.source_product_option_values_id_seq": [
+        5789,
+        true
+      ],
+      "public.source_product_options_id_seq": [
+        699,
+        true
+      ],
+      "public.source_product_relations_id_seq": [
+        10540,
+        true
+      ],
+      "public.source_product_urls_id_seq": [
+        5148,
+        true
+      ],
+      "public.source_products_id_seq": [
+        14902,
+        true
+      ],
+      "public.sterbrust_product_supplier_identifiers_id_seq": [
+        30420,
+        true
+      ],
+      "public.sterbrust_products_id_seq": [
+        59429,
+        true
+      ],
+      "public.sterbrust_property_mappings_id_seq": [
+        1,
+        false
+      ],
+      "public.sterbrust_snapshot_runs_id_seq": [
+        1,
+        false
+      ],
+      "public.supplier_categories_id_seq": [
+        13473,
+        true
+      ],
+      "public.supplier_http_captures_id_seq": [
+        12941,
+        true
+      ],
+      "public.supplier_property_mappings_id_seq": [
+        1,
+        false
+      ],
+      "public.suppliers_id_seq": [
+        5816,
+        true
+      ]
+    },
+    "schema_migrations": [
+      [
+        "001_suppliers_and_crawls.sql",
+        "9b2bf82bee42832615a6ed5dc0d4be5902c408963c5d77b683f08b3ef9b5a9f7"
+      ],
+      [
+        "002_products_and_offers.sql",
+        "5fec752af623d3752dfddacfdf907fc6a53d5e7f527657986979be6567c50d15"
+      ],
+      [
+        "003_catalog_details.sql",
+        "0ea332b8d566d24ef93835e7526951bd8dabda498406733fbf706f421b73cb64"
+      ],
+      [
+        "004_history_errors_and_feeds.sql",
+        "3731fe4fa2f1708586b4c5fe81e9c640b0d2fb735ba72298e455f586f06155ec"
+      ],
+      [
+        "005_indexes.sql",
+        "345b0d3094360adbd702086d7c8bfc513ea1c2bcf577ac95b4f873f5619b0bb9"
+      ],
+      [
+        "006_sterbrust_registry_and_matching.sql",
+        "f9acc8c6bc2dcada9dda709ce2f72738d35ee0055d1a08a890d4baeb70052e09"
+      ],
+      [
+        "007_sterbrust_registry_indexes.sql",
+        "df26e1dd6cace73a07c903362e8498dc7fb2c6209c56a6b390f79f75b00a22cc"
+      ],
+      [
+        "008_sterbrust_supplier_identifiers.sql",
+        "5a846b7af06cc5ad3cc9211d1d77bc163010480340c1b4ada9f3232b9d02aefa"
+      ],
+      [
+        "009_matching_data_quality.sql",
+        "4040e4b9e0a6bae348181fa6c15e274132a6337fa796a0d860f17b6b9df6fa39"
+      ],
+      [
+        "010_persistent_match_quality.sql",
+        "978c7d621bd5575c20c127293c6a9062e67aeb9ce951e70ca3cdf88d4778db44"
+      ],
+      [
+        "011_sterbrust_optional_product_url.sql",
+        "adb331386b3329773116b1ede0da24b0d450dd4d41ab3c0c5e1f3466d76bc8c8"
+      ],
+      [
+        "012_web_control_plane_scheduler.sql",
+        "0fd73e079e826d985bed373357f056aff2e3ca23079d070680d24e0987aed56a"
+      ],
+      [
+        "013_operator_admin_review.sql",
+        "c6369548073445a356c064df0423292eb9fb54b446ce23e5d0326b346aaa3157"
+      ],
+      [
+        "014_stage6e_operator_data_tools.sql",
+        "a2ba58b2b19550b0c297f682fa8112d7cc23d7c5360d8f8ae57d4c21797cdf3d"
+      ],
+      [
+        "015_commercial_capture_observations.sql",
+        "56d678d4f6b5a8d0b1b8001c09b20ea939db3b7d53d1f62c1a054ee14862a084"
+      ],
+      [
+        "016_review_decisions_source_product_index.sql",
+        "cb75f74a4261fcdda518f0379ad786863728e85c6769a7763b5c712d2d03fb89"
+      ],
+      [
+        "017_session_revocation_login_throttle_heartbeats.sql",
+        "8c84fa11c677a722e07272bf9e7af39254b9bc6062e680282ca72642faec21b8"
+      ]
+    ],
+    "constraints": [
+      [
+        "competitor",
+        "competitor_ai_analysis",
+        "competitor_ai_analysis_analysis_status_check",
+        "CHECK ((analysis_status = ANY (ARRAY['NOT_REQUESTED'::text, 'PENDING'::text, 'DONE'::text, 'ERROR'::text])))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_ai_analysis",
+        "competitor_ai_analysis_page_version_id_fkey",
+        "FOREIGN KEY (page_version_id) REFERENCES competitor.competitor_page_versions(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_ai_analysis",
+        "competitor_ai_analysis_page_version_id_provider_model_promp_key",
+        "UNIQUE (page_version_id, provider, model, prompt_version)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_ai_analysis",
+        "competitor_ai_analysis_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_campaign_items",
+        "competitor_campaign_items_check",
+        "CHECK (((old_price IS NULL) OR (new_price IS NULL) OR (old_price > new_price)))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_campaign_items",
+        "competitor_campaign_items_new_price_check",
+        "CHECK (((new_price IS NULL) OR (new_price > (0)::numeric)))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_campaign_items",
+        "competitor_campaign_items_old_price_check",
+        "CHECK (((old_price IS NULL) OR (old_price > (0)::numeric)))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_campaign_items",
+        "competitor_campaign_items_page_version_id_fkey",
+        "FOREIGN KEY (page_version_id) REFERENCES competitor.competitor_page_versions(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_campaign_items",
+        "competitor_campaign_items_page_version_id_item_key_key",
+        "UNIQUE (page_version_id, item_key)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_campaign_items",
+        "competitor_campaign_items_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_campaign_items",
+        "competitor_campaign_items_price_type_check",
+        "CHECK ((price_type = ANY (ARRAY['PUBLIC'::text, 'SALE'::text, 'PERSONAL'::text, 'AUTH_REQUIRED'::text, 'FROM_PRICE'::text, 'UNKNOWN'::text, 'INSTALLMENT_MONTHLY'::text, 'CREDIT_PAYMENT'::text, 'BONUS'::text, 'DISCOUNT_PERCENT_ONLY'::text])))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_campaign_items",
+        "competitor_campaign_items_priority_check",
+        "CHECK ((priority = ANY (ARRAY['HIGH'::text, 'NORMAL'::text, 'LOW'::text])))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_historical_seeds",
+        "competitor_historical_seeds_evidence_class_check",
+        "CHECK ((evidence_class = 'HISTORICAL_SEED'::text))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_historical_seeds",
+        "competitor_historical_seeds_is_live_check",
+        "CHECK ((is_live = false))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_historical_seeds",
+        "competitor_historical_seeds_pkey",
+        "PRIMARY KEY (source_id, seed_id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_historical_seeds",
+        "competitor_historical_seeds_provenance_check",
+        "CHECK ((provenance = 'REUSED_KAMI_CAPTURE'::text))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_historical_seeds",
+        "competitor_historical_seeds_source_id_fkey",
+        "FOREIGN KEY (source_id) REFERENCES competitor.competitor_sources(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_historical_seeds",
+        "competitor_historical_seeds_source_id_product_url_source_re_key",
+        "UNIQUE (source_id, product_url, source_record_id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_meta",
+        "competitor_meta_pkey",
+        "PRIMARY KEY (singleton)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_meta",
+        "competitor_meta_singleton_check",
+        "CHECK (singleton)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_observations",
+        "competitor_observations_page_id_fkey",
+        "FOREIGN KEY (page_id) REFERENCES competitor.competitor_pages(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_observations",
+        "competitor_observations_page_version_id_fkey",
+        "FOREIGN KEY (page_version_id) REFERENCES competitor.competitor_page_versions(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_observations",
+        "competitor_observations_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_observations",
+        "competitor_observations_run_id_fkey",
+        "FOREIGN KEY (run_id) REFERENCES competitor.competitor_runs(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_observations",
+        "competitor_observations_run_id_page_id_key",
+        "UNIQUE (run_id, page_id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_page_versions",
+        "competitor_page_versions_page_id_content_hash_key",
+        "UNIQUE (page_id, content_hash)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_page_versions",
+        "competitor_page_versions_page_id_fkey",
+        "FOREIGN KEY (page_id) REFERENCES competitor.competitor_pages(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_page_versions",
+        "competitor_page_versions_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_page_versions",
+        "competitor_page_versions_qa_status_check",
+        "CHECK ((qa_status = ANY (ARRAY['UNREVIEWED'::text, 'ACCEPTED'::text, 'REJECTED_EXTRACTOR'::text])))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_pages",
+        "competitor_pages_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_pages",
+        "competitor_pages_source_id_canonical_url_key",
+        "UNIQUE (source_id, canonical_url)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_pages",
+        "competitor_pages_source_id_fkey",
+        "FOREIGN KEY (source_id) REFERENCES competitor.competitor_sources(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_runs",
+        "competitor_runs_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_source_surfaces",
+        "competitor_source_surfaces_check",
+        "CHECK (((status <> 'INDEX_ONLY'::text) OR (evidence_class = 'EXTERNAL_INDEX_EVIDENCE'::text)))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_source_surfaces",
+        "competitor_source_surfaces_evidence_class_check",
+        "CHECK ((evidence_class = ANY (ARRAY['LIVE_CRAWLED'::text, 'ROBOTS_POLICY_EVIDENCE'::text, 'EXTERNAL_INDEX_EVIDENCE'::text, 'NAVIGATION_EVIDENCE'::text, 'TRANSPORT_ERROR'::text])))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_source_surfaces",
+        "competitor_source_surfaces_fetch_status_check",
+        "CHECK ((fetch_status = ANY (ARRAY['PUBLIC_FETCH_OK'::text, 'BROWSER_FETCH_OK'::text, 'HTTP_BLOCKED'::text, 'AUTH_REQUIRED'::text, 'CAPTCHA_BLOCKED'::text, 'ERROR'::text])))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_source_surfaces",
+        "competitor_source_surfaces_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_source_surfaces",
+        "competitor_source_surfaces_source_id_canonical_url_key",
+        "UNIQUE (source_id, canonical_url)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_source_surfaces",
+        "competitor_source_surfaces_source_id_fkey",
+        "FOREIGN KEY (source_id) REFERENCES competitor.competitor_sources(id)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_source_surfaces",
+        "competitor_source_surfaces_status_check",
+        "CHECK ((status = ANY (ARRAY['LIVE_CRAWLED'::text, 'ROBOTS_BLOCKED'::text, 'INDEX_ONLY'::text, 'DISCOVERED_NOT_FETCHED'::text, 'ERROR'::text])))",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_sources",
+        "competitor_sources_code_key",
+        "UNIQUE (code)",
+        true
+      ],
+      [
+        "competitor",
+        "competitor_sources",
+        "competitor_sources_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "competitor",
+        "rc_identity",
+        "rc_identity_pkey",
+        "PRIMARY KEY (marker)",
+        true
+      ],
+      [
+        "public",
+        "app_users",
+        "app_users_display_name_ck",
+        "CHECK ((btrim(display_name) <> ''::text))",
+        true
+      ],
+      [
+        "public",
+        "app_users",
+        "app_users_password_hash_ck",
+        "CHECK ((password_hash ~~ 'scrypt$%'::text))",
+        true
+      ],
+      [
+        "public",
+        "app_users",
+        "app_users_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "app_users",
+        "app_users_role_ck",
+        "CHECK ((role = ANY (ARRAY['ADMIN'::text, 'OPERATOR'::text, 'VIEWER'::text])))",
+        true
+      ],
+      [
+        "public",
+        "app_users",
+        "app_users_session_version_ck",
+        "CHECK ((session_version >= 1))",
+        true
+      ],
+      [
+        "public",
+        "app_users",
+        "app_users_username_ck",
+        "CHECK (((username = lower(username)) AND (username ~ '^[a-z0-9][a-z0-9_.-]{2,63}$'::text)))",
+        true
+      ],
+      [
+        "public",
+        "app_users",
+        "app_users_username_uq",
+        "UNIQUE (username)",
+        true
+      ],
+      [
+        "public",
+        "audit_events",
+        "audit_events_action_ck",
+        "CHECK ((btrim(action) <> ''::text))",
+        true
+      ],
+      [
+        "public",
+        "audit_events",
+        "audit_events_entity_ck",
+        "CHECK (((btrim(entity_type) <> ''::text) AND (btrim(entity_id) <> ''::text)))",
+        true
+      ],
+      [
+        "public",
+        "audit_events",
+        "audit_events_json_ck",
+        "CHECK ((((before_state IS NULL) OR (jsonb_typeof(before_state) = 'object'::text)) AND ((after_state IS NULL) OR (jsonb_typeof(after_state) = 'object'::text))))",
+        true
+      ],
+      [
+        "public",
+        "audit_events",
+        "audit_events_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "audit_events",
+        "audit_events_user_id_fkey",
+        "FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "brand_aliases",
+        "brand_aliases_brand_id_fkey",
+        "FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "brand_aliases",
+        "brand_aliases_normalized_uq",
+        "UNIQUE (normalized_alias)",
+        true
+      ],
+      [
+        "public",
+        "brand_aliases",
+        "brand_aliases_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "brands",
+        "brands_normalized_name_uq",
+        "UNIQUE (normalized_name)",
+        true
+      ],
+      [
+        "public",
+        "brands",
+        "brands_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "business_rules",
+        "business_rules_config_ck",
+        "CHECK ((jsonb_typeof(config) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "business_rules",
+        "business_rules_created_by_fkey",
+        "FOREIGN KEY (created_by) REFERENCES app_users(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "business_rules",
+        "business_rules_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "business_rules",
+        "business_rules_reason_ck",
+        "CHECK ((btrim(reason) <> ''::text))",
+        true
+      ],
+      [
+        "public",
+        "business_rules",
+        "business_rules_scope_ck",
+        "CHECK ((scope = ANY (ARRAY['supplier'::text, 'product'::text, 'category'::text, 'property'::text])))",
+        true
+      ],
+      [
+        "public",
+        "business_rules",
+        "business_rules_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "business_rules",
+        "business_rules_type_ck",
+        "CHECK ((rule_type = ANY (ARRAY['IGNORE_PRODUCT'::text, 'DO_NOT_IMPORT'::text, 'FORCE_REVIEW'::text, 'BRAND_OVERRIDE'::text, 'CATEGORY_OVERRIDE'::text, 'PROPERTY_MAPPING_OVERRIDE'::text, 'DO_NOT_USE_SUPPLIER_FIELD'::text])))",
+        true
+      ],
+      [
+        "public",
+        "candidate_rejections",
+        "candidate_rejections_comment_ck",
+        "CHECK ((btrim(comment) <> ''::text))",
+        true
+      ],
+      [
+        "public",
+        "candidate_rejections",
+        "candidate_rejections_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "candidate_rejections",
+        "candidate_rejections_review_case_id_fkey",
+        "FOREIGN KEY (review_case_id) REFERENCES review_cases(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "candidate_rejections",
+        "candidate_rejections_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "candidate_rejections",
+        "candidate_rejections_sterbrust_product_id_fkey",
+        "FOREIGN KEY (sterbrust_product_id) REFERENCES sterbrust_products(sterbrust_product_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "candidate_rejections",
+        "candidate_rejections_uq",
+        "UNIQUE (source_product_id, sterbrust_product_id, evidence_fingerprint)",
+        true
+      ],
+      [
+        "public",
+        "candidate_rejections",
+        "candidate_rejections_user_id_fkey",
+        "FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "canonical_properties",
+        "canonical_properties_code_ck",
+        "CHECK ((code ~ '^[A-Z][A-Z0-9_]*$'::text))",
+        true
+      ],
+      [
+        "public",
+        "canonical_properties",
+        "canonical_properties_code_key",
+        "UNIQUE (code)",
+        true
+      ],
+      [
+        "public",
+        "canonical_properties",
+        "canonical_properties_created_by_fkey",
+        "FOREIGN KEY (created_by) REFERENCES app_users(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "canonical_properties",
+        "canonical_properties_identity_ck",
+        "CHECK (((NOT identity_critical) OR usable_for_identity))",
+        true
+      ],
+      [
+        "public",
+        "canonical_properties",
+        "canonical_properties_name_ck",
+        "CHECK ((btrim(display_name_ru) <> ''::text))",
+        true
+      ],
+      [
+        "public",
+        "canonical_properties",
+        "canonical_properties_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "canonical_properties",
+        "canonical_properties_type_ck",
+        "CHECK ((data_type = ANY (ARRAY['number'::text, 'integer'::text, 'boolean'::text, 'string'::text, 'enum'::text, 'range'::text])))",
+        true
+      ],
+      [
+        "public",
+        "catalog_offer_selection",
+        "catalog_offer_selection_catalog_product_id_fkey",
+        "FOREIGN KEY (catalog_product_id) REFERENCES catalog_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "catalog_offer_selection",
+        "catalog_offer_selection_json_ck",
+        "CHECK ((jsonb_typeof(evidence) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "catalog_offer_selection",
+        "catalog_offer_selection_offer_fk",
+        "FOREIGN KEY (selected_offer_id) REFERENCES offers(id) DEFERRABLE INITIALLY DEFERRED",
+        true
+      ],
+      [
+        "public",
+        "catalog_offer_selection",
+        "catalog_offer_selection_pkey",
+        "PRIMARY KEY (catalog_product_id)",
+        true
+      ],
+      [
+        "public",
+        "catalog_offer_selection",
+        "catalog_offer_selection_status_ck",
+        "CHECK ((selection_status = ANY (ARRAY['not_evaluated'::text, 'selected'::text, 'no_eligible_offer'::text, 'review'::text])))",
+        true
+      ],
+      [
+        "public",
+        "catalog_product_identifiers",
+        "catalog_product_identifiers_brand_id_fkey",
+        "FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "catalog_product_identifiers",
+        "catalog_product_identifiers_catalog_product_id_fkey",
+        "FOREIGN KEY (catalog_product_id) REFERENCES catalog_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "catalog_product_identifiers",
+        "catalog_product_identifiers_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "catalog_product_identifiers",
+        "catalog_product_identifiers_reliability_ck",
+        "CHECK ((reliability = ANY (ARRAY['global'::text, 'manufacturer'::text, 'supplier_scoped'::text, 'supporting'::text])))",
+        true
+      ],
+      [
+        "public",
+        "catalog_product_identifiers",
+        "catalog_product_identifiers_supplier_ck",
+        "CHECK (((identifier_type = ANY (ARRAY['supplier_article'::text, 'source_external_id'::text])) = (supplier_id IS NOT NULL)))",
+        true
+      ],
+      [
+        "public",
+        "catalog_product_identifiers",
+        "catalog_product_identifiers_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "catalog_product_identifiers",
+        "catalog_product_identifiers_type_ck",
+        "CHECK ((identifier_type = ANY (ARRAY['sterbrust_id'::text, 'manufacturer_article'::text, 'gtin'::text, 'ean'::text, 'upc'::text, 'model'::text, 'supplier_article'::text, 'source_external_id'::text])))",
+        true
+      ],
+      [
+        "public",
+        "catalog_products",
+        "catalog_products_brand_id_fkey",
+        "FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "catalog_products",
+        "catalog_products_manufacturer_id_fkey",
+        "FOREIGN KEY (manufacturer_id) REFERENCES manufacturers(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "catalog_products",
+        "catalog_products_normalized_data_object_ck",
+        "CHECK ((jsonb_typeof(normalized_data) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "catalog_products",
+        "catalog_products_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "category_filter_profile_properties",
+        "category_filter_profile_position_ck",
+        "CHECK ((\"position\" >= 0))",
+        true
+      ],
+      [
+        "public",
+        "category_filter_profile_properties",
+        "category_filter_profile_properties_canonical_property_id_fkey",
+        "FOREIGN KEY (canonical_property_id) REFERENCES canonical_properties(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "category_filter_profile_properties",
+        "category_filter_profile_properties_pkey",
+        "PRIMARY KEY (profile_id, canonical_property_id)",
+        true
+      ],
+      [
+        "public",
+        "category_filter_profile_properties",
+        "category_filter_profile_properties_profile_id_fkey",
+        "FOREIGN KEY (profile_id) REFERENCES category_filter_profiles(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "category_filter_profiles",
+        "category_filter_profiles_category_key_key",
+        "UNIQUE (category_key)",
+        true
+      ],
+      [
+        "public",
+        "category_filter_profiles",
+        "category_filter_profiles_created_by_fkey",
+        "FOREIGN KEY (created_by) REFERENCES app_users(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "category_filter_profiles",
+        "category_filter_profiles_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "component_heartbeats",
+        "component_heartbeats_component_ck",
+        "CHECK ((component = ANY (ARRAY['scheduler'::text, 'orchestrator'::text])))",
+        true
+      ],
+      [
+        "public",
+        "component_heartbeats",
+        "component_heartbeats_failures_ck",
+        "CHECK ((consecutive_failures >= 0))",
+        true
+      ],
+      [
+        "public",
+        "component_heartbeats",
+        "component_heartbeats_pkey",
+        "PRIMARY KEY (component)",
+        true
+      ],
+      [
+        "public",
+        "component_heartbeats",
+        "component_heartbeats_poll_ck",
+        "CHECK ((poll_seconds > (0)::double precision))",
+        true
+      ],
+      [
+        "public",
+        "crawl_errors",
+        "crawl_errors_details_object_ck",
+        "CHECK ((jsonb_typeof(details) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "crawl_errors",
+        "crawl_errors_http_status_ck",
+        "CHECK (((http_status IS NULL) OR ((http_status >= 100) AND (http_status <= 599))))",
+        true
+      ],
+      [
+        "public",
+        "crawl_errors",
+        "crawl_errors_offer_supplier_fk",
+        "FOREIGN KEY (offer_id, supplier_id) REFERENCES offers(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "crawl_errors",
+        "crawl_errors_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "crawl_errors",
+        "crawl_errors_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "crawl_errors",
+        "crawl_errors_run_supplier_fk",
+        "FOREIGN KEY (crawl_run_id, supplier_id) REFERENCES crawl_runs(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "crawl_errors",
+        "crawl_errors_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "crawl_errors",
+        "crawl_errors_url_ck",
+        "CHECK ((url ~ '^https?://'::text))",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_crawl_run_id_fkey",
+        "FOREIGN KEY (crawl_run_id) REFERENCES crawl_runs(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_deduplicated_job_id_fkey",
+        "FOREIGN KEY (deduplicated_job_id) REFERENCES crawl_jobs(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_requested_by_user_id_fkey",
+        "FOREIGN KEY (requested_by_user_id) REFERENCES app_users(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_settings_object_ck",
+        "CHECK ((jsonb_typeof(settings_snapshot) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_status_ck",
+        "CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'partial'::text, 'failed'::text, 'cancelled'::text, 'skipped_locked'::text, 'skipped_already_queued'::text, 'stale_failed'::text])))",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_times_ck",
+        "CHECK ((((started_at IS NULL) OR (started_at >= requested_at)) AND ((finished_at IS NULL) OR (started_at IS NULL) OR (finished_at >= started_at))))",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_trigger_ck",
+        "CHECK ((trigger_type = ANY (ARRAY['manual'::text, 'schedule'::text])))",
+        true
+      ],
+      [
+        "public",
+        "crawl_jobs",
+        "crawl_jobs_type_ck",
+        "CHECK ((crawl_type = ANY (ARRAY['discovery'::text, 'fast'::text, 'full'::text, 'identity_validation'::text])))",
+        true
+      ],
+      [
+        "public",
+        "crawl_run_items",
+        "crawl_run_items_http_status_ck",
+        "CHECK (((http_status IS NULL) OR ((http_status >= 100) AND (http_status <= 599))))",
+        true
+      ],
+      [
+        "public",
+        "crawl_run_items",
+        "crawl_run_items_pkey",
+        "PRIMARY KEY (crawl_run_id, discovered_url)",
+        true
+      ],
+      [
+        "public",
+        "crawl_run_items",
+        "crawl_run_items_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "crawl_run_items",
+        "crawl_run_items_raw_metadata_object_ck",
+        "CHECK ((jsonb_typeof(raw_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "crawl_run_items",
+        "crawl_run_items_run_supplier_fk",
+        "FOREIGN KEY (crawl_run_id, supplier_id) REFERENCES crawl_runs(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "crawl_run_items",
+        "crawl_run_items_status_ck",
+        "CHECK ((item_status = ANY (ARRAY['discovered'::text, 'fetched_new'::text, 'fetched_changed'::text, 'fetched_unchanged'::text, 'missing'::text, 'error'::text, 'skipped'::text])))",
+        true
+      ],
+      [
+        "public",
+        "crawl_run_items",
+        "crawl_run_items_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "crawl_run_items",
+        "crawl_run_items_url_ck",
+        "CHECK ((discovered_url ~ '^https?://'::text))",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_baseline_ck",
+        "CHECK (((baseline_discovered_count IS NULL) OR (baseline_discovered_count >= 0)))",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_counts_ck",
+        "CHECK (((discovered_count >= 0) AND (fetched_count >= 0) AND (new_count >= 0) AND (changed_count >= 0) AND (unchanged_count >= 0) AND (missing_count >= 0) AND (error_count >= 0)))",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_finished_ck",
+        "CHECK (((finished_at IS NULL) OR (finished_at >= started_at)))",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_id_supplier_uq",
+        "UNIQUE (id, supplier_id)",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_metadata_object_ck",
+        "CHECK ((jsonb_typeof(metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_ratio_ck",
+        "CHECK (((discovery_ratio IS NULL) OR (discovery_ratio >= (0)::numeric)))",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_status_ck",
+        "CHECK ((status = ANY (ARRAY['running'::text, 'succeeded'::text, 'partial'::text, 'failed'::text, 'cancelled'::text])))",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "crawl_runs",
+        "crawl_runs_type_ck",
+        "CHECK ((crawl_type = ANY (ARRAY['discovery'::text, 'fast'::text, 'full'::text, 'identity_validation'::text])))",
+        true
+      ],
+      [
+        "public",
+        "data_quality_snapshots",
+        "data_quality_counts_ck",
+        "CHECK (((products_seen >= 0) AND (products_parsed >= 0)))",
+        true
+      ],
+      [
+        "public",
+        "data_quality_snapshots",
+        "data_quality_metrics_ck",
+        "CHECK ((jsonb_typeof(metrics) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "data_quality_snapshots",
+        "data_quality_snapshots_crawl_run_id_fkey",
+        "FOREIGN KEY (crawl_run_id) REFERENCES crawl_runs(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "data_quality_snapshots",
+        "data_quality_snapshots_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "data_quality_snapshots",
+        "data_quality_snapshots_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "diagnostic_evidence_snapshots",
+        "diagnostic_evidence_expiry_ck",
+        "CHECK ((expires_at > observed_at))",
+        true
+      ],
+      [
+        "public",
+        "diagnostic_evidence_snapshots",
+        "diagnostic_evidence_metadata_ck",
+        "CHECK ((jsonb_typeof(http_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "diagnostic_evidence_snapshots",
+        "diagnostic_evidence_snapshots_crawl_run_id_fkey",
+        "FOREIGN KEY (crawl_run_id) REFERENCES crawl_runs(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "diagnostic_evidence_snapshots",
+        "diagnostic_evidence_snapshots_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "diagnostic_evidence_snapshots",
+        "diagnostic_evidence_snapshots_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "diagnostic_evidence_snapshots",
+        "diagnostic_evidence_snapshots_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "diagnostic_evidence_snapshots",
+        "diagnostic_evidence_type_ck",
+        "CHECK ((evidence_type = ANY (ARRAY['parser_error'::text, 'schema_drift'::text, 'identity_conflict'::text, 'material_identity_change'::text])))",
+        true
+      ],
+      [
+        "public",
+        "diagnostic_evidence_snapshots",
+        "diagnostic_evidence_url_ck",
+        "CHECK ((source_url ~ '^https?://'::text))",
+        true
+      ],
+      [
+        "public",
+        "entity_change_history",
+        "entity_change_history_actual_change_ck",
+        "CHECK ((old_value IS DISTINCT FROM new_value))",
+        true
+      ],
+      [
+        "public",
+        "entity_change_history",
+        "entity_change_history_group_ck",
+        "CHECK ((field_group = ANY (ARRAY['identity'::text, 'commercial'::text, 'description'::text, 'properties'::text, 'images'::text, 'documents'::text, 'categories'::text, 'other'::text])))",
+        true
+      ],
+      [
+        "public",
+        "entity_change_history",
+        "entity_change_history_offer_supplier_fk",
+        "FOREIGN KEY (offer_id, supplier_id) REFERENCES offers(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "entity_change_history",
+        "entity_change_history_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "entity_change_history",
+        "entity_change_history_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "entity_change_history",
+        "entity_change_history_run_supplier_fk",
+        "FOREIGN KEY (crawl_run_id, supplier_id) REFERENCES crawl_runs(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "entity_change_history",
+        "entity_change_history_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "entity_change_history",
+        "entity_change_history_target_ck",
+        "CHECK ((num_nonnulls(source_product_id, offer_id) = 1))",
+        true
+      ],
+      [
+        "public",
+        "feed_runs",
+        "feed_runs_counts_ck",
+        "CHECK (((product_count >= 0) AND (offer_count >= 0)))",
+        true
+      ],
+      [
+        "public",
+        "feed_runs",
+        "feed_runs_finished_ck",
+        "CHECK (((finished_at IS NULL) OR (finished_at >= started_at)))",
+        true
+      ],
+      [
+        "public",
+        "feed_runs",
+        "feed_runs_metadata_object_ck",
+        "CHECK ((jsonb_typeof(metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "feed_runs",
+        "feed_runs_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "feed_runs",
+        "feed_runs_scope_ck",
+        "CHECK ((feed_scope = ANY (ARRAY['supplier'::text, 'combined'::text])))",
+        true
+      ],
+      [
+        "public",
+        "feed_runs",
+        "feed_runs_scope_supplier_ck",
+        "CHECK ((((feed_scope = 'supplier'::text) AND (supplier_id IS NOT NULL)) OR ((feed_scope = 'combined'::text) AND (supplier_id IS NULL))))",
+        true
+      ],
+      [
+        "public",
+        "feed_runs",
+        "feed_runs_status_ck",
+        "CHECK ((status = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text])))",
+        true
+      ],
+      [
+        "public",
+        "feed_runs",
+        "feed_runs_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "field_observations",
+        "field_observations_kind_ck",
+        "CHECK ((source_kind = ANY (ARRAY['supplier_html'::text, 'supplier_json'::text, 'supplier_xml'::text, 'supplier_api'::text, 'operator'::text, 'derived'::text])))",
+        true
+      ],
+      [
+        "public",
+        "field_observations",
+        "field_observations_pkey",
+        "PRIMARY KEY (source_product_id, field_name)",
+        true
+      ],
+      [
+        "public",
+        "field_observations",
+        "field_observations_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "field_update_policies",
+        "field_update_policies_pkey",
+        "PRIMARY KEY (field_name)",
+        true
+      ],
+      [
+        "public",
+        "field_update_policies",
+        "field_update_policies_updated_by_fkey",
+        "FOREIGN KEY (updated_by) REFERENCES app_users(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "field_update_policies",
+        "field_update_policy_ck",
+        "CHECK ((policy = ANY (ARRAY['SUPPLIER_ALLOWED'::text, 'MANUAL_ONLY'::text, 'STERBRUST_OWNED'::text, 'REVIEW_REQUIRED'::text, 'NEVER_OVERWRITE'::text])))",
+        true
+      ],
+      [
+        "public",
+        "login_failures",
+        "login_failures_key_ck",
+        "CHECK ((throttle_key ~ '^[0-9a-f]{64}$'::text))",
+        true
+      ],
+      [
+        "public",
+        "login_failures",
+        "login_failures_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "manufacturers",
+        "manufacturers_normalized_name_uq",
+        "UNIQUE (normalized_name)",
+        true
+      ],
+      [
+        "public",
+        "manufacturers",
+        "manufacturers_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "missing_observations",
+        "missing_observations_count_ck",
+        "CHECK ((consecutive_confirmed >= 0))",
+        true
+      ],
+      [
+        "public",
+        "missing_observations",
+        "missing_observations_evidence_ck",
+        "CHECK (((last_evidence_type IS NULL) OR (last_evidence_type = ANY (ARRAY['HTTP_404'::text, 'HTTP_410'::text, 'NOT_IN_SITEMAP'::text, 'NOT_DISCOVERED'::text, 'TIMEOUT'::text, 'HTTP_403'::text, 'HTTP_429'::text, 'NETWORK_ERROR'::text, 'PARSER_ERROR'::text, 'SEEN'::text]))))",
+        true
+      ],
+      [
+        "public",
+        "missing_observations",
+        "missing_observations_history_ck",
+        "CHECK ((jsonb_typeof(history) = 'array'::text))",
+        true
+      ],
+      [
+        "public",
+        "missing_observations",
+        "missing_observations_last_crawl_run_id_fkey",
+        "FOREIGN KEY (last_crawl_run_id) REFERENCES crawl_runs(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "missing_observations",
+        "missing_observations_pkey",
+        "PRIMARY KEY (source_product_id)",
+        true
+      ],
+      [
+        "public",
+        "missing_observations",
+        "missing_observations_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "missing_observations",
+        "missing_observations_state_ck",
+        "CHECK ((state = ANY (ARRAY['ACTIVE'::text, 'WATCH'::text, 'WARNING'::text, 'MISSING_CANDIDATE'::text])))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_availability_ck",
+        "CHECK ((availability_normalized = ANY (ARRAY['unknown'::text, 'in_stock'::text, 'out_of_stock'::text, 'preorder'::text, 'incoming'::text, 'backorder'::text, 'discontinued'::text])))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_capture_fingerprint_uq",
+        "UNIQUE (source_product_id, capture_id, extraction_fingerprint)",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_capture_id_fkey",
+        "FOREIGN KEY (capture_id) REFERENCES supplier_http_captures(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_capture_product_fk",
+        "FOREIGN KEY (capture_id, source_product_id) REFERENCES supplier_http_captures(id, source_product_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_currency_ck",
+        "CHECK (((currency IS NULL) OR ((currency)::text ~ '^[A-Z]{3}$'::text)))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_evidence_object_ck",
+        "CHECK ((jsonb_typeof(extraction_evidence) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_fingerprint_ck",
+        "CHECK ((extraction_fingerprint ~ '^[0-9a-f]{64}$'::text))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_offer_id_fkey",
+        "FOREIGN KEY (offer_id) REFERENCES offers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_offer_product_fk",
+        "FOREIGN KEY (offer_id, source_product_id) REFERENCES offers(id, source_product_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_old_price_ck",
+        "CHECK (((old_price IS NULL) OR (old_price > (0)::numeric)))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_price_ck",
+        "CHECK (((price IS NULL) OR (price > (0)::numeric)))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_price_state_ck",
+        "CHECK ((((price_state = 'numeric_public'::text) AND (price IS NOT NULL) AND (currency IS NOT NULL)) OR ((price_state <> 'numeric_public'::text) AND (price IS NULL) AND (old_price IS NULL))))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_public_type_ck",
+        "CHECK ((price_type = 'unknown'::text))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_reasons_array_ck",
+        "CHECK ((jsonb_typeof(unusable_price_reasons) = 'array'::text))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_state_ck",
+        "CHECK ((price_state = ANY (ARRAY['numeric_public'::text, 'price_on_request'::text, 'missing'::text, 'parse_error'::text, 'zero_invalid'::text, 'ambiguous'::text])))",
+        true
+      ],
+      [
+        "public",
+        "offer_commercial_observations",
+        "offer_commercial_observations_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_availability_ck",
+        "CHECK ((availability_normalized = ANY (ARRAY['unknown'::text, 'in_stock'::text, 'out_of_stock'::text, 'preorder'::text, 'incoming'::text, 'backorder'::text, 'discontinued'::text])))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_currency_ck",
+        "CHECK (((currency IS NULL) OR ((currency)::text ~ '^[A-Z]{3}$'::text)))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_external_identity_ck",
+        "CHECK (((NOT external_id_is_stable) OR (external_offer_id IS NOT NULL)))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_id_product_uq",
+        "UNIQUE (id, source_product_id)",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_id_supplier_uq",
+        "UNIQUE (id, supplier_id)",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_kind_ck",
+        "CHECK ((offer_kind = ANY (ARRAY['default'::text, 'variant'::text])))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_missed_crawls_ck",
+        "CHECK ((missed_crawls >= 0))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_old_price_ck",
+        "CHECK (((old_price IS NULL) OR (old_price >= (0)::numeric)))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_price_ck",
+        "CHECK (((price IS NULL) OR (price >= (0)::numeric)))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_price_type_ck",
+        "CHECK ((price_type = ANY (ARRAY['RRP'::text, 'retail'::text, 'wholesale'::text, 'dealer'::text, 'promo'::text, 'unknown'::text])))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_quantity_ck",
+        "CHECK (((quantity IS NULL) OR (quantity >= (0)::numeric)))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_raw_data_object_ck",
+        "CHECK ((jsonb_typeof(raw_data) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_seen_order_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "offers",
+        "offers_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "product_category_path_nodes",
+        "product_category_path_nodes_category_supplier_fk",
+        "FOREIGN KEY (category_id, supplier_id) REFERENCES supplier_categories(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "product_category_path_nodes",
+        "product_category_path_nodes_path_supplier_fk",
+        "FOREIGN KEY (path_id, supplier_id) REFERENCES product_category_paths(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "product_category_path_nodes",
+        "product_category_path_nodes_pkey",
+        "PRIMARY KEY (supplier_id, path_id, \"position\")",
+        true
+      ],
+      [
+        "public",
+        "product_category_path_nodes",
+        "product_category_path_nodes_position_ck",
+        "CHECK ((\"position\" >= 0))",
+        true
+      ],
+      [
+        "public",
+        "product_category_path_nodes",
+        "product_category_path_nodes_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "product_category_path_nodes",
+        "product_category_path_nodes_url_ck",
+        "CHECK (((raw_url IS NULL) OR (raw_url ~ '^https?://'::text)))",
+        true
+      ],
+      [
+        "public",
+        "product_category_paths",
+        "product_category_paths_id_supplier_uq",
+        "UNIQUE (id, supplier_id)",
+        true
+      ],
+      [
+        "public",
+        "product_category_paths",
+        "product_category_paths_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "product_category_paths",
+        "product_category_paths_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "product_category_paths",
+        "product_category_paths_raw_breadcrumb_array_ck",
+        "CHECK ((jsonb_typeof(raw_breadcrumb) = 'array'::text))",
+        true
+      ],
+      [
+        "public",
+        "product_category_paths",
+        "product_category_paths_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "product_category_paths",
+        "product_category_paths_type_ck",
+        "CHECK ((path_type = ANY (ARRAY['published'::text, 'canonical'::text, 'alternate'::text])))",
+        true
+      ],
+      [
+        "public",
+        "product_identity_decisions",
+        "product_identity_decision_ck",
+        "CHECK ((decision = ANY (ARRAY['EXACT_EXISTING'::text, 'HIGH_CONFIDENCE_EXISTING'::text, 'REVIEW_EXISTING'::text, 'CONFLICT'::text, 'SAFE_NEW_PRODUCT_CANDIDATE'::text, 'ACCESSORY_OR_COMPATIBILITY_ITEM'::text, 'INSUFFICIENT_IDENTITY'::text])))",
+        true
+      ],
+      [
+        "public",
+        "product_identity_decisions",
+        "product_identity_decisions_pkey",
+        "PRIMARY KEY (source_product_id)",
+        true
+      ],
+      [
+        "public",
+        "product_identity_decisions",
+        "product_identity_decisions_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "product_identity_decisions",
+        "product_identity_json_ck",
+        "CHECK (((jsonb_typeof(conflicts) = 'object'::text) AND (jsonb_typeof(identity_characteristics) = 'object'::text)))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_auto_ck",
+        "CHECK (((NOT auto_accepted) OR ((status = ANY (ARRAY['EXACT_MATCH'::text, 'HIGH_CONFIDENCE_MATCH'::text])) AND (catalog_product_id IS NOT NULL) AND (jsonb_typeof(evidence) = 'object'::text) AND (evidence <> '{}'::jsonb))))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_catalog_product_id_fkey",
+        "FOREIGN KEY (catalog_product_id) REFERENCES catalog_products(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_confidence_ck",
+        "CHECK (((confidence_score >= (0)::numeric) AND (confidence_score <= (1)::numeric)))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_data_quality_flags_array_ck",
+        "CHECK ((jsonb_typeof(data_quality_flags) = 'array'::text))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_decision_fingerprint_ck",
+        "CHECK (((decision_fingerprint IS NULL) OR ((decision_fingerprint)::text ~ '^[0-9a-f]{64}$'::text)))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_json_ck",
+        "CHECK (((jsonb_typeof(evidence) = 'object'::text) AND (jsonb_typeof(conflicts) = 'object'::text)))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_previous_match_id_fkey",
+        "FOREIGN KEY (previous_match_id) REFERENCES product_matches(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_status_ck",
+        "CHECK ((status = ANY (ARRAY['EXACT_MATCH'::text, 'HIGH_CONFIDENCE_MATCH'::text, 'REVIEW'::text, 'NEW_CANDIDATE'::text, 'CONFLICT'::text])))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_validation_time_ck",
+        "CHECK ((last_validated_at >= created_at))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_warning_fingerprint_ck",
+        "CHECK (((warning_fingerprint IS NULL) OR ((warning_fingerprint)::text ~ '^[0-9a-f]{64}$'::text)))",
+        true
+      ],
+      [
+        "public",
+        "product_matches",
+        "product_matches_warnings_object_ck",
+        "CHECK ((jsonb_typeof(warnings) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "product_media",
+        "product_media_offer_product_fk",
+        "FOREIGN KEY (offer_id, source_product_id) REFERENCES offers(id, source_product_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "product_media",
+        "product_media_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "product_media",
+        "product_media_position_ck",
+        "CHECK ((\"position\" >= 0))",
+        true
+      ],
+      [
+        "public",
+        "product_media",
+        "product_media_raw_metadata_object_ck",
+        "CHECK ((jsonb_typeof(raw_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "product_media",
+        "product_media_seen_order_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "product_media",
+        "product_media_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "product_media",
+        "product_media_type_ck",
+        "CHECK ((media_type = ANY (ARRAY['image'::text, 'document'::text, 'video'::text])))",
+        true
+      ],
+      [
+        "public",
+        "product_media",
+        "product_media_url_ck",
+        "CHECK ((source_url ~ '^https?://'::text))",
+        true
+      ],
+      [
+        "public",
+        "product_properties",
+        "product_properties_offer_product_fk",
+        "FOREIGN KEY (offer_id, source_product_id) REFERENCES offers(id, source_product_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "product_properties",
+        "product_properties_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "product_properties",
+        "product_properties_position_ck",
+        "CHECK ((\"position\" >= 0))",
+        true
+      ],
+      [
+        "public",
+        "product_properties",
+        "product_properties_raw_metadata_object_ck",
+        "CHECK ((jsonb_typeof(raw_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "product_properties",
+        "product_properties_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "rc_migration_map",
+        "rc_migration_map_pkey",
+        "PRIMARY KEY (source_db, source_schema, table_name, old_pk)",
+        true
+      ],
+      [
+        "public",
+        "rc_replay_jobs",
+        "rc_replay_jobs_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "rc_replay_jobs",
+        "rc_replay_jobs_source_key_due_slot_key",
+        "UNIQUE (source_key, due_slot)",
+        true
+      ],
+      [
+        "public",
+        "rc_replay_jobs",
+        "rc_replay_jobs_status_check",
+        "CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))",
+        true
+      ],
+      [
+        "public",
+        "reparse_previews",
+        "reparse_preview_json_ck",
+        "CHECK (((jsonb_typeof(current_data) = 'object'::text) AND (jsonb_typeof(proposed_data) = 'object'::text) AND (jsonb_typeof(diff) = 'object'::text)))",
+        true
+      ],
+      [
+        "public",
+        "reparse_previews",
+        "reparse_previews_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "reparse_previews",
+        "reparse_previews_requested_by_fkey",
+        "FOREIGN KEY (requested_by) REFERENCES app_users(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "reparse_previews",
+        "reparse_previews_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_assigned_to_user_id_fkey",
+        "FOREIGN KEY (assigned_to_user_id) REFERENCES app_users(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_fingerprint_ck",
+        "CHECK ((source_identity_fingerprint ~ '^[0-9a-f]{64}$'::text))",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_json_ck",
+        "CHECK (((jsonb_typeof(explanation) = 'object'::text) AND (jsonb_typeof(source_identity_snapshot) = 'object'::text)))",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_lifecycle_ck",
+        "CHECK ((lifecycle_status = ANY (ARRAY['OPEN'::text, 'ASSIGNED'::text, 'POSTPONED'::text, 'RESOLVED'::text, 'REOPENED_SOURCE_CHANGED'::text])))",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_priority_ck",
+        "CHECK (((priority_rank >= 1) AND (priority_rank <= 4)))",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_proposed_sterbrust_id_fkey",
+        "FOREIGN KEY (proposed_sterbrust_id) REFERENCES sterbrust_products(sterbrust_product_id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_resolution_ck",
+        "CHECK (((lifecycle_status = 'RESOLVED'::text) = (resolved_decision_class IS NOT NULL)))",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "review_cases",
+        "review_cases_source_uq",
+        "UNIQUE (source_product_id)",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_class_ck",
+        "CHECK ((decision_class = ANY (ARRAY['MANUAL_CONFIRMED'::text, 'MANUAL_CONFIRMED_NEW'::text, 'MANUAL_ACCESSORY'::text, 'POSTPONED'::text, 'MARKED_REVIEWED'::text])))",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_comment_ck",
+        "CHECK ((((decision_class = 'MANUAL_CONFIRMED'::text) AND (sterbrust_product_id IS NOT NULL)) OR ((decision_class = 'MANUAL_CONFIRMED_NEW'::text) AND (sterbrust_product_id IS NULL) AND (btrim(COALESCE(comment, ''::text)) <> ''::text)) OR ((decision_class = 'MANUAL_ACCESSORY'::text) AND (btrim(COALESCE(comment, ''::text)) <> ''::text)) OR (decision_class = ANY (ARRAY['POSTPONED'::text, 'MARKED_REVIEWED'::text]))))",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_json_ck",
+        "CHECK ((jsonb_typeof(source_identity_snapshot) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_parent_sterbrust_product_id_fkey",
+        "FOREIGN KEY (parent_sterbrust_product_id) REFERENCES sterbrust_products(sterbrust_product_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_previous_decision_id_fkey",
+        "FOREIGN KEY (previous_decision_id) REFERENCES review_decisions(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_review_case_id_fkey",
+        "FOREIGN KEY (review_case_id) REFERENCES review_cases(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_sterbrust_product_id_fkey",
+        "FOREIGN KEY (sterbrust_product_id) REFERENCES sterbrust_products(sterbrust_product_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "review_decisions",
+        "review_decisions_user_id_fkey",
+        "FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "schema_migrations",
+        "schema_migrations_pkey",
+        "PRIMARY KEY (filename)",
+        true
+      ],
+      [
+        "public",
+        "source_product_categories",
+        "source_product_categories_category_supplier_fk",
+        "FOREIGN KEY (category_id, supplier_id) REFERENCES supplier_categories(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "source_product_categories",
+        "source_product_categories_pkey",
+        "PRIMARY KEY (supplier_id, source_product_id, category_id)",
+        true
+      ],
+      [
+        "public",
+        "source_product_categories",
+        "source_product_categories_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "source_product_categories",
+        "source_product_categories_seen_order_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "source_product_categories",
+        "source_product_categories_source_ck",
+        "CHECK ((membership_source = ANY (ARRAY['listing'::text, 'breadcrumb'::text, 'sitemap'::text, 'adapter'::text])))",
+        true
+      ],
+      [
+        "public",
+        "source_product_categories",
+        "source_product_categories_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_classification_ck",
+        "CHECK ((classification = ANY (ARRAY['NAVIGATION_TO_PRODUCT'::text, 'TRUE_VARIANT'::text, 'INFORMATIONAL'::text, 'UNKNOWN_REVIEW'::text])))",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_id_supplier_uq",
+        "UNIQUE (id, supplier_id)",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_option_position_uq",
+        "UNIQUE (option_id, \"position\")",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_option_supplier_fk",
+        "FOREIGN KEY (option_id, supplier_id) REFERENCES source_product_options(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_position_ck",
+        "CHECK ((\"position\" >= 0))",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_raw_metadata_object_ck",
+        "CHECK ((jsonb_typeof(raw_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "source_product_option_values",
+        "source_product_option_values_target_url_ck",
+        "CHECK (((target_url IS NULL) OR (target_url ~ '^https?://'::text)))",
+        true
+      ],
+      [
+        "public",
+        "source_product_options",
+        "source_product_options_id_supplier_uq",
+        "UNIQUE (id, supplier_id)",
+        true
+      ],
+      [
+        "public",
+        "source_product_options",
+        "source_product_options_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "source_product_options",
+        "source_product_options_position_ck",
+        "CHECK ((\"position\" >= 0))",
+        true
+      ],
+      [
+        "public",
+        "source_product_options",
+        "source_product_options_product_position_uq",
+        "UNIQUE (source_product_id, \"position\")",
+        true
+      ],
+      [
+        "public",
+        "source_product_options",
+        "source_product_options_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "source_product_options",
+        "source_product_options_raw_metadata_object_ck",
+        "CHECK ((jsonb_typeof(raw_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "source_product_options",
+        "source_product_options_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_from_supplier_fk",
+        "FOREIGN KEY (from_source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_not_self_ck",
+        "CHECK ((from_source_product_id <> to_source_product_id))",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_option_value_supplier_fk",
+        "FOREIGN KEY (source_option_value_id, supplier_id) REFERENCES source_product_option_values(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_raw_metadata_object_ck",
+        "CHECK ((jsonb_typeof(raw_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_seen_order_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_to_supplier_fk",
+        "FOREIGN KEY (to_source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "source_product_relations",
+        "source_product_relations_type_ck",
+        "CHECK ((relation_type = ANY (ARRAY['navigation'::text, 'variant'::text, 'related'::text, 'accessory'::text, 'replacement'::text])))",
+        true
+      ],
+      [
+        "public",
+        "source_product_urls",
+        "source_product_urls_kind_ck",
+        "CHECK ((url_kind = ANY (ARRAY['source'::text, 'canonical'::text, 'redirect'::text, 'alias'::text])))",
+        true
+      ],
+      [
+        "public",
+        "source_product_urls",
+        "source_product_urls_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "source_product_urls",
+        "source_product_urls_product_url_uq",
+        "UNIQUE (source_product_id, url)",
+        true
+      ],
+      [
+        "public",
+        "source_product_urls",
+        "source_product_urls_seen_order_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "source_product_urls",
+        "source_product_urls_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "source_product_urls",
+        "source_product_urls_url_ck",
+        "CHECK ((url ~ '^https?://'::text))",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_canonical_url_ck",
+        "CHECK (((canonical_url IS NULL) OR (canonical_url ~ '^https?://'::text)))",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_catalog_product_id_fkey",
+        "FOREIGN KEY (catalog_product_id) REFERENCES catalog_products(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_external_identity_ck",
+        "CHECK (((NOT external_id_is_stable) OR (external_id IS NOT NULL)))",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_http_status_ck",
+        "CHECK (((last_http_status IS NULL) OR ((last_http_status >= 100) AND (last_http_status <= 599))))",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_id_supplier_uq",
+        "UNIQUE (id, supplier_id)",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_missed_crawls_ck",
+        "CHECK ((missed_crawls >= 0))",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_raw_data_object_ck",
+        "CHECK ((jsonb_typeof(raw_data) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_seen_order_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_source_url_ck",
+        "CHECK ((source_url ~ '^https?://'::text))",
+        true
+      ],
+      [
+        "public",
+        "source_products",
+        "source_products_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_product_supplier_identifier_sterbrust_product_id_fkey",
+        "FOREIGN KEY (sterbrust_product_id) REFERENCES sterbrust_products(sterbrust_product_id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_product_supplier_identifiers_catalog_product_id_fkey",
+        "FOREIGN KEY (catalog_product_id) REFERENCES catalog_products(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_product_supplier_identifiers_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_product_supplier_identifiers_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_supplier_identifiers_catalog_relation_fk",
+        "FOREIGN KEY (sterbrust_product_id, catalog_product_id) REFERENCES sterbrust_products(sterbrust_product_id, catalog_product_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_supplier_identifiers_json_ck",
+        "CHECK ((jsonb_typeof(raw_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_supplier_identifiers_observation_uq",
+        "UNIQUE (sterbrust_product_id, property_id, normalized_value)",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_supplier_identifiers_seen_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_supplier_identifiers_supplier_code_ck",
+        "CHECK (((supplier_code)::text ~ '^[a-z][a-z0-9_]*$'::text))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_supplier_identifiers_supplier_code_fk",
+        "FOREIGN KEY (supplier_id, supplier_code) REFERENCES suppliers(id, code) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_supplier_identifiers_type_ck",
+        "CHECK ((identifier_type = 'supplier_article'::text))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_product_supplier_identifiers",
+        "sterbrust_supplier_identifiers_values_ck",
+        "CHECK (((btrim(raw_value) <> ''::text) AND (btrim(normalized_value) <> ''::text)))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_products",
+        "sterbrust_products_catalog_product_id_fkey",
+        "FOREIGN KEY (catalog_product_id) REFERENCES catalog_products(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_products",
+        "sterbrust_products_id_catalog_uq",
+        "UNIQUE (sterbrust_product_id, catalog_product_id)",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_products",
+        "sterbrust_products_json_ck",
+        "CHECK (((jsonb_typeof(category_metadata) = 'object'::text) AND (jsonb_typeof(properties) = 'object'::text) AND (jsonb_typeof(raw_data) = 'object'::text)))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_products",
+        "sterbrust_products_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_products",
+        "sterbrust_products_product_id_uq",
+        "UNIQUE (sterbrust_product_id)",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_products",
+        "sterbrust_products_seen_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_products",
+        "sterbrust_products_url_ck",
+        "CHECK (((product_url IS NULL) OR (product_url ~ '^https?://'::text)))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_property_mappings",
+        "sterbrust_property_mapping_evidence_ck",
+        "CHECK ((jsonb_typeof(filter_enabled_evidence) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_property_mappings",
+        "sterbrust_property_mapping_status_ck",
+        "CHECK ((status = ANY (ARRAY['MATCHED'::text, 'REVIEW'::text, 'UNMAPPED'::text, 'CONFLICT'::text, 'IGNORED'::text])))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_property_mappings",
+        "sterbrust_property_mapping_uq",
+        "UNIQUE (canonical_property_id, category_context)",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_property_mappings",
+        "sterbrust_property_mappings_canonical_property_id_fkey",
+        "FOREIGN KEY (canonical_property_id) REFERENCES canonical_properties(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_property_mappings",
+        "sterbrust_property_mappings_confirmed_by_fkey",
+        "FOREIGN KEY (confirmed_by) REFERENCES app_users(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_property_mappings",
+        "sterbrust_property_mappings_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_snapshot_runs",
+        "sterbrust_snapshot_runs_counts_ck",
+        "CHECK (((discovered_count >= 0) AND (synced_count >= 0) AND (write_methods_used = 0)))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_snapshot_runs",
+        "sterbrust_snapshot_runs_json_ck",
+        "CHECK (((jsonb_typeof(field_map) = 'object'::text) AND (jsonb_typeof(metadata) = 'object'::text)))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_snapshot_runs",
+        "sterbrust_snapshot_runs_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_snapshot_runs",
+        "sterbrust_snapshot_runs_source_ck",
+        "CHECK ((source_kind = ANY (ARRAY['rest_api_get'::text, 'read_only_export'::text, 'sitemap_fallback'::text])))",
+        true
+      ],
+      [
+        "public",
+        "sterbrust_snapshot_runs",
+        "sterbrust_snapshot_runs_status_ck",
+        "CHECK ((status = ANY (ARRAY['running'::text, 'succeeded'::text, 'partial'::text, 'failed'::text, 'blocked'::text])))",
+        true
+      ],
+      [
+        "public",
+        "supplier_categories",
+        "supplier_categories_depth_ck",
+        "CHECK ((depth >= 0))",
+        true
+      ],
+      [
+        "public",
+        "supplier_categories",
+        "supplier_categories_id_supplier_uq",
+        "UNIQUE (id, supplier_id)",
+        true
+      ],
+      [
+        "public",
+        "supplier_categories",
+        "supplier_categories_parent_supplier_fk",
+        "FOREIGN KEY (parent_id, supplier_id) REFERENCES supplier_categories(id, supplier_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED",
+        true
+      ],
+      [
+        "public",
+        "supplier_categories",
+        "supplier_categories_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "supplier_categories",
+        "supplier_categories_raw_metadata_object_ck",
+        "CHECK ((jsonb_typeof(raw_metadata) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "supplier_categories",
+        "supplier_categories_seen_order_ck",
+        "CHECK ((last_seen_at >= first_seen_at))",
+        true
+      ],
+      [
+        "public",
+        "supplier_categories",
+        "supplier_categories_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "supplier_categories",
+        "supplier_categories_url_ck",
+        "CHECK (((source_url IS NULL) OR (source_url ~ '^https?://'::text)))",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_diagnostics_object_ck",
+        "CHECK ((jsonb_typeof(diagnostics) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_evidence_hash_ck",
+        "CHECK ((evidence_sha256 ~ '^[0-9a-f]{64}$'::text))",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_fingerprint_ck",
+        "CHECK ((capture_fingerprint ~ '^[0-9a-f]{64}$'::text))",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_id_product_uq",
+        "UNIQUE (id, source_product_id)",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_product_capture_uq",
+        "UNIQUE (source_product_id, capture_fingerprint)",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_product_supplier_fk",
+        "FOREIGN KEY (source_product_id, supplier_id) REFERENCES source_products(id, supplier_id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_redirects_array_ck",
+        "CHECK ((jsonb_typeof(redirect_urls) = 'array'::text))",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_response_hash_ck",
+        "CHECK ((response_sha256 ~ '^[0-9a-f]{64}$'::text))",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_source_product_id_fkey",
+        "FOREIGN KEY (source_product_id) REFERENCES source_products(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_status_ck",
+        "CHECK (((http_status IS NULL) OR ((http_status >= 100) AND (http_status <= 599))))",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "supplier_http_captures",
+        "supplier_http_captures_urls_ck",
+        "CHECK (((requested_url ~ '^https?://'::text) AND (final_url ~ '^https?://'::text)))",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mapping_confidence_ck",
+        "CHECK (((confidence IS NULL) OR ((confidence >= (0)::numeric) AND (confidence <= (1)::numeric))))",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mapping_confirmed_ck",
+        "CHECK (((status <> 'MANUAL_CONFIRMED'::text) OR ((canonical_property_id IS NOT NULL) AND (confirmed_by IS NOT NULL))))",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mapping_evidence_ck",
+        "CHECK ((jsonb_typeof(evidence) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mapping_status_ck",
+        "CHECK ((status = ANY (ARRAY['AUTO_PROPOSED'::text, 'MANUAL_CONFIRMED'::text, 'MANUAL_REJECTED'::text, 'IGNORED'::text, 'UNMAPPED'::text])))",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mapping_uq",
+        "UNIQUE (supplier_id, category_context, normalized_source_name)",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mappings_canonical_property_id_fkey",
+        "FOREIGN KEY (canonical_property_id) REFERENCES canonical_properties(id) ON DELETE RESTRICT",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mappings_confirmed_by_fkey",
+        "FOREIGN KEY (confirmed_by) REFERENCES app_users(id) ON DELETE SET NULL",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mappings_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "supplier_property_mappings",
+        "supplier_property_mappings_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "supplier_schedules",
+        "supplier_schedules_cron_ck",
+        "CHECK (((NOT enabled) OR ((cron_expression IS NOT NULL) AND (btrim(cron_expression) <> ''::text))))",
+        true
+      ],
+      [
+        "public",
+        "supplier_schedules",
+        "supplier_schedules_pkey",
+        "PRIMARY KEY (supplier_id)",
+        true
+      ],
+      [
+        "public",
+        "supplier_schedules",
+        "supplier_schedules_supplier_id_fkey",
+        "FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE",
+        true
+      ],
+      [
+        "public",
+        "supplier_schedules",
+        "supplier_schedules_timezone_ck",
+        "CHECK ((btrim(timezone) <> ''::text))",
+        true
+      ],
+      [
+        "public",
+        "supplier_schedules",
+        "supplier_schedules_type_ck",
+        "CHECK ((crawl_type = ANY (ARRAY['discovery'::text, 'fast'::text, 'full'::text, 'identity_validation'::text])))",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_base_url_ck",
+        "CHECK ((base_url ~ '^https?://'::text))",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_code_format_ck",
+        "CHECK (((code)::text ~ '^[a-z][a-z0-9_]*$'::text))",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_code_uq",
+        "UNIQUE (code)",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_crawl_settings_object_ck",
+        "CHECK ((jsonb_typeof(crawl_settings) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_deactivate_after_misses_ck",
+        "CHECK ((deactivate_after_misses >= 1))",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_id_code_uq",
+        "UNIQUE (id, code)",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_pkey",
+        "PRIMARY KEY (id)",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_rate_settings_object_ck",
+        "CHECK ((jsonb_typeof(rate_settings) = 'object'::text))",
+        true
+      ],
+      [
+        "public",
+        "suppliers",
+        "suppliers_transport_mode_ck",
+        "CHECK ((transport_mode = ANY (ARRAY['direct'::text, 'proxy_optional'::text, 'proxy_required'::text])))",
+        true
+      ]
+    ]
+  },
+  "source_system_identifier": "7698346631476390904",
+  "dump_sha256": "b6858888fd2d370d6973eb309891293e0e8c8e2da1a0d2b884fc63e935aa219e",
+  "dump_bytes": 124142732,
+  "known_omissions": [
+    "Vekprom and newer Intervesp 55452: BLOCKED_MISSING_VERIFIED_SOURCE_DATA"
+  ],
+  "release_complete": false,
+  "matching_verified": false
+}

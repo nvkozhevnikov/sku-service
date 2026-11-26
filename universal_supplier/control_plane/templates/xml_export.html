@@ -1,11 +1,12 @@
 {% extends 'base.html' %}{% block content %}
+<p><a class="button" href="/exports/previews">Предпросмотр XML обновлений и новых товаров</a></p>
 <div class="pagehead"><div><span class="eyebrow">ДАННЫЕ / ЭКСПОРТ</span><h2>XML-выгрузка</h2><p>Только чтение. XML не отправляется на Sterbrust.</p></div></div>
-<div class="notice warning"><strong>ESOL import contract: НЕ ПОДТВЕРЖДЁН</strong> · Записи в Sterbrust: 0 · только предпросмотр и скачивание.</div>
+<div class="notice warning"><strong>Контракт импорта через ESOL — НЕ ПОДТВЕРЖДЁН.</strong> Доступны предпросмотр и скачивание.</div>
 <form class="filters" method="get" action="/exports/xml">
 <input type="hidden" name="action" value="preview">
 <label>Режим
 <select name="mode">
-<option value="short" {{'selected' if mode=='short'}}>Короткий XML — выбранные офферы Stage 5</option>
+<option value="short" {{'selected' if mode=='short'}}>Короткий XML — выбранные предложения</option>
 <option value="full" {{'selected' if mode=='full'}}>Полный XML — данные поставщиков</option>
 </select></label>
 <select name="supplier"><option value="">Все поставщики</option>{% for v in options.suppliers %}<option value="{{v.code}}" {{'selected' if filters.supplier==v.code}}>{{v.name}}</option>{% endfor %}</select>
@@ -19,26 +20,29 @@
 {% endif %}
 <button>Предпросмотр</button>
 </form>
-{% if mode=='short' %}
-<p class="notice">Предпросмотр. Формат действующего профиля импорта ESOL ещё не подтверждён. Этот файл автоматически не отправляется на Sterbrust.</p>
-<p>Источник: выбранные офферы Stage 5 (<code>catalog_offer_selection</code>). Conflict / review / new product в этот XML не входят.</p>
-{% endif %}
 {% if preview %}
 {% if error %}<div class="notice error" role="alert">{{error}}</div>
 {% else %}
+{% if mode=='short' and not stats.offer_count %}
+<p class="notice">В коротком XML сейчас нет выбранных предложений. Сохранённые карточки поставщика можно посмотреть в полном XML.</p>
+{% endif %}
 <div class="metrics">
 {% if mode=='short' %}
-{% for key,label in [('considered','Всего рассмотрено'),('selected','Выбрано в XML'),('excluded_total','Исключено из XML'),('no_selected_offer','Без выбранного оффера'),('blocked_by_conflict','Заблокировано конфликтом'),('needs_review','Требует проверки'),('safe_new','SAFE_NEW'),('accessories','Accessories'),('without_price','Без цены'),('without_url','Без корректного URL'),('without_category','Без категории'),('blocked_by_identity','Недопустимый identity-статус'),('invalid_selected_data','Другие ошибки selected-данных')] %}
+{% for key,label in [('considered','Всего рассмотрено'),('selected','Выбрано в XML'),('excluded_total','Исключено из XML'),('no_selected_offer','Без выбранного предложения'),('blocked_by_conflict','Заблокировано конфликтом'),('needs_review','Требует проверки'),('safe_new','Кандидаты на добавление'),('accessories','Оснастка и аксессуары'),('without_price','Без цены'),('without_url','Без корректной ссылки'),('without_category','Без категории'),('blocked_by_identity','Совпадение товара не подтверждено'),('invalid_selected_data','Ошибки в выбранных предложениях')] %}
 <article><span>{{label}}</span><strong>{{summary[key]}}</strong></article>
 {% endfor %}
 {% else %}
 {% for key,label in [('products','Товаров'),('matched','Связано с Sterbrust'),('unmatched','Без Sterbrust ID'),('properties','Свойств'),('images','Изображений'),('documents','Документов'),('relations','Связей')] %}<article><span>{{label}}</span><strong>{{summary[key] or 0}}</strong></article>{% endfor %}
 {% endif %}
-<article><span>Offers / products</span><strong>{{stats.offer_count}}</strong></article>
-<article><span>{{'Размер' if mode=='short' else 'Размер образца'}}</span><strong>{{stats.bytes}} байт</strong></article>
-<article><span>{{'SHA-256' if mode=='short' else 'SHA-256 образца'}}</span><strong>{{stats.sha256}}</strong></article>
-<article><span>generated_at</span><strong>{{stats.generated_at}}</strong></article>
 </div>
+<details class="panel xml-file-details" data-technical>
+  <summary>{{'Сведения о файле' if mode=='short' else 'Сведения об образце'}}</summary>
+  <dl>
+    <dt>Размер</dt><dd>{{stats.bytes}} байт</dd>
+    <dt>Сформирован</dt><dd><time datetime="{{stats.generated_at}}">{{stats.generated_at|msk}}</time></dd>
+  </dl>
+  <p class="xml-file-checksum">Контрольная сумма SHA-256 <code>{{stats.sha256}}</code></p>
+</details>
 <pre class="panel" readonly>{{preview_text|safe}}</pre>
 <p><a class="button" href="/exports/xml/download?{{request.url.query|replace('action=preview','')}}">Скачать XML</a></p>
 {% endif %}

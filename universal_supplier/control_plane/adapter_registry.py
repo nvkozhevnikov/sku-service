@@ -8,7 +8,7 @@ from universal_supplier.postgres import PostgresConfig, PostgresRepository
 from universal_supplier.crawl import run_partner_st_live
 from universal_supplier.adapters.optimum import run_optimum_live_sync
 from universal_supplier.state import discovery_health
-from universal_supplier.identity_service import reconcile_runtime_identity
+from universal_supplier.automatic_matching import run_post_ingest
 
 from .queue import CrawlJob
 from .progress import CrawlProgressTracker
@@ -100,9 +100,7 @@ def _policy_from_snapshot(
 
 def _post_ingest_identity(config: PostgresConfig, supplier_code: str) -> dict[str, Any]:
     """The only normal runtime path from successful ingest to review state."""
-    if config is None:  # explicit unit-test adapter doubles use no database config
-        return {"skipped": "NO_DATABASE_CONFIG"}
-    return {"status": "succeeded", **reconcile_runtime_identity(config, supplier_code)}
+    return run_post_ingest(config, supplier_code)
 
 
 def _tracker(repository, run_id: int) -> CrawlProgressTracker:
@@ -137,10 +135,24 @@ def _schema_signals(cards, errors) -> list[str]:
 
 
 def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
+    if (job.settings_snapshot.get('crawl_settings') or {}).get('collection_mode'):
+        if job.settings_snapshot.get('partner_pilot'):raise ValueError('NATIVE_CHECKPOINT_PILOT_MIXED')
+        from .source_runtime import run_source
+        return run_source(job,config)
     rate = _policy_from_snapshot(
         job.settings_snapshot.get("rate_settings"), PARTNER_ST_DEFAULT_RATE_POLICY,
     )
     crawl = job.settings_snapshot.get("crawl_settings") or {}
+    from universal_supplier.partner_pilot import enabled,validate_config,validate_snapshot
+    pilot=job.settings_snapshot.get('partner_pilot')
+    if pilot is not None:
+        validate_config(config);validate_snapshot(pilot)
+        if job.supplier_code!='partner_st' or job.adapter_name!='partner_st' or job.trigger_type!='manual':raise PermissionError('PILOT_JOB_NAMESPACE')
+        if not enabled() or __import__('os').environ.get('STERBRUST_ALLOW_SUPPLIER_HTTP')!='YES':raise PermissionError('PILOT_HTTP_NOT_APPROVED')
+        from universal_supplier.partner_pilot import rate_profile
+        expected=rate_profile(pilot.get('rate_profile','conservative'))
+        if any(getattr(rate,k)!=v for k,v in expected.items()):raise ValueError('PILOT_RATE_SNAPSHOT_INVALID')
+    elif enabled():raise PermissionError('PILOT_FULL_JOB_DISABLED')
     baseline = crawl.get("baseline_discovered_count", 1222)
     repository = PostgresRepository(config)
     run_id = repository.start_crawl_run(
@@ -150,34 +162,83 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         supplier_code=job.supplier_code,
     )
     progress = _tracker(repository, run_id)
+    import time
+    timings={'http_phase_seconds':None,'http_request_seconds_sum':None,'parsing_seconds_sum':None,'sql_ingest_seconds':None,'history_seconds':None,'automatic_matching_seconds':None}
+    active_stage=None
+    stage_started=None
     try:
-        result = _run_with_progress(run_partner_st_live, progress.callback, baseline=baseline, rate_policy=rate)
+        kwargs={}
+        if pilot:
+            from pathlib import Path
+            import os
+            from universal_supplier.partner_pilot import read_stop_reason
+            kwargs={'pilot':pilot,'evidence_root':Path(os.environ['PARTNER_PILOT_EVIDENCE_ROOT'])/str(job.id),'stop_requested':lambda:read_stop_reason(os.environ['PARTNER_PILOT_STOP_FILE'])}
+        result = _run_with_progress(run_partner_st_live, progress.callback, baseline=baseline, rate_policy=rate,**kwargs)
+        from datetime import datetime
+        import json
+        duration=(datetime.fromisoformat(result.finished_at)-datetime.fromisoformat(result.started_at)).total_seconds()
+        timings.update(http_phase_seconds=duration,http_request_seconds_sum=sum(r.get('http_seconds',0) for r in result.rows),parsing_seconds_sum=sum(r.get('parsing_seconds',0) for r in result.rows))
+        http_phase={'stage_timings':dict(timings),'status':'finished','started_at':result.started_at,'finished_at':result.finished_at,
+                    'duration_seconds':duration,'selected_urls':len(result.discovered_urls),'processed':len(result.rows),
+                    'successful_cards':len(result.cards),'errors':len(result.errors),
+                    'cards_per_minute':None if duration<=0 else 60*len(result.cards)/duration,
+                    'request_metrics':result.request_metrics,'rows':list(result.rows),'captures':list(result.captures),
+                    'discovery':result.discovery_metadata,'termination_reason':result.termination_reason}
+        if pilot:
+            receipt=kwargs['evidence_root']/'HTTP_PHASE.json';receipt.parent.mkdir(parents=True,exist_ok=True)
+            payload=json.dumps(http_phase,ensure_ascii=False,sort_keys=True,default=str)
+            if receipt.exists():
+                if receipt.read_text(encoding='utf-8')!=payload:raise RuntimeError('HTTP_PHASE_RECEIPT_ALREADY_EXISTS')
+            else:
+                with receipt.open('x',encoding='utf-8') as f:f.write(payload)
+        _finish_metadata(repository,run_id,{'http_phase':http_phase,'request_metrics':result.request_metrics,
+                          'pilot_http_rows':list(result.rows) if pilot else [],'pilot_captures':list(result.captures) if pilot else []})
+        if pilot and result.termination_reason:
+            _finish_metadata(repository,run_id,{'pilot_http_rows':list(result.rows),'pilot_captures':list(result.captures),'request_metrics':result.request_metrics,'termination_reason':result.termination_reason})
+            raise RuntimeError(result.termination_reason)
         for error in result.errors:
             repository.record_crawl_error(run_id, url=error.url, error_type=error.error_type,
                                           message=error.message, http_status=error.http_status)
-        deadline_exceeded = result.termination_reason == "MAX_RUN_DURATION_EXCEEDED"
+        deadline_exceeded = result.termination_reason is not None
         health = replace(result.health, deactivation_allowed=False) if deadline_exceeded else result.health
         progress.set_phase("INGESTING")
-        counts = repository.ingest(
-            list(result.cards), result.finished_at, crawl_run_id=run_id,
-            discovery_health=health, discovered_urls=list(result.discovered_urls),
-            error_count=len(result.errors), supplier_code=job.supplier_code,
-            schema_signals=_schema_signals(result.cards, result.errors),
-            crawl_settings=crawl,
-        )
+        from contextlib import nullcontext
+        active_stage='sql_ingest_seconds';stage_started=time.perf_counter()
+        with repository.connection.transaction() if pilot else nullcontext():
+            counts = repository.ingest(
+                list(result.cards), result.finished_at, crawl_run_id=run_id,
+                discovery_health=health, discovered_urls=list(result.discovered_urls),
+                error_count=len(result.errors), supplier_code=job.supplier_code,
+                schema_signals=_schema_signals(result.cards, result.errors),
+                crawl_settings=crawl,
+                **({"bounded":True} if pilot else {}),
+            )
+            if pilot:
+                repository.record_partner_pilot_captures(result.cards,result.captures)
+        timings['sql_ingest_seconds']=time.perf_counter()-stage_started
+        timings['history_seconds']=getattr(repository,'last_ingest_timings',{}).get('history_seconds')
+        active_stage=None
         post_error = None
         try:
             progress.set_phase("MATCHING")
-            identity = _post_ingest_identity(config, job.supplier_code)
+            active_stage='automatic_matching_seconds';stage_started=time.perf_counter()
+            identity = run_post_ingest(config, job.supplier_code,[c.external_id for c in result.cards]) if pilot else _post_ingest_identity(config, job.supplier_code)
+            timings['automatic_matching_seconds']=time.perf_counter()-stage_started
+            active_stage=None
             progress.set_phase("REVIEW_SYNC")
         except Exception as error:
+            timings['automatic_matching_seconds']=time.perf_counter()-stage_started
+            active_stage=None
             post_error = f"{type(error).__name__}: {str(error)[:1800]}"
             identity = {"status": "POST_PROCESSING_FAILED", "error": post_error}
             repository.record_crawl_error(run_id, url=job.base_url, error_type="POST_PROCESSING_FAILED", message=post_error)
         effective = result.effective_rate_policy
         _finish_metadata(repository, run_id, {
+            "stage_timings":timings,
             "requested_rate_policy": rate.snapshot(), "effective_rate_policy": effective,
             "requested_effective_policy_match": rate.snapshot() == effective,
+            "pilot_http_rows":list(result.rows) if pilot else [],
+            "pilot_captures":list(result.captures) if pilot else [],
             "request_metrics": result.request_metrics,
             "discovery": result.discovery_metadata,
             "termination_reason": result.termination_reason,
@@ -187,6 +248,18 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
         progress.finish(repository.final_crawl_run_status(run_id))
         return _adapter_result(repository, run_id, counts)
     except Exception as error:
+        if active_stage is not None:timings[active_stage]=time.perf_counter()-stage_started
+        history=getattr(repository,'last_ingest_timings',{})
+        if isinstance(history,dict):timings['history_seconds']=history.get('history_seconds')
+        try:
+            _finish_metadata(repository,run_id,{'stage_timings':timings,'failed_stage':active_stage})
+        except Exception:pass
+        try:
+            repository.record_crawl_error(run_id,url=job.base_url,error_type='INGEST_OR_PIPELINE_FAILED',
+                                          message=f'{type(error).__name__}: {str(error)[:1800]}')
+        except Exception:
+            # fail_crawl_run metadata is the final fallback if error persistence is unavailable.
+            pass
         repository.fail_crawl_run(run_id, finished_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), message=str(error))
         progress.finish("failed")
         raise
@@ -195,6 +268,9 @@ def run_partner_st_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
 
 
 def run_optimum_job(job: CrawlJob, config: PostgresConfig) -> dict[str, Any]:
+    if (job.settings_snapshot.get('crawl_settings') or {}).get('collection_mode'):
+        from .source_runtime import run_source
+        return run_source(job,config)
     rate = _policy_from_snapshot(
         job.settings_snapshot.get("rate_settings"), OPTIMUM_DEFAULT_RATE_POLICY,
     )
@@ -286,4 +362,6 @@ def default_adapter_registry() -> AdapterRegistry:
     registry = AdapterRegistry()
     registry.register("partner_st", run_partner_st_job, supported_crawl_types={"full"})
     registry.register("optimum", run_optimum_job, supported_crawl_types={"full"})
+    from .source_jobs import register_source_jobs
+    register_source_jobs(registry)
     return registry

@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "checks": {
+    "actual_single_login": true,
+    "suppliers_200": true,
+    "suppliers_no_backend_error": true,
+    "news_200": true,
+    "news_no_backend_error": true,
+    "prices_200": true,
+    "prices_no_backend_error": true,
+    "replay_200": true,
+    "replay_no_backend_error": true,
+    "actual_form_enqueue_and_separate_replay": true,
+    "external_requests_zero": true
+  },
+  "blocked_external_requests": [],
+  "ui_stopped_after_qa": true
+}

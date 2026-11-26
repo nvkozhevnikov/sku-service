@@ -1,5 +1,11 @@
 # Universal Supplier Stage 6E
 
+Unified RC release continuation16Nov2026: start with
+[accounts, boundaries and Linux installation](docs/unified-rc/RELEASE_20261116.md).
+This release uses compose.release.yml and PostgreSQL17.11 outside Compose; older
+Compose/server examples below are historical contracts. RELEASE_READY remains NO
+until current-price canary and operator acceptance. Stage6 import remains blocked.
+
 ## Current state
 
 The latest verified feature state is in [`CURRENT_STATE.md`](CURRENT_STATE.md); the stage sections below are history. Supported suppliers:
@@ -37,6 +43,12 @@ Different supplier domains may run in parallel up to `MAX_PARALLEL_SUPPLIER_JOBS
 The immutable policy captured when a job is enqueued reaches the actual Partner `HttpTransport` or Optimum `HttpFetcher`. Concurrency, request interval, jitter, timeout, attempts, bounded backoff, Retry-After behavior, circuit breaker and monotonic maximum-run duration are all effective and represented in run metadata. A deadline produces `MAX_RUN_DURATION_EXCEEDED`, partial status and no missing-product deactivation.
 
 ## Database and tests
+
+The migration checksum manifests are in the repository root. The general-purpose
+`Dockerfile` includes the historical manifests used by QA, including
+`stage3d_migration_baseline_sha256.json` and `stage6c1_migration_baseline_sha256.json`.
+`Dockerfile.server` uses `stage6e_migration_baseline_sha256.json` to verify
+migrations 001–015. A fresh checkout contains these files.
 
 Services run `scripts/docker_postgres_migrate.py` before startup. Migrations 001–015 are immutable (checksums in `stage6e_migration_baseline_sha256.json`); Stage 6E.1 itself added no migration. Later additive migrations: 015 (commercial capture observations) and 016 (index on `review_decisions.source_product_id`). To test without live crawling:
 

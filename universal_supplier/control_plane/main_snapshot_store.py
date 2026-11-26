@@ -131,7 +131,8 @@ class ReadOnlyMainSnapshotStore(PostgresControlPlaneStore):
         except Exception:
             return []
 
-    def runs(self, limit: int = 100) -> list[dict]:
+    def runs(self, limit: int = 100, job_status=None) -> list[dict]:
+        if job_status in ('queued','running'):return []
         """Legacy dump predates crawl_jobs; show persisted crawl_runs only."""
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("""SELECT cr.*,s.code AS supplier_code,s.name AS supplier_name,

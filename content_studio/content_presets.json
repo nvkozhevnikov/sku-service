@@ -1,0 +1,5 @@
+{
+  "news": {"label":"Новость / событие","vk_paragraphs":3,"vk_limit":1100,"news_paragraphs":6,"article_section":"Подробности"},
+  "product": {"label":"Товар / оборудование","vk_paragraphs":3,"vk_limit":1200,"news_paragraphs":7,"article_section":"Что известно об оборудовании"},
+  "promotion": {"label":"Акция / предложение","vk_paragraphs":4,"vk_limit":1400,"news_paragraphs":8,"article_section":"Условия предложения из источника"}
+}

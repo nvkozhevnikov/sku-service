@@ -1,8 +1,8 @@
 """Shared test helpers.
 
 Some regression tests replay local evidence that is deliberately not committed
-(``reports/`` and ``RC_LOCAL`` are git-ignored; historical stage baselines,
-``SUMMARY.txt`` and ``docker-compose.qa.yml`` live only in operator checkouts).
+(``reports/`` and ``RC_LOCAL`` are git-ignored; ``SUMMARY.txt`` and
+``docker-compose.qa.yml`` live only in operator checkouts).
 On a clean clone those tests SKIP with an explicit reason instead of failing.
 The assertions themselves are unchanged and still run wherever the evidence exists.
 
@@ -24,11 +24,6 @@ LOCAL_EVIDENCE_DIRS = frozenset({"reports", "RC_LOCAL"})
 LOCAL_EVIDENCE_FILES = frozenset({
     "SUMMARY.txt",
     "docker-compose.qa.yml",
-    "migration_baseline_sha256.json",
-    "stage3a1_migration_baseline_sha256.json",
-    "stage3a2_migration_baseline_sha256.json",
-    "stage3d_migration_baseline_sha256.json",
-    "stage6c1_migration_baseline_sha256.json",
 })
 
 

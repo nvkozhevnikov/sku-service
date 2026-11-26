@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "scope": "Available-data partial RC; not a complete release",
+  "source_db": "sterbrust_unified_rc_20261019",
+  "restore_db": "sterbrust_unified_restore_20261019",
+  "port": 55461,
+  "source_system_identifier": "7698346631476390904",
+  "independent_target": "New empty database in own isolated PG17.11 cluster; CREATE DATABASE template0, no existing DB overwritten",
+  "all_table_fingerprints_equal": true,
+  "all_sequences_equal": true,
+  "all_constraints_equal": true,
+  "schema_migrations_equal": true,
+  "source_unchanged_during_dump_restore": true,
+  "restored_application_readback": "PASS: shared login + products + competitor news + replay panel",
+  "source_db_writes": 0,
+  "http_requests_external": 0,
+  "dump": "D:\\documents\\personal\\ChatGPT\\\u0421\u0442\u0435\u0440\u0431\u0440\u0443\u0441\u0442\\work\\sku-service-unified-rc-20261019\\release\\DELIVERY_2026-10-19_RC1\\database\\sterbrust_unified_2026-10-19_RC1.dump",
+  "bytes": 124142732,
+  "sha256": "b6858888fd2d370d6973eb309891293e0e8c8e2da1a0d2b884fc63e935aa219e",
+  "grants": "No ACL dump; explicit role/schema/table grants rehearsed on restore target only",
+  "known_omissions": [
+    "Vekprom and newer Intervesp 55452: BLOCKED_MISSING_VERIFIED_SOURCE_DATA"
+  ],
+  "matching_gate": "NOT_VERIFIED_PENDING_LINUX_AND_CHURN_REVIEW"
+}

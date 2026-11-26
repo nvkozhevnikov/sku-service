@@ -1,0 +1,255 @@
+{
+  "by_source": {
+    "beka_mak": {
+      "AUTO": 14,
+      "CONFLICT": 46,
+      "NEW": 26,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 23
+    },
+    "beka_mak_tr": {
+      "AUTO": 0,
+      "CONFLICT": 0,
+      "NEW": 18,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 60
+    },
+    "intervesp": {
+      "AUTO": 320,
+      "CONFLICT": 222,
+      "NEW": 687,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 413
+    },
+    "kami": {
+      "AUTO": 409,
+      "CONFLICT": 659,
+      "NEW": 2680,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 1516
+    },
+    "ltt_msk": {
+      "AUTO": 2,
+      "CONFLICT": 7,
+      "NEW": 205,
+      "NOT_PROCESSED": 4,
+      "REVIEW": 151
+    },
+    "ltt_sib": {
+      "AUTO": 1,
+      "CONFLICT": 9,
+      "NEW": 891,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 365
+    },
+    "ltt_yug": {
+      "AUTO": 0,
+      "CONFLICT": 21,
+      "NEW": 375,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 195
+    },
+    "optimum": {
+      "AUTO": 0,
+      "CONFLICT": 147,
+      "NEW": 555,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 651
+    },
+    "partner_st": {
+      "AUTO": 19,
+      "CONFLICT": 63,
+      "NEW": 803,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 340
+    },
+    "uss_stanko": {
+      "AUTO": 1,
+      "CONFLICT": 46,
+      "NEW": 64,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 116
+    },
+    "vekprom": {
+      "AUTO": 32,
+      "CONFLICT": 182,
+      "NEW": 4204,
+      "NOT_PROCESSED": 0,
+      "REVIEW": 2416
+    }
+  },
+  "code_sha256": {
+    "sterbrust_matching/matching.py": "e6b6dd1a68e536f1e8074fea69bff59bf28d4ad7821f9ab7041967ad0528325e",
+    "sterbrust_matching/product_identity.py": "6a78d0d1d726abfec4c17ceb993ab2f985239c5e8791d7c283d0e42818b84e6d",
+    "universal_supplier/automatic_matching.py": "96817063a11b51ab0d5faefc636d3caf22477389da2f7eab678a81c5b5845c2b",
+    "universal_supplier/matching_service.py": "c69705cf3489a7a8515ad03a63b5ab1703ae3c0c264545f595e1eaaa246c1e2e"
+  },
+  "counts": {
+    "candidate_rejections": 0,
+    "offers": 18958,
+    "product_category_path_nodes": 13472,
+    "product_category_paths": 7839,
+    "product_identity_decisions": 0,
+    "product_matches": 8871,
+    "product_properties": 101532,
+    "review_decisions": 0,
+    "source_products": 18958,
+    "sterbrust_product_supplier_identifiers": 30420,
+    "sterbrust_products": 59427,
+    "suppliers": 11
+  },
+  "dump": "D:\\documents\\personal\\ChatGPT\\Стербруст\\work\\sku-service-unified-rc-20261019\\release\\DELIVERY_2026-10-19_RC1_VI\\database\\sterbrust_unified_2026-10-19_RC1_VI.dump",
+  "dump_sha256": "a2c9e3fec764714f00648485dee7c72d7b158439a9863803a722b3080de083c2",
+  "existing_by_outcome": {
+    "AUTO": 350,
+    "CONFLICT": 324,
+    "REVIEW": 160
+  },
+  "existing_preserved": 834,
+  "hydrated_cards": {
+    "beka_mak": 7,
+    "beka_mak_tr": 78,
+    "intervesp": 1485,
+    "ltt_msk": 215,
+    "uss_stanko": 227,
+    "vekprom": 6829
+  },
+  "input_cards_sha256": "00d01fe07344a249e2d88b0d027b87fcbb19a6014cc285359b6ccf79fcd23f94",
+  "method": "pg_restore data-only to stdout; no database or network",
+  "policy_version": "automatic-f01-f03-preserve-v1",
+  "reasons": {
+    "beka_mak": {
+      "AUTO:BRAND_MODEL": 13,
+      "AUTO:MANUFACTURER_IDENTIFIER": 1,
+      "CONFLICT:IDENTITY_CONFLICT": 46,
+      "NEW:NO_CANDIDATES": 26,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 22,
+      "REVIEW:NON_UNIQUE_STRONG_CANDIDATES": 1
+    },
+    "beka_mak_tr": {
+      "NEW:NO_CANDIDATES": 18,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 1,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 59
+    },
+    "intervesp": {
+      "AUTO:BRAND_MODEL": 320,
+      "CONFLICT:IDENTITY_CONFLICT": 222,
+      "NEW:NO_CANDIDATES": 646,
+      "NEW:NO_IDENTITY_EVIDENCE": 41,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 66,
+      "REVIEW:BRAND_MODEL_IDENTITY_REVIEW": 4,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 185,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 4,
+      "REVIEW:NAME_CANDIDATE_ONLY": 151,
+      "REVIEW:NON_UNIQUE_STRONG_CANDIDATES": 3
+    },
+    "kami": {
+      "AUTO:BRAND_MODEL": 78,
+      "AUTO:EXISTING_LINK": 331,
+      "CONFLICT:EXISTING_LINK_CONFLICT": 279,
+      "CONFLICT:IDENTITY_CONFLICT": 380,
+      "NEW:NO_CANDIDATES": 2435,
+      "NEW:NO_IDENTITY_EVIDENCE": 245,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 170,
+      "REVIEW:BRAND_MODEL_IDENTITY_REVIEW": 31,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 1164,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 14,
+      "REVIEW:NAME_CANDIDATE_ONLY": 135,
+      "REVIEW:NON_UNIQUE_STRONG_CANDIDATES": 2
+    },
+    "ltt_msk": {
+      "AUTO:BRAND_MODEL": 2,
+      "CONFLICT:IDENTITY_CONFLICT": 7,
+      "NEW:NO_CANDIDATES": 205,
+      "NOT_PROCESSED:INACTIVE_SOURCE": 4,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 42,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 53,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 52,
+      "REVIEW:NAME_CANDIDATE_ONLY": 4
+    },
+    "ltt_sib": {
+      "AUTO:BRAND_MODEL": 1,
+      "CONFLICT:IDENTITY_CONFLICT": 9,
+      "NEW:NO_CANDIDATES": 891,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 66,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 241,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 42,
+      "REVIEW:NAME_CANDIDATE_ONLY": 16
+    },
+    "ltt_yug": {
+      "CONFLICT:IDENTITY_CONFLICT": 21,
+      "NEW:NO_CANDIDATES": 375,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 107,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 22,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 50,
+      "REVIEW:NAME_CANDIDATE_ONLY": 16
+    },
+    "optimum": {
+      "CONFLICT:IDENTITY_CONFLICT": 147,
+      "NEW:NO_CANDIDATES": 331,
+      "NEW:NO_IDENTITY_EVIDENCE": 224,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 42,
+      "REVIEW:BRAND_MODEL_IDENTITY_REVIEW": 3,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 519,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 77,
+      "REVIEW:NAME_CANDIDATE_ONLY": 10
+    },
+    "partner_st": {
+      "AUTO:EXISTING_LINK": 19,
+      "CONFLICT:EXISTING_LINK_CONFLICT": 45,
+      "CONFLICT:IDENTITY_CONFLICT": 13,
+      "CONFLICT:SUPPLIER_ARTICLE_IDENTITY_CONFLICT": 5,
+      "NEW:NO_CANDIDATES": 753,
+      "NEW:NO_IDENTITY_EVIDENCE": 50,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 39,
+      "REVIEW:BRAND_MODEL_IDENTITY_REVIEW": 24,
+      "REVIEW:DUPLICATE_SUPPLIER_ARTICLE": 8,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 183,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 40,
+      "REVIEW:NAME_CANDIDATE_ONLY": 21,
+      "REVIEW:REFERENCE_MODEL_ONLY": 25
+    },
+    "uss_stanko": {
+      "AUTO:BRAND_MODEL": 1,
+      "CONFLICT:IDENTITY_CONFLICT": 46,
+      "NEW:NO_CANDIDATES": 63,
+      "NEW:NO_IDENTITY_EVIDENCE": 1,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 72,
+      "REVIEW:BRAND_MODEL_IDENTITY_REVIEW": 1,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 17,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 12,
+      "REVIEW:NAME_CANDIDATE_ONLY": 13,
+      "REVIEW:NON_UNIQUE_STRONG_CANDIDATES": 1
+    },
+    "vekprom": {
+      "AUTO:BRAND_MODEL": 23,
+      "AUTO:MANUFACTURER_IDENTIFIER": 5,
+      "AUTO:SUPPLIER_ARTICLE_EXACT": 4,
+      "CONFLICT:IDENTITY_CONFLICT": 119,
+      "CONFLICT:SUPPLIER_ARTICLE_IDENTITY_CONFLICT": 63,
+      "NEW:NO_CANDIDATES": 4202,
+      "NEW:NO_IDENTITY_EVIDENCE": 2,
+      "REVIEW:AMBIGUOUS_CRITICAL_OBSERVATIONS": 128,
+      "REVIEW:BRAND_MODEL_IDENTITY_REVIEW": 8,
+      "REVIEW:DUPLICATE_SUPPLIER_ARTICLE": 1,
+      "REVIEW:INSUFFICIENT_OWN_IDENTITY": 2159,
+      "REVIEW:MISSING_BRAND_FOR_MODEL_CANDIDATE": 95,
+      "REVIEW:NAME_CANDIDATE_ONLY": 25
+    }
+  },
+  "sql_writes": 0,
+  "total": 18958,
+  "totals": {
+    "AUTO": 798,
+    "CONFLICT": 1402,
+    "NEW": 10508,
+    "NOT_PROCESSED": 4,
+    "REVIEW": 6246
+  },
+  "write_actions": {
+    "ACCEPT_EXACT": 448,
+    "NONE": 4,
+    "PRESERVE_EXISTING": 834,
+    "RECORD_PROPOSAL": 17672
+  }
+}

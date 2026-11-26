@@ -35,6 +35,10 @@ class SystemAsyncClock:
         await asyncio.sleep(seconds)
 
 
+class RequestAborted(RuntimeError):
+    """Caller cancelled before the next HTTP attempt; not a network error."""
+
+
 class MaxRunDurationExceeded(RuntimeError):
     """Raised before another HTTP attempt can start after the crawl deadline."""
 
@@ -99,6 +103,7 @@ class RequestMetrics:
     http_5xx: int = 0
     http_429: int = 0
     network_errors: int = 0
+    requests_aborted: int = 0
     retry_count: int = 0
     response_time_total_seconds: float = 0.0
     rate_limit_waits: int = 0
@@ -342,16 +347,24 @@ def request_with_resilience(
     *, clock: Clock | None = None, metrics: RequestMetrics | None = None,
     breaker: CircuitBreaker | None = None,
     deadline: float | None = None,
+    stop_statuses: frozenset[int] = frozenset(),
+    abort_requested: Callable[[], bool] | None = None,
 ) -> tuple[Any, int]:
     clock = clock or SystemClock()
     metrics = metrics or RequestMetrics()
     breaker = breaker or CircuitBreaker(policy, clock=clock, metrics=metrics)
     last_error: Exception | None = None
     for attempt in range(1, policy.max_attempts + 1):
+        if abort_requested and abort_requested():
+            metrics.add(requests_aborted=1)
+            raise RequestAborted('HOST_STOPPED')
         _check_deadline(clock, deadline, metrics)
         _wait_while_open(breaker, clock, deadline, metrics)
         limiter.wait(metrics, deadline=deadline)
         _check_deadline(clock, deadline, metrics)
+        if abort_requested and abort_requested():
+            metrics.add(requests_aborted=1)
+            raise RequestAborted('HOST_STOPPED')
         # Another worker can open the shared circuit while this request waits
         # at the domain pacing gate.
         _wait_while_open(breaker, clock, deadline, metrics)
@@ -361,6 +374,9 @@ def request_with_resilience(
             response = send()
             status = int(response.status_code)
             metrics.record_status(status, clock.monotonic() - started)
+            if status in stop_statuses:
+                breaker.failure(f'HTTP_{status}')
+                return response, attempt
             if status not in TRANSIENT_STATUSES:
                 breaker.success()
                 return response, attempt
@@ -369,6 +385,9 @@ def request_with_resilience(
                 return response, attempt
             retry_after = retry_after_seconds(getattr(response, "headers", {})) if status == 429 and policy.respect_retry_after else None
             delay = retry_after if retry_after is not None else backoff_seconds(policy, attempt)
+        except RequestAborted:
+            metrics.add(requests_aborted=1)
+            raise
         except Exception as error:
             last_error = error
             metrics.record_network_error(clock.monotonic() - started, type(error).__name__)

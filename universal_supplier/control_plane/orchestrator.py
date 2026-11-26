@@ -37,6 +37,26 @@ class Orchestrator:
         return self.queue.recover_stale()
 
     def _run_job(self, job: CrawlJob) -> None:
+        try:
+            self._run_job_with_lease(job)
+        except Exception as error:
+            # Lease acquisition and cleanup used to sit outside the runner's
+            # exception boundary. A failed Future must never vanish as RUNNING.
+            from .transport_diagnostics import exception_evidence,safe_message
+            from . import automation_execution
+            import json
+            evidence={'job_id':job.id,'supplier_code':job.supplier_code,
+                      'stage':'WORKER_BOUNDARY','diagnostics':exception_evidence(error)}
+            LOGGER.error('worker boundary failed: %s',json.dumps(evidence))
+            session=automation_execution.ACTIVE
+            if session is not None:
+                from .source_hourly import atomic_text
+                session.fail('AUTOMATION_WORKER_BOUNDARY_FAILED')
+                atomic_text(session.folder/('WORKER_FAILURE_'+str(job.id)+'.json'),json.dumps(evidence))
+            self._complete(job,'failed',error_message='WORKER_BOUNDARY_FAILED:'+type(error).__name__+':'+safe_message(error))
+            raise
+
+    def _run_job_with_lease(self, job: CrawlJob) -> None:
         if not self.registry.supports(job.adapter_name, job.crawl_type):
             self.queue.complete(
                 job.id, "failed",
@@ -47,22 +67,52 @@ class Orchestrator:
             if not lease.acquired:
                 self.queue.complete(job.id, "skipped_locked", error_message="SAME_DOMAIN_LOCK_NOT_ACQUIRED")
                 return
+            from .manual_collection import running_manually
+            if running_manually(job) and not self.queue.heartbeat(job.id):
+                # A delayed process may acquire the host lock after its queue
+                # entry was closed. Check ownership before the runner starts.
+                return
             stop = threading.Event()
+            lost = threading.Event()
 
             def heartbeat() -> None:
                 while not stop.wait(max(1.0, self.queue.lease_seconds / 3)):
-                    if not self.queue.heartbeat(job.id):
+                    try:ok=self.queue.heartbeat(job.id)
+                    except Exception:ok=False
+                    if not ok:
+                        lost.set()
                         return
 
             heart = threading.Thread(target=heartbeat, daemon=True)
             heart.start()
             try:
                 runner = self.registry.resolve(job.adapter_name)
-                result = runner(job, self.config)
+                from .source_runtime import LEASED_HOST,LEASE_ALIVE
+                token=LEASED_HOST.set(job.domain)
+                def alive():
+                    connection=getattr(lease,'connection',None)
+                    if lost.is_set() or not lease.acquired:return False
+                    if connection is None:return True
+                    try:
+                        # SELECT proves the lock-owning session is alive before
+                        # each source request; a closed advisory lease stops I/O.
+                        with connection.cursor() as cursor:cursor.execute('SELECT 1')
+                        return not connection.closed
+                    except Exception:
+                        lost.set();return False
+                lease_token=LEASE_ALIVE.set(alive)
+                try:result = runner(job, self.config)
+                finally:
+                    LEASE_ALIVE.reset(lease_token);LEASED_HOST.reset(token)
             except Exception as error:
                 self._complete(job, "failed", error_message=f"{type(error).__name__}: {str(error)[:2000]}")
             else:
-                self._complete(job, result.get("status", "succeeded"), crawl_run_id=result.get("crawl_run_id"))
+                details={}
+                if 'termination_reason' in result or 'discovery_complete' in result:
+                    details['error_message']=(f"status={result.get('status','succeeded')}; "
+                        f"termination_reason={result.get('termination_reason') or 'none'}; "
+                        f"discovery_complete={str(result.get('discovery_complete')).lower()}")[:2000]
+                self._complete(job, result.get("status", "succeeded"), crawl_run_id=result.get("crawl_run_id"), **details)
             finally:
                 stop.set()
                 heart.join(timeout=1)
@@ -89,7 +139,20 @@ class Orchestrator:
     def tick(self) -> int:
         if self._last_recover is None or time.monotonic() - self._last_recover >= self.recover_interval_seconds:
             self.recover()
-        self.active = {future for future in self.active if not future.done()}
+        completed={future for future in self.active if future.done()}
+        self.active-=completed
+        for future in completed:
+            # Consume unexpected task exceptions instead of silently dropping
+            # them and claiming more jobs until their database leases expire.
+            try:future.result()
+            except Exception as error:
+                from . import automation_execution
+                from .transport_diagnostics import exception_evidence
+                import json
+                if automation_execution.ACTIVE is not None:
+                    automation_execution.ACTIVE.fail('AUTOMATION_WORKER_TASK_FAILED')
+                LOGGER.error('unexpected supplier worker task failure: %s',json.dumps(exception_evidence(error)))
+                raise
         submitted = 0
         while len(self.active) < self.max_parallel:
             job = self.queue.claim_next()

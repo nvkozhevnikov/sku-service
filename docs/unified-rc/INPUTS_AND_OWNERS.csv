@@ -1,0 +1,7 @@
+﻿kind,path_or_ref,pinned_value,owner
+BASE,remote develop,58152e4bd390361d3e97ee475bae78a91295e241,second developer;preserved
+F01_F03,../sku-service-matching-f01-f03-20261019,0c0164a5ea49659a895866766731bf83adddea76,feature author + GLM
+LTT_USS,../sku-service-ltt-uss,94deab99fcf3e8c7c6b525ca572e36aa763b7909,source owner
+COMPETITOR,../sterbrust-competitive-intelligence,c919870334d5602807e7d1dc5fbc8990106c0b89,source owner
+KAMI,../sku-service-kami,c0135eef1ad1a2bd502fdc1ade62887974e7c222,source owner
+VEKPROM_INTERVESP,127.0.0.1:55452/universal_supplier_vekprom_intervesp,BLOCKED_MISSING_VERIFIED_SOURCE_DATA,owner approval required

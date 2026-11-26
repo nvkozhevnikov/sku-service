@@ -342,6 +342,18 @@ class XmlExportService:
         self.store = store
         self.policy = policy or FeedPolicy.load(POLICY_PATH)
 
+    def dual_previews(self, *, baseline=None):
+        from .dual_preview import build
+        if not hasattr(self.store,'dual_preview_snapshot'):raise ValueError('PREVIEW_POSTGRES_SNAPSHOT_UNAVAILABLE')
+        return build(self.store.dual_preview_snapshot(),baseline=baseline)
+
+    def publish_previews(self, folder):
+        from .dual_preview import publish,latest
+        baseline=latest(folder) if (Path(folder)/'latest.json').exists() else None
+        data,manifest=self.dual_previews(baseline=baseline)
+        publish(folder,data,manifest)
+        return manifest
+
     def canonical_summary(self, supplier: str = "") -> dict[str, int]:
         if hasattr(self.store, "xml_canonical_summary"):
             return self.store.xml_canonical_summary(supplier)

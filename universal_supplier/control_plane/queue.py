@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from universal_supplier.partner_pilot import connect_postgres
+
 from dataclasses import dataclass
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 import threading
 from typing import Any
 from urllib.parse import urlparse
@@ -65,17 +68,253 @@ class EnqueueResult:
 
 
 class PostgresJobQueue:
-    def __init__(self, config: PostgresConfig, *, lease_seconds: int = 300) -> None:
+    def __init__(self, config: PostgresConfig, *, lease_seconds: int = 300,connection_factory=None) -> None:
         self.config = config
         self.lease_seconds = lease_seconds
+        self.connection_factory=connection_factory
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True)
+        return (getattr(self,'connection_factory',None) or connect_postgres)(self.config, autocommit=True)
+
+    def preview_source_batch(self):
+        from .source_batch import preview
+        return preview(self)
+
+    def enqueue_source_batch(self, **approval):
+        from .source_batch import enqueue
+        return enqueue(self, **approval)
+
+    def source_batch_status(self, batch_id):
+        from .source_batch import status
+        return status(self, batch_id)
+
+    def stop_source_batch(self, batch_id):
+        """Cancel waiting intent and request existing checkpoint STOP for running work."""
+        with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            from .source_canary import validate_config, validate_connection
+            validate_config(self.config)
+            validate_connection(connection)
+            cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
+            cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),
+                error_message='OPERATOR_BATCH_STOP',updated_at=now()
+                WHERE settings_snapshot->'source_batch'->>'id'=%s AND status='queued'""", (batch_id,))
+            cursor.execute("""SELECT supplier_id,id FROM crawl_jobs
+                WHERE settings_snapshot->'source_batch'->>'id'=%s AND status='running'""", (batch_id,))
+            running = cursor.fetchall()
+            cursor.execute("""UPDATE crawl_jobs SET error_message='OPERATOR_BATCH_STOP_PENDING'
+                WHERE settings_snapshot->'source_batch'->>'id'=%s AND status='running'""", (batch_id,))
+            for supplier_id, job_id in running:
+                self.stop_source(supplier_id, job_id)
+
+    def stop_automation(self,sha):
+        """STOP this execution, including after its deadline; never touches LIVE11 jobs."""
+        from .automation_execution import ACTIVE,require
+        require(ACTIVE is not None and ACTIVE.sha==sha,'AUTOMATION_STOP_SESSION_MISMATCH')
+        with self._connect() as c,c.transaction(),c.cursor() as q:
+            q.execute("""SELECT supplier_id,id FROM crawl_jobs WHERE status='running'
+                AND settings_snapshot->'automation'->>'approval_sha256'=%s""",(sha,))
+            running=q.fetchall()
+            q.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),updated_at=now(),error_message='AUTOMATION_STOP'
+                WHERE status='queued' AND settings_snapshot->'automation'->>'approval_sha256'=%s""",(sha,))
+        for supplier_id,job_id in running:self.stop_source(supplier_id,job_id)
+
+    def _canary_preview(self,connection,cursor,supplier_id,supplier,limit,mode='REFRESH'):
+        from .source_canary import limit_value,validate_config,validate_connection,build_preview
+        limit_value(limit);validate_config(self.config);validate_connection(connection)
+        from .automation_execution import ACTIVE
+        from .commercial_refresh import is_refresh,preview
+        if ACTIVE is not None and is_refresh(ACTIVE.value):
+            if mode!='REFRESH' or limit!=ACTIVE.value['suppliers'][supplier[0]]['limits']['REFRESH']:
+                raise PermissionError('COMMERCIAL_REFRESH_LIMIT_CHANGED')
+            return preview(self.config,supplier_id,supplier)
+        cursor.execute('''WITH known AS (
+            SELECT DISTINCT ON (coalesce(canonical_url,source_url)) id,external_id,coalesce(canonical_url,source_url) AS url
+            FROM source_products WHERE supplier_id=%s AND active AND external_id_is_stable
+            ORDER BY coalesce(canonical_url,source_url),id)
+            SELECT id,external_id,url,count(*) OVER() FROM known ORDER BY id LIMIT %s''',(supplier_id,limit))
+        return build_preview(supplier_id,supplier,cursor.fetchall(),self.config,limit,mode)
+
+    def preview_source_canary(self,supplier_id,limit,mode='REFRESH'):
+        from .source_canary import limit_value,validate_config
+        limit_value(limit);validate_config(self.config)
+        with self._connect() as connection:
+            connection.read_only=True
+            with connection.transaction(),connection.cursor() as cursor:
+                cursor.execute('SELECT code,adapter_name,base_url,enabled,crawl_settings,rate_settings FROM suppliers WHERE id=%s',(supplier_id,))
+                supplier=cursor.fetchone()
+                if supplier is None:raise ValueError('Поставщик не найден')
+                return self._canary_preview(connection,cursor,supplier_id,supplier,limit,mode)
+
+    def stop_source(self,supplier_id,job_id):
+        from .source_runtime import runtime_enabled,job_dir
+        from .source_jobs import RUNTIME_SOURCES as SOURCES
+        if not runtime_enabled():raise PermissionError('SOURCE_RUNTIME_NOT_ENABLED')
+        with self._connect() as connection,connection.cursor() as cursor:
+            cursor.execute('''SELECT s.code,j.status,j.settings_snapshot FROM crawl_jobs j
+                JOIN suppliers s ON s.id=j.supplier_id WHERE j.id=%s AND j.supplier_id=%s''',(job_id,supplier_id))
+            row=cursor.fetchone()
+        if not row or row[0] not in SOURCES or row[1]!='running' or not (row[2].get('crawl_settings') or {}).get('collection_mode'):raise ValueError('NO_ACTIVE_SOURCE_RUNTIME_JOB')
+        path=job_dir(row[0],job_id)/'STOP_REQUESTED'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open('x',encoding='utf-8') as f:f.write('OPERATOR_STOP')
+        except FileExistsError:pass
+
+    def close_expired_manual_job(self, supplier_id, job_id, *, actor_id=None):
+        """Close one expired manual job. Keep the checkpoint and all receipts."""
+        from .admin_store import PostgresAdminStore
+        from .source_canary import validate_config, validate_connection
+        validate_config(self.config)
+        reason = 'ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT'
+        with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            validate_connection(connection)
+            cursor.execute("""SELECT j.crawl_run_id,j.heartbeat_at,j.lease_expires_at,
+                       j.settings_snapshot->>'domain',s.base_url
+                FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
+                WHERE j.id=%s AND j.supplier_id=%s AND j.status='running'
+                  AND j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection'
+                FOR UPDATE OF j""", (job_id, supplier_id))
+            expired = cursor.fetchone()
+            if not expired:
+                raise ValueError('Срок задания не истёк или задание уже закрыто. Обновите страницу.')
+            run_id, heartbeat, lease_expiry, stored_domain, base_url = expired
+            domain = normalized_domain(base_url)
+            if stored_domain != domain:
+                raise PermissionError('Домен задания не совпадает с доменом поставщика')
+            cursor.execute('SELECT pg_try_advisory_xact_lock(%s)', (advisory_lock_key(domain),))
+            if cursor.fetchone() != (True,):
+                raise PermissionError('Исполнитель ещё держит блокировку сайта. Проверьте статус позже.')
+            run_status = None
+            if run_id is not None:
+                cursor.execute("""SELECT status,metadata->>'job_id' FROM crawl_runs
+                    WHERE id=%s AND supplier_id=%s FOR UPDATE""", (run_id, supplier_id))
+                run = cursor.fetchone()
+                if not run or run[1] != str(job_id):
+                    raise ValueError('Связь задания с запуском не подтверждена')
+                run_status = run[0]
+                if run_status == 'running':
+                    cursor.execute("""UPDATE crawl_runs SET status='partial',finished_at=now(),
+                        metadata=coalesce(metadata,'{}'::jsonb)||jsonb_build_object('termination_reason',%s::text)
+                        WHERE id=%s""", (reason, run_id))
+            cursor.execute("""UPDATE crawl_jobs SET status='stale_failed',finished_at=now(),
+                lease_expires_at=NULL,error_message=%s,updated_at=now() WHERE id=%s""", (reason, job_id))
+            PostgresAdminStore._audit(cursor, actor_id, 'MANUAL_COLLECTION_EXPIRED_CLOSED', 'crawl_job', job_id,
+                {'status':'running','run_id':run_id,'run_status':run_status,'heartbeat_at':heartbeat,'lease_expires_at':lease_expiry},
+                {'status':'stale_failed','run_id':run_id,'run_status':'partial' if run_status=='running' else run_status},
+                'Expired manual lease closed without starting a job or changing receipts')
+
+    def recover_queued_manual_job(self, supplier_id, job_id, actor, key, *, cancel):
+        """Recover or close the exact manual job before it has been claimed."""
+        from .manual_collection import enabled, require, verify
+        from .access_policy import allowed
+
+        require(enabled() and actor.id > 0 and actor.is_active and not actor.must_change_password
+                and allowed(actor, 'supplier.manage'), 'Нет прав на восстановление задания')
+        with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            cursor.execute("""SELECT j.settings_snapshot,j.requested_by_user_id,s.enabled,s.base_url
+                FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
+                WHERE j.id=%s AND j.supplier_id=%s AND j.status='queued'
+                  AND j.crawl_run_id IS NULL AND j.started_at IS NULL
+                  AND j.trigger_type='manual' AND j.settings_snapshot ? 'manual_collection'
+                FOR UPDATE OF j""", (job_id, supplier_id))
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError('Задание уже запущено, закрыто или принадлежит другому поставщику. Обновите страницу.')
+            snapshot, requested_by, source_enabled, base_url = row
+            if cancel:
+                require(actor.id == requested_by or actor.role == 'ADMIN', 'Закрыть это задание может его автор или администратор')
+                cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),updated_at=now(),
+                    error_message='MANUAL_WAITING_CANCELLED' WHERE id=%s""", (job_id,))
+                return
+            require(actor.id == requested_by, 'Запустить ожидающее задание может только его автор')
+            require(source_enabled, 'Источник выключен. Закройте ожидающее задание перед новым запуском')
+            require(normalized_domain(base_url) == snapshot.get('domain'), 'Адрес источника изменился. Закройте ожидающее задание')
+            approval = verify(snapshot, key)
+            require((approval['actor_id'], approval['actor_role'], approval['actor_sv']) ==
+                    (actor.id, actor.role, actor.session_version), 'Права изменились. Закройте ожидающее задание')
+
+    def fail_waiting_manual_job(self, job_id, message):
+        """A losing launcher may never change a claimed job."""
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("""UPDATE crawl_jobs SET status='failed',finished_at=now(),updated_at=now(),
+                error_message=%s WHERE id=%s AND status='queued' AND started_at IS NULL
+                  AND crawl_run_id IS NULL AND settings_snapshot ? 'manual_collection'""", (message, job_id))
+
+    @staticmethod
+    def _latest_resume_parent(cursor, supplier_id, job_id, *, lock=False):
+        sql = """SELECT j.status,j.settings_snapshot,r.metadata
+            FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id
+            WHERE j.id=%s AND j.supplier_id=%s
+              AND NOT EXISTS (SELECT 1 FROM crawl_jobs newer WHERE newer.supplier_id=j.supplier_id
+                  AND newer.id>j.id AND newer.status<>'skipped_already_queued')"""
+        cursor.execute(sql + (' FOR SHARE OF j' if lock else ''), (job_id, supplier_id))
+        previous = cursor.fetchone()
+        if not previous:
+            raise ValueError('RESUME_PARENT_NOT_LATEST')
+        return previous
+
+    def manual_resume_status(self, supplier_id, job_id, request):
+        """Read-only equivalent of the resume admission used at enqueue."""
+        request.validate(supplier_id, None, 'manual', 'RESUME')
+        with self._connect() as connection:
+            connection.read_only = True
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute("""SELECT code,adapter_name,base_url,enabled,crawl_settings,rate_settings
+                    FROM suppliers WHERE id=%s""", (supplier_id,))
+                supplier = cursor.fetchone()
+                if not supplier or (not supplier[3] and request.actor.role != 'ADMIN'):
+                    raise PermissionError('RESUME_SUPPLIER_DISABLED')
+                parent = self._latest_resume_parent(cursor, supplier_id, job_id)
+                request.resume(self.config, supplier_id, supplier, job_id, parent)
+
+    def source_resume_status(self,job_id):
+        from .source_controls import verify_resume
+        from .source_runtime import runtime_enabled,read_input
+        if not runtime_enabled():raise PermissionError('SOURCE_RUNTIME_NOT_ENABLED')
+        with self._connect() as c,c.cursor() as q:
+            q.execute('''SELECT s.code,j.status,r.metadata FROM crawl_jobs j
+                JOIN suppliers s ON s.id=j.supplier_id JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.id=%s''',(job_id,))
+            row=q.fetchone()
+        if not row or row[1] not in ('partial','failed','cancelled','stale_failed'):raise ValueError('RESUME_PARENT_NOT_TERMINAL')
+        rt=(row[2] or {}).get('source_runtime') or {}
+        owner=rt['owner_job_id'];sha=rt['input_sha256']
+        original=read_input(row[0],owner,sha)
+        verify_resume(row[0],owner,sha,original,self.config)
+        return True
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
-                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None) -> EnqueueResult:
+                scheduled_for: datetime | None = None, requested_by_user_id: int | None = None, pilot_limit: int | None = None, pilot_profile: str = 'conservative', source_mode: str | None = None, resume_job_id: int | None = None, source_limit: int | None = None, source_preview_sha256: str | None = None, recovery_sha256: str | None = None, automation_sha256: str | None = None, manual_request=None) -> EnqueueResult:
+        if manual_request is not None:
+            from .manual_collection import ManualRequest
+            if not isinstance(manual_request,ManualRequest):raise PermissionError('Неверное подтверждение запуска')
+            manual_request.validate(supplier_id,source_limit,trigger_type,source_mode)
+            if any(x is not None for x in (automation_sha256,recovery_sha256,pilot_limit)) or (
+                    (source_mode=='RESUME') != (type(resume_job_id) is int and resume_job_id>0)):
+                raise PermissionError('Ручной запуск нельзя смешивать с другим допуском')
+        if automation_sha256 is not None:
+            from .automation_execution import require_active
+            session=require_active(automation_sha256)
+            if trigger_type!='schedule' or recovery_sha256 is not None:raise PermissionError('AUTOMATION_SCHEDULE_ONLY')
+        if recovery_sha256 is not None and (source_mode != 'RESUME' or type(resume_job_id) is not int or resume_job_id < 1):
+            raise PermissionError('RECOVERY_REQUIRES_APPROVED_PARENT_RESUME')
+        if source_limit is not None:
+            from .source_canary import limit_value,validate_config
+            limit_value(source_limit);validate_config(self.config)
+            if source_mode not in ('REFRESH','DISCOVERY') or (trigger_type!='manual' and automation_sha256 is None) or crawl_type!='full' or pilot_limit is not None or resume_job_id is not None:
+                raise ValueError('CANARY_MANUAL_REFRESH_ONLY')
+            if manual_request is None and (not isinstance(source_preview_sha256,str) or len(source_preview_sha256)!=64):raise ValueError('Сначала просмотрите и подтвердите выбранную партию canary')
+        elif source_preview_sha256 is not None:raise ValueError('CANARY_LIMIT_REQUIRED')
+        from universal_supplier.partner_pilot import enabled,limit_value,validate_config
+        if pilot_limit is not None:
+            if not enabled():raise PermissionError("PILOT_MODE_NOT_ENABLED")
+            limit_value(pilot_limit);validate_config(self.config)
+            from universal_supplier.partner_pilot import rate_profile
+            rate_profile(pilot_profile)
+        if enabled() and pilot_limit is None:raise PermissionError('PILOT_FULL_CRAWL_DISABLED')
         scheduled_for = scheduled_for or utcnow()
+        if automation_sha256 is not None and scheduled_for.tzinfo is None:
+            raise ValueError('AUTOMATION_SCHEDULE_REQUIRES_TIMEZONE')
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
             cursor.execute(
                 """SELECT code, adapter_name, base_url, enabled, crawl_settings, rate_settings
@@ -85,8 +324,18 @@ class PostgresJobQueue:
             if supplier is None:
                 raise KeyError(f"unknown supplier_id={supplier_id}")
             code, adapter_name, base_url, enabled, crawl_settings, rate_settings = supplier
+            if manual_request is not None and not enabled:
+                if manual_request.actor.role!='ADMIN':raise PermissionError('Включить источник может только администратор')
+                cursor.execute("SELECT id FROM crawl_jobs WHERE supplier_id=%s AND status IN ('queued','running')",(supplier_id,))
+                if cursor.fetchone():raise PermissionError('У источника уже есть незавершённое задание')
+                cursor.execute('UPDATE suppliers SET enabled=true,updated_at=now() WHERE id=%s',(supplier_id,))
+                enabled=True
+                supplier=(code,adapter_name,base_url,enabled,crawl_settings,rate_settings)
             if not enabled:
-                raise ValueError(f"supplier {code} is disabled")
+                raise ValueError(f"Поставщик {code} выключен (disabled); запуск заблокирован. Требуется отдельное подтверждение временного включения.")
+            from .source_jobs import RUNTIME_SOURCES
+            if code in RUNTIME_SOURCES and pilot_limit is None and source_limit is None and source_mode!='RESUME':
+                raise PermissionError('EXPLICIT_COLLECTION_SCOPE_PREVIEW_REQUIRED')
             cursor.execute(
                 """SELECT id FROM crawl_jobs
                    WHERE supplier_id=%s AND status IN ('queued','running')
@@ -98,6 +347,93 @@ class PostgresJobQueue:
                 "domain": normalized_domain(base_url), "crawl_type": crawl_type,
                 "crawl_settings": crawl_settings or {}, "rate_settings": rate_settings or {},
             }
+            if manual_request is not None and source_mode=='RESUME':
+                previous = self._latest_resume_parent(cursor, supplier_id, resume_job_id, lock=True)
+                snapshot=manual_request.resume(self.config,supplier_id,supplier,resume_job_id,previous)
+            elif source_limit is not None:
+                preview=(manual_request.preview(self,connection,cursor,supplier_id,supplier,source_limit) if manual_request is not None else self._canary_preview(connection,cursor,supplier_id,supplier,source_limit,source_mode))
+                if manual_request is None and preview['confirmation_sha256']!=source_preview_sha256:
+                    raise ValueError('Партия, количество, политика или target изменились; заново откройте preview canary')
+                snapshot=preview['snapshot']
+                if automation_sha256 is not None and source_mode=='REFRESH' and snapshot['source_input']['canary']['total_known']>source_limit:
+                    raise PermissionError('AUTOMATION_SCOPE_GROWTH_REQUIRES_APPROVAL')
+            elif source_mode is not None:
+                if (trigger_type!='manual' and automation_sha256 is None) or pilot_limit is not None:raise ValueError('SOURCE_MANUAL_ONLY')
+                from .source_controls import prepare_snapshot
+                known=[];parent=None
+                if source_mode=='REFRESH':
+                    cursor.execute("SELECT external_id,coalesce(canonical_url,source_url) FROM source_products WHERE supplier_id=%s AND active AND external_id_is_stable ORDER BY id",(supplier_id,))
+                    known=cursor.fetchall()
+                elif source_mode=='RESUME':
+                    if type(resume_job_id) is not int or resume_job_id<1:raise ValueError('RESUME_PARENT_REQUIRED')
+                    cursor.execute('''SELECT j.status,j.supplier_id,j.settings_snapshot,r.metadata
+                        FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.id=%s FOR SHARE OF j''',(resume_job_id,))
+                    previous=cursor.fetchone()
+                    if not previous or previous[1]!=supplier_id:raise ValueError('RESUME_PARENT_NAMESPACE')
+                    if previous[2].get('source_batch'):
+                        if automation_sha256 is not None:raise PermissionError('AUTOMATION_CANNOT_RECOVER_LIVE11')
+                        rt = (previous[3] or {}).get('source_runtime') or {}
+                        from .source_batch import resume_is_safe
+                        recovery_proof = None
+                        if recovery_sha256 is not None:
+                            from .source_recovery import approval, validate_matching, require, admission_runtime
+                            _, approved_sha = approval()
+                            require(recovery_sha256 == approved_sha, 'RECOVERY_CONFIRMATION_CHANGED')
+                            recovery_proof = validate_matching(cursor, previous[2], resume_job_id, config=self.config)
+                            admission_runtime(rt,recovery_proof)
+                        if not resume_is_safe(rt) and recovery_proof is None:
+                            raise PermissionError('BATCH_RESUME_REQUIRES_OPERATOR_DECISION')
+                        snapshot = deepcopy(previous[2])
+                    parent={'status':previous[0],'supplier_code':code,'settings':previous[2],'result':(previous[3] or {}).get('source_runtime',{})}
+                    if automation_sha256 is not None:
+                        prior_marker=previous[2].get('automation') or {}
+                        if prior_marker.get('approval_sha256')!=automation_sha256:
+                            # Cross-approval resume only through the operator-signed
+                            # mixed-recovery block pinning this exact parent job and
+                            # its own approval.
+                            from .automation_execution import mixed_recovery
+                            prior_rt=(previous[3] or {}).get('source_runtime') or {}
+                            block=(mixed_recovery(code,prior_rt.get('owner_job_id'),prior_rt.get('input_sha256'))
+                                if prior_rt.get('owner_job_id') and prior_rt.get('input_sha256') else None)
+                            if (block is None or block.get('parent_job_id')!=resume_job_id or
+                                    block.get('parent_approval_sha256')!=prior_marker.get('approval_sha256')):
+                                raise PermissionError('AUTOMATION_RESUME_APPROVAL_CHANGED')
+                        snapshot=deepcopy(previous[2])
+                snapshot=prepare_snapshot(snapshot,source_mode,known_rows=known,resume=parent,config=self.config)
+                if source_mode=='RESUME' and previous[2].get('source_batch'):
+                    from .source_batch import resume_envelope
+                    snapshot = resume_envelope(cursor, previous[2], snapshot, recovery_proof)
+                    if recovery_proof is not None:
+                        snapshot['source_batch']['recovery'] = {k: recovery_proof[k] for k in ('kind','parent_job_id','run_id','approval_sha256')}
+            if automation_sha256 is not None:
+                from .supplier_automation import settings_for,digest
+                from .automation_execution import validate_job
+                phase=snapshot['source_input']['mode']
+                snapshot['automation']={'approval_sha256':automation_sha256,'phase':phase,
+                    'revision':settings_for({'rate_settings':rate_settings,'crawl_settings':crawl_settings})['revision'],
+                    'rate_sha256':digest(snapshot['rate_settings']),'scheduled_for':scheduled_for.astimezone(timezone.utc).isoformat(),
+                    'priority':settings_for({'rate_settings':rate_settings,'crawl_settings':crawl_settings})['priority']}
+                if session.value.get('purpose'):
+                    snapshot['automation']['purpose']=session.value['purpose']
+                validate_job(snapshot)
+                rule=session.value['suppliers'][code]
+                cursor.execute('''SELECT count(*) FROM crawl_jobs WHERE supplier_id=%s
+                    AND settings_snapshot->'automation'->>'approval_sha256'=%s
+                    AND settings_snapshot->'automation'->>'phase'=%s
+                    AND scheduled_for=%s''',
+                    (supplier_id,automation_sha256,phase,scheduled_for))
+                if cursor.fetchone()[0]>=rule['max_queue_attempts']:raise PermissionError('AUTOMATION_QUEUE_ATTEMPTS_EXHAUSTED')
+            if pilot_limit is not None:
+                if code!='partner_st' or adapter_name!='partner_st' or trigger_type!='manual':raise ValueError('PILOT_PARTNER_MANUAL_ONLY')
+                cursor.execute("SELECT sp.id,sp.external_id,coalesce(sp.canonical_url,sp.source_url) FROM source_products sp WHERE sp.supplier_id=%s AND sp.active AND sp.external_id_is_stable ORDER BY sp.id LIMIT %s",(supplier_id,pilot_limit))
+                snapshot['partner_pilot']=__import__('universal_supplier.partner_pilot',fromlist=['snapshot']).snapshot(pilot_limit,cursor.fetchall(),pilot_profile)
+                snapshot['rate_settings']={**(rate_settings or {}),**rate_profile(pilot_profile)}
+            if manual_request is not None:
+                snapshot['manual_collection']=manual_request.seal(snapshot,cursor)
+                from .admin_store import PostgresAdminStore
+                PostgresAdminStore._audit(cursor,manual_request.actor.id,'MANUAL_COLLECTION_APPROVED','supplier',supplier_id,None,
+                    {'cards':snapshot['crawl_settings']['max_products'],'resume_job_id':resume_job_id,
+                     'nonce':snapshot['manual_collection']['nonce'],'profile':snapshot['rate_settings']},'Authenticated one-click manual start; no scheduler or matching apply')
             if active:
                 cursor.execute(
                     """INSERT INTO crawl_jobs
@@ -117,19 +453,86 @@ class PostgresJobQueue:
             )
             return EnqueueResult(cursor.fetchone()[0], "queued")
 
-    def claim_next(self) -> CrawlJob | None:
+    def claim_next(self, *, job_id=None, manual_validator=None) -> CrawlJob | None:
+        if job_id is not None and (type(job_id) is not int or job_id<1 or not callable(manual_validator)):
+            raise PermissionError('Нужен точный подтверждённый номер ручного задания')
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
-            cursor.execute(
-                """SELECT j.id,j.supplier_id,s.code,s.adapter_name,s.base_url,j.trigger_type,
+            # Serialize claims across worker processes, not only each thread pool.
+            # Existing host session lease remains the final network guard.
+            cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
+            cursor.execute("SELECT count(*) FROM crawl_jobs WHERE status='running'")
+            if cursor.fetchone()[0] >= 2:
+                return None
+            # Frozen deadlines remain evidence. An exact approved extension must
+            # also govern queue expiry, before per-snapshot dispatch validation.
+            protected_batch = protected_until = None
+            from . import source_recovery as recovery
+            if os.environ.get(recovery.ENV + '_FILE'):
+                approved, _ = recovery.approval()
+                from .source_autonomy import require_active
+                require_active(approved)
+                protected_batch = approved['batch_id']
+                protected_until = recovery.execution_deadline(approved)
+            if job_id is None:
+                cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),
+                    error_message='BATCH_WINDOW_EXPIRED',updated_at=now()
+                    WHERE status='queued' AND settings_snapshot ? 'source_batch'
+                      AND (settings_snapshot->'source_batch'->>'deadline')::timestamptz<=now()
+                      AND NOT coalesce(settings_snapshot->'source_batch'->>'id'=%s
+                                       AND %s::timestamptz>now(),false)""",
+                    (protected_batch, protected_until))
+            claim_sql = """SELECT j.id,j.supplier_id,s.code,s.adapter_name,s.base_url,j.trigger_type,
                           j.crawl_type,j.status,j.scheduled_for,j.settings_snapshot
                    FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
                    WHERE j.status='queued' AND j.scheduled_for<=now() AND s.enabled
-                   ORDER BY j.scheduled_for,j.requested_at,j.id
+                     AND NOT EXISTS (SELECT 1 FROM crawl_jobs running JOIN suppliers rs ON rs.id=running.supplier_id
+                         WHERE running.status='running' AND
+                         coalesce(running.settings_snapshot->>'domain',regexp_replace(lower(split_part(split_part(rs.base_url,'://',2),'/',1)),'^www[.]', ''))=
+                         coalesce(j.settings_snapshot->>'domain',regexp_replace(lower(split_part(split_part(s.base_url,'://',2),'/',1)),'^www[.]', '')))
+                     AND (NOT (j.settings_snapshot ? 'source_batch') OR s.code='beka_mak' OR EXISTS (
+                         SELECT 1 FROM crawl_jobs gate JOIN suppliers gs ON gs.id=gate.supplier_id
+                         WHERE gs.code='beka_mak' AND gate.status='succeeded'
+                           AND gate.settings_snapshot->'source_batch'->>'id'=j.settings_snapshot->'source_batch'->>'id'
+                           AND gate.settings_snapshot->'source_batch'->>'phase'='DISCOVERY'
+                           AND EXISTS (SELECT 1 FROM audit_events a WHERE a.action='SOURCE_BATCH_BEKA_ISOLATION_CONFIRMED'
+                               AND a.entity_type='source_batch' AND a.entity_id=j.settings_snapshot->'source_batch'->>'id')))
+                   ORDER BY coalesce((j.settings_snapshot->'automation'->>'priority')::integer,100),j.scheduled_for,j.requested_at,j.id
                    FOR UPDATE OF j SKIP LOCKED LIMIT 1"""
-            )
+            if job_id is not None:
+                claim_sql=claim_sql.replace("WHERE j.status='queued'", "WHERE j.id=%s AND j.status='queued'",1)
+                cursor.execute(claim_sql,(job_id,))
+            else:
+                claim_sql=claim_sql.replace("WHERE j.status='queued'", "WHERE j.status='queued' AND NOT (j.settings_snapshot ? 'manual_collection')",1)
+                cursor.execute(claim_sql)
             row = cursor.fetchone()
             if row is None:
                 return None
+            if job_id is not None:
+                if row[0]!=job_id or not row[9].get('manual_collection'):raise PermissionError('Чужое задание не запускается')
+                if normalized_domain(row[4]) != row[9].get('domain'):
+                    raise PermissionError('Домен источника изменился')
+                manual_validator(row[9])
+            from . import automation_execution
+            if automation_execution.ACTIVE is not None and not row[9].get('automation'):
+                raise PermissionError('AUTOMATION_FOREIGN_ACTIVE_JOB')
+            if row[9].get('automation'):
+                from .automation_execution import validate_job
+                validate_job(row[9])
+            if row[9].get('source_batch'):
+                from .source_batch import validate_snapshot
+                try:
+                    validate_snapshot(row[9])
+                except (ValueError, PermissionError) as error:
+                    cursor.execute("UPDATE crawl_jobs SET status='failed',finished_at=now(),error_message=%s WHERE id=%s",
+                                   (str(error), row[0]))
+                    return None
+            from universal_supplier.partner_pilot import enabled,validate_snapshot
+            if enabled():
+                if row[2]!='partner_st' or row[3]!='partner_st' or not row[9].get('partner_pilot'):raise PermissionError('PILOT_WORKER_OTHER_JOB')
+                batch=validate_snapshot(row[9]['partner_pilot'])
+                for item in batch:
+                    cursor.execute('SELECT sp.external_id,coalesce(sp.canonical_url,sp.source_url),s.code FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id WHERE sp.id=%s',(item['source_product_id'],))
+                    if cursor.fetchone()!=(item['external_id'],item['url'],'partner_st'):raise PermissionError('PILOT_REGISTERED_IDENTITY_CHANGED')
             lease = utcnow() + timedelta(seconds=self.lease_seconds)
             cursor.execute(
                 """UPDATE crawl_jobs SET status='running',started_at=now(),heartbeat_at=now(),
@@ -150,19 +553,32 @@ class PostgresJobQueue:
                  error_message: str | None = None) -> None:
         if status not in FINAL_STATUSES:
             raise ValueError(f"not a final status: {status}")
-        with self._connect() as connection, connection.cursor() as cursor:
+        with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
             cursor.execute(
                 """UPDATE crawl_jobs SET status=%s,finished_at=now(),lease_expires_at=NULL,
-                          crawl_run_id=coalesce(%s,crawl_run_id),error_message=%s,updated_at=now()
-                   WHERE id=%s AND status='running'""",
+                          crawl_run_id=coalesce(%s,crawl_run_id),error_message=CASE
+                          WHEN error_message='OPERATOR_BATCH_STOP_PENDING' THEN 'OPERATOR_BATCH_STOP' ELSE %s END,updated_at=now()
+                   WHERE id=%s AND status='running' RETURNING supplier_id,settings_snapshot,requested_by_user_id,error_message""",
                 (status, crawl_run_id, error_message, job_id),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError(f"job {job_id} is not running")
+            supplier_id, snapshot, user_id, saved_error = cursor.fetchone()
+            if status == 'succeeded' and snapshot.get('source_batch') and saved_error != 'OPERATOR_BATCH_STOP':
+                from .source_batch import advance
+                advance(cursor, supplier_id, snapshot, user_id)
 
     def recover_stale(self) -> int:
         """Fail uncertain jobs; never rerun them blindly after a crash."""
         with self._connect() as connection, connection.cursor() as cursor:
+            from . import automation_execution
+            if automation_execution.ACTIVE is not None:
+                cursor.execute("""UPDATE crawl_jobs SET status='stale_failed',finished_at=now(),
+                    error_message='ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT',updated_at=now()
+                    WHERE status='running' AND lease_expires_at<now()
+                    AND settings_snapshot->'automation'->>'approval_sha256'=%s""",(automation_execution.ACTIVE.sha,))
+                return cursor.rowcount
             cursor.execute(
                 """UPDATE crawl_jobs SET status='stale_failed',finished_at=now(),
                           error_message='ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT',updated_at=now()
@@ -182,7 +598,7 @@ class PostgresDomainLease:
 
     def __enter__(self):
         import psycopg
-        self.connection = psycopg.connect(**self.config.kwargs(), autocommit=True)
+        self.connection = connect_postgres(self.config, autocommit=True)
         with self.connection.cursor() as cursor:
             cursor.execute("SELECT pg_try_advisory_lock(%s)", (advisory_lock_key(self.domain),))
             self.acquired = bool(cursor.fetchone()[0])

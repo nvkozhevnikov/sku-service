@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<h2>Проверка сохранённых данных</h2>
+<p>Релиз-кандидат · данные собраны до 19.10.2026. Проверка читает сохранённые записи, не обновляет сайты и не меняет решения сопоставления.</p>
+<p class="notice">Автоматический сбор выключен. Доступность сохранённых данных каждого источника указана ниже.</p>
+<table><thead><tr><th>Источник</th><th>Записей</th><th>Состояние снимка</th><th>Проверка</th></tr></thead><tbody>
+{% for source in sources %}<tr><td>{{'Поставщик' if source.module=='supplier' else 'Конкурент'}} · {{source.name}}</td><td>{{source.records if source.records is defined else '—'}}</td><td>{{{'AVAILABLE':'Сохранённые данные доступны','HISTORICAL_ONLY_NEW_SNAPSHOT_BLOCKED':'Исторический снимок; ожидается новый дамп','BLOCKED_MISSING_VERIFIED_SOURCE_DATA':'Ожидается проверенный дамп'}.get(source.snapshot_status,source.snapshot_status)}}</td><td>
+<form method="post" action="/release-jobs/enqueue"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="source_key" value="{{source.key}}"><button {% if source.snapshot_status=='BLOCKED_MISSING_VERIFIED_SOURCE_DATA' %}disabled{% endif %}>Проверить сохранённые данные</button></form>
+</td></tr>{% endfor %}</tbody></table>
+<h3>Журнал проверок</h3><table><thead><tr><th>№</th><th>Источник</th><th>Запуск</th><th>Статус</th><th>Когда</th><th>Результат</th></tr></thead><tbody>{% for job in jobs %}<tr><td>{{job[0]}}</td><td>{% for source in sources if source.key==job[1] %}{{source.name}}{% endfor %}</td><td>{{{'OPERATOR_UI':'Ручная проверка','CLI_MANUAL':'Ручная проверка','SCHEDULED_REPLAY':'Проверка расписания'}.get(job[2],job[2])}}</td><td>{{{'queued':'В очереди','running':'Выполняется','succeeded':'Завершено','failed':'Ошибка'}.get(job[3],job[3])}}</td><td>{{job[4].strftime('%d.%m.%Y %H:%M')}}</td><td>{% if job[5] %}Проверено записей: {{job[5].rows}}{% else %}Ожидает выполнения{% endif %}</td></tr>{% endfor %}</tbody></table>
+{% endblock %}

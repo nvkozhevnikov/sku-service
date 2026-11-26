@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from universal_supplier.partner_pilot import connect_postgres
 from universal_supplier.effective_identity import effective_manual_mapping_sql,accepted_current_mapping_sql
 
 import csv
@@ -12,11 +14,12 @@ from universal_supplier.postgres import PostgresConfig
 from .heartbeat import read_components
 from .scheduler import next_occurrences
 from .sql_text import like_contains
+from .presentation import collection_issue_counts
 
 LOGGER = logging.getLogger(__name__)
+
+
 MAX_PAGE = 100_000
-
-
 DECISIONS = (
     "EXACT_EXISTING", "HIGH_CONFIDENCE_EXISTING", "REVIEW_EXISTING", "CONFLICT",
     "SAFE_NEW_PRODUCT_CANDIDATE", "ACCESSORY_OR_COMPATIBILITY_ITEM", "INSUFFICIENT_IDENTITY",
@@ -37,7 +40,7 @@ class UnavailableControlPlaneStore:
     def products(self, filters): return {"rows": [], "total": 0, "page": filters.page, "page_size": filters.page_size, "pages": 0}
     def product(self, supplier_code, external_id): return None
     def suppliers(self): return []
-    def runs(self): return []
+    def runs(self, limit=100, job_status=None): return []
     def run(self, run_id): return None
     def export_rows(self, filters): return []
     def product_history(self, supplier_code, external_id): return []
@@ -62,7 +65,7 @@ class ProductFilters:
     page_size: int = 50
 
     def __post_init__(self) -> None:
-        if self.page < 1 or self.page > MAX_PAGE or self.page_size not in {25, 50, 100}:
+        if type(self.page) is not int or self.page < 1 or self.page > MAX_PAGE or self.page_size not in {25, 50, 100}:
             raise ValueError("invalid pagination")
         if self.decision and self.decision not in DECISIONS:
             raise ValueError("invalid decision")
@@ -114,7 +117,16 @@ DASHBOARD_SQL = """SELECT s.id,s.code,s.name,s.enabled,s.base_url,s.rate_setting
                        last_run.discovered_count AS last_discovered_count,last_run.new_count AS last_new_count,
                        last_run.changed_count AS last_changed_count,last_run.error_count AS last_error_count,
                        CASE WHEN last_run.finished_at IS NULL THEN NULL ELSE round(extract(epoch FROM (last_run.finished_at-last_run.started_at)))::int END AS last_duration_seconds,
-                       active.status AS job_status,active.id AS job_id,
+                       EXISTS(SELECT 1 FROM crawl_jobs WHERE supplier_id=s.id AND status='queued') AS has_queued_job,
+                       EXISTS(SELECT 1 FROM crawl_jobs WHERE supplier_id=s.id AND status='running') AS has_running_job,
+                       active.status AS job_status,active.id AS job_id,active.error_message AS job_error_message,
+                       coalesce(active.status='queued' AND active.started_at IS NULL AND active.crawl_run_id IS NULL
+                           AND active.trigger_type='manual' AND active.settings_snapshot ? 'manual_collection',false) AS manual_job_queued,
+                       active.requested_by_user_id AS manual_job_actor_id,
+                       coalesce(active.status='running' AND active.lease_expires_at<now()
+                           AND active.settings_snapshot ? 'manual_collection',false) AS manual_job_expired,
+                       active.crawl_run_id AS job_run_id,active.created_at AS job_created_at,
+                       (SELECT max(finished_at) FROM crawl_runs WHERE supplier_id=s.id AND status='succeeded') AS last_successful_crawl,
                        ss.enabled AS schedule_enabled,ss.cron_expression,ss.timezone
                 FROM suppliers s
                 LEFT JOIN LATERAL (SELECT count(*) AS products FROM source_products sp
@@ -122,18 +134,22 @@ DASHBOARD_SQL = """SELECT s.id,s.code,s.name,s.enabled,s.base_url,s.rate_setting
                 LEFT JOIN LATERAL (SELECT count(*) AS errors_30d FROM crawl_errors ce
                                    WHERE ce.supplier_id=s.id AND ce.created_at>now()-interval '30 days') error_count ON true
                 LEFT JOIN LATERAL (SELECT id,status,started_at,finished_at,discovered_count,new_count,changed_count,error_count,metadata FROM crawl_runs WHERE supplier_id=s.id ORDER BY started_at DESC LIMIT 1) last_run ON true
-                LEFT JOIN LATERAL (SELECT id,status FROM crawl_jobs WHERE supplier_id=s.id AND status IN ('queued','running') ORDER BY id LIMIT 1) active ON true
+                LEFT JOIN LATERAL (SELECT id,status,error_message,crawl_run_id,created_at,lease_expires_at,settings_snapshot,
+                    started_at,trigger_type,requested_by_user_id
+                    FROM crawl_jobs WHERE supplier_id=s.id
+                    ORDER BY (status IN ('queued','running')) DESC,id DESC LIMIT 1) active ON true
                 LEFT JOIN supplier_schedules ss ON ss.supplier_id=s.id
                 ORDER BY s.name,s.id"""
 
 
 class PostgresControlPlaneStore:
-    def __init__(self, config: PostgresConfig) -> None:
+    def __init__(self, config: PostgresConfig, *, connection_factory=None) -> None:
         self.config = config
+        self.connection_factory=connection_factory
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True, row_factory=psycopg.rows.dict_row)
+        return (getattr(self,'connection_factory',None) or connect_postgres)(self.config, autocommit=True, row_factory=psycopg.rows.dict_row)
 
     def health(self) -> dict:
         try:
@@ -226,7 +242,8 @@ class PostgresControlPlaneStore:
               sp.external_id,sp.external_id_is_stable,sp.sku,sp.name,sp.brand_raw,sp.manufacturer_raw,
               sp.source_url,sp.canonical_url,sp.description_text,sp.description_html,sp.active,
               sp.first_seen_at,sp.last_seen_at,sp.last_success_at,sp.last_changed_at,sp.last_http_status,
-              pid.own_model,pid.reference_model,pid.product_kind,coalesce(pid.decision,accepted.match_status) AS decision,
+              coalesce(pid.own_model, CASE WHEN s.code='ivstankomaster' THEN sp.raw_data->'source_identity'->>'raw_model' END) AS own_model,
+              pid.reference_model,pid.product_kind,coalesce(pid.decision,accepted.match_status) AS decision,
               coalesce(pid.decision_reason,accepted.match_method) AS decision_reason,
               CASE WHEN pid.decision = 'REVIEW_EXISTING' THEN pid.best_sterbrust_id END AS proposed_sterbrust_id,
               coalesce(manual.sterbrust_product_id,accepted.sterbrust_product_id) AS confirmed_sterbrust_id,
@@ -250,7 +267,11 @@ class PostgresControlPlaneStore:
                 FROM sterbrust_products sb WHERE sb.catalog_product_id=sp.catalog_product_id AND sb.active
                   AND {effective_manual_mapping_sql('sp.id','sp.catalog_product_id')}
                 ORDER BY sb.sterbrust_product_id LIMIT 1) manual ON true
-              LEFT JOIN LATERAL(SELECT availability_raw,availability_normalized,price,old_price,currency,price_type,price_raw,price_source,quantity FROM offers WHERE source_product_id=sp.id AND active ORDER BY id LIMIT 1)o ON true
+              LEFT JOIN LATERAL(
+                SELECT availability_raw,availability_normalized,price,old_price,currency,price_type,price_raw,price_source,quantity
+                FROM offers WHERE source_product_id=sp.id AND (active OR s.code='ivstankomaster')
+                ORDER BY active DESC,id LIMIT 1
+              )o ON true
               LEFT JOIN LATERAL(SELECT count(*) AS property_count FROM product_properties WHERE source_product_id=sp.id)prop ON true
               LEFT JOIN LATERAL(SELECT count(*) FILTER(WHERE media_type='image') AS image_count,count(*) FILTER(WHERE media_type='document') AS document_count FROM product_media WHERE source_product_id=sp.id)media ON true
               LEFT JOIN LATERAL(SELECT count(*) AS relation_count FROM source_product_relations WHERE from_source_product_id=sp.id)rel ON true
@@ -346,60 +367,235 @@ class PostgresControlPlaneStore:
     def product_history(self, supplier_code: str, external_id: str) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("""SELECT h.changed_at,h.field_group,h.field_name,h.old_value,h.new_value,h.crawl_run_id,s.code AS supplier_code
-              FROM entity_change_history h JOIN source_products sp ON sp.id=h.source_product_id
+              FROM entity_change_history h LEFT JOIN offers ho ON ho.id=h.offer_id JOIN source_products sp ON sp.id=coalesce(h.source_product_id,ho.source_product_id)
               JOIN suppliers s ON s.id=sp.supplier_id WHERE s.code=%s AND sp.external_id=%s
               ORDER BY h.changed_at DESC,h.id DESC""", (supplier_code,external_id))
             history = list(cursor.fetchall())
-            if supplier_code in {"intervesp", "beka_mak", "beka_mak_tr", "kami"}:
-                cursor.execute("""SELECT co.observed_at,co.price_state,co.price,co.currency,
-                    co.availability_normalized,co.capture_id,s.code AS supplier_code
-                    FROM offer_commercial_observations co
-                    JOIN source_products sp ON sp.id=co.source_product_id
-                    JOIN suppliers s ON s.id=sp.supplier_id
-                    WHERE s.code=%s AND sp.external_id=%s
-                    ORDER BY co.observed_at DESC,co.id DESC""", (supplier_code, external_id))
-                for row in cursor.fetchall():
-                    price_display = (f"{row['price']} {row['currency'] or ''}".strip()
-                                     if row["price_state"] == "numeric_public" and row["price"] is not None
-                                     else "Цена по запросу" if row["price_state"] == "price_on_request"
-                                     else "Цена не указана")
-                    history.append({"changed_at": row["observed_at"], "field_group": "commercial_observation",
-                                    "field_name": "Коммерческое наблюдение", "old_value": None,
-                                    "new_value": f"{price_display}; наличие: {row['availability_normalized'] or 'unknown'}",
-                                    "crawl_run_id": None, "capture_id": row["capture_id"],
-                                    "supplier_code": row["supplier_code"]})
-                history.sort(key=lambda row: row["changed_at"], reverse=True)
+            cursor.execute("""SELECT co.observed_at,co.price_state,co.price,co.currency,
+                co.availability_normalized,co.capture_id,s.code AS supplier_code
+                FROM offer_commercial_observations co
+                JOIN source_products sp ON sp.id=co.source_product_id
+                JOIN suppliers s ON s.id=sp.supplier_id
+                WHERE s.code=%s AND sp.external_id=%s
+                ORDER BY co.observed_at DESC,co.id DESC""", (supplier_code, external_id))
+            for row in cursor.fetchall():
+                price_display = (f"{row['price']} {row['currency'] or ''}".strip()
+                                 if row["price_state"] == "numeric_public" and row["price"] is not None
+                                 else "Цена по запросу" if row["price_state"] == "price_on_request"
+                                 else "Цена не указана")
+                history.append({"changed_at": None, "observed_at": row["observed_at"], "field_group": "commercial_observation",
+                                "field_name": "Коммерческое наблюдение", "old_value": None,
+                                "new_value": f"{price_display}; наличие: {row['availability_normalized'] or 'unknown'}",
+                                "crawl_run_id": None, "capture_id": row["capture_id"],
+                                "supplier_code": row["supplier_code"]})
+            history.sort(key=lambda row: str(row.get("changed_at") or row.get("observed_at") or ""), reverse=True)
             return history
 
-    def runs(self, limit: int = 100) -> list[dict]:
+
+    def runs(self, limit: int = 100, job_status=None) -> list[dict]:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("""SELECT cr.*,s.code AS supplier_code,s.name AS supplier_name,j.trigger_type
+            if job_status in ('queued','running'):
+                cursor.execute("""SELECT j.*,s.name AS supplier_name,s.code AS supplier_code,'job' AS entry_type
+                    FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
+                    WHERE j.status=%s AND NOT (j.status='running' AND
+                        coalesce(j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection',false))
+                    ORDER BY j.id DESC LIMIT %s""",(job_status,limit))
+                return list(cursor.fetchall())
+            cursor.execute("""SELECT cr.*,s.code AS supplier_code,s.name AS supplier_name,j.trigger_type,'run' AS entry_type,
+                 coalesce(j.status='running' AND j.lease_expires_at<now()
+                     AND j.settings_snapshot ? 'manual_collection',false) AS manual_job_expired
                 FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id
                 LEFT JOIN crawl_jobs j ON j.crawl_run_id=cr.id
                 ORDER BY cr.started_at DESC,cr.id DESC LIMIT %s""", (limit,))
-            return list(cursor.fetchall())
+            rows=list(cursor.fetchall())
+            cursor.execute("""SELECT j.*,s.name AS supplier_name,s.code AS supplier_code,'job' AS entry_type,
+                coalesce(j.status='running' AND j.lease_expires_at<now()
+                    AND j.settings_snapshot ? 'manual_collection',false) AS manual_job_expired
+                FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
+                WHERE j.crawl_run_id IS NULL ORDER BY j.id DESC LIMIT %s""",(limit,))
+            rows.extend(cursor.fetchall())
+            return sorted(rows,key=lambda r:str(r.get('started_at') or r.get('created_at') or ''),reverse=True)[:limit]
 
     def run(self, run_id: int) -> dict | None:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT cr.*,s.name AS supplier_name FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id WHERE cr.id=%s", (run_id,))
+            cursor.execute("""SELECT cr.*,s.name AS supplier_name,
+                (SELECT max(j.id) FROM crawl_jobs j WHERE j.crawl_run_id=cr.id
+                 AND j.settings_snapshot ? 'manual_collection') AS manual_job_id,
+                (SELECT max(j.id) FROM crawl_jobs j WHERE j.supplier_id=cr.supplier_id
+                 AND j.status<>'skipped_already_queued') AS latest_supplier_job_id,
+                EXISTS (SELECT 1 FROM crawl_jobs j WHERE j.crawl_run_id=cr.id AND j.status='running'
+                    AND j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection') AS manual_job_expired
+                FROM crawl_runs cr JOIN suppliers s ON s.id=cr.supplier_id WHERE cr.id=%s""", (run_id,))
             row = cursor.fetchone()
             if row:
                 cursor.execute("SELECT * FROM crawl_errors WHERE crawl_run_id=%s ORDER BY created_at,id", (run_id,))
                 row["errors"] = list(cursor.fetchall())
+                cursor.execute("SELECT field_group,count(*) AS count FROM entity_change_history WHERE crawl_run_id=%s GROUP BY field_group ORDER BY field_group",(run_id,))
+                row['history_groups']=list(cursor.fetchall())
         return row
 
     def run_progress(self, run_id: int) -> dict | None:
-        row = self.run(run_id)
-        if not row:
-            return None
-        metadata = row.get("metadata") or {}
-        progress = dict(metadata.get("progress") or {}) if isinstance(metadata, dict) else {}
-        progress.update({"run_id": run_id, "supplier_name": row.get("supplier_name"),
-                         "run_status": row.get("status")})
-        return progress
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("""SELECT r.id AS run_id, r.status AS run_status, s.name AS supplier_name,
+                EXISTS (SELECT 1 FROM crawl_jobs j WHERE j.crawl_run_id=r.id AND j.status='running'
+                    AND j.lease_expires_at<now() AND j.settings_snapshot ? 'manual_collection') AS manual_job_expired,
+                r.metadata->'progress' AS progress, r.metadata ? 'source_runtime' AS durable_progress,
+                r.metadata->'source_runtime'->'quarantined' AS quarantined
+                FROM crawl_runs r
+                JOIN suppliers s ON r.supplier_id=s.id WHERE r.id=%s""",(run_id,))
+            row=cursor.fetchone()
+        if not row:return None
+        if row.pop('manual_job_expired',False) and row['run_status']=='running':
+            row['run_status']='lease_expired'
+        return {**(row.pop('progress') or {}), **collection_issue_counts(row.pop('quarantined',None)), **row}
+
+    def job_progress(self, job_id: int) -> dict | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("""SELECT CASE WHEN j.status='running' AND j.lease_expires_at<now()
+                AND j.settings_snapshot ? 'manual_collection' THEN 'lease_expired' ELSE j.status END AS job_status,
+                r.id AS run_id,r.status AS run_status,
+                s.name AS supplier_name,r.metadata->'progress' AS progress,
+                r.metadata->'source_runtime'->'quarantined' AS quarantined,
+                (coalesce(r.metadata ? 'source_runtime',false)
+                 OR j.settings_snapshot ? 'source_input') AS durable_progress,
+                CASE WHEN j.settings_snapshot->'source_input'->>'mode'='REFRESH'
+                     THEN j.settings_snapshot->'source_input'->'canary'->'selected' END AS target
+                FROM crawl_jobs j JOIN suppliers s ON j.supplier_id=s.id
+                LEFT JOIN crawl_runs r ON j.crawl_run_id=r.id WHERE j.id=%s""",(job_id,))
+            row=cursor.fetchone()
+        if not row:return None
+        progress=row.pop('progress') or {}
+        return {'total':row.pop('target'),'succeeded':0,'deferred':0,**progress,
+                **collection_issue_counts(row.pop('quarantined',None)), **row}
 
     def suppliers(self) -> list[dict]:
         return self.dashboard()
+
+    def dual_preview_snapshot(self):
+        from universal_supplier.preview_store import load
+        return load(self.config,connection_factory=getattr(self,'connection_factory',None))
+
+    def automation_overview(self, suppliers):
+        from .supplier_automation import public_settings,next_due
+        from datetime import datetime,timezone
+        now=datetime.now(timezone.utc)
+        phase="coalesce(j.settings_snapshot->'automation'->>'phase',j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode')"
+        with self._connect() as c,c.cursor() as q:
+            q.execute(f'''SELECT DISTINCT ON (j.supplier_id,{phase}) j.supplier_id,{phase} AS phase,
+                j.id,j.status,j.scheduled_for,j.error_message,r.metadata,
+                (SELECT max(j2.finished_at) FROM crawl_jobs j2 WHERE j2.supplier_id=j.supplier_id
+                 AND j2.status='succeeded' AND coalesce(j2.settings_snapshot->'automation'->>'phase',
+                 j2.settings_snapshot->'source_batch'->>'phase',j2.settings_snapshot->'source_input'->>'mode')={phase}) AS last_success
+                FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id
+                ORDER BY j.supplier_id,{phase},j.id DESC''')
+            phases=list(q.fetchall())
+            q.execute('''SELECT s.id AS supplier_id,sp.last_success_at AS source_last_success_at,
+                obs.capture_id,obs.observed_at,obs.price_state,obs.price AS observed_price,
+                obs.currency AS observed_currency,obs.availability_normalized AS observed_availability,
+                cap.capture_fingerprint,cap.http_status,cap.diagnostics AS capture_diagnostics,obs.extraction_evidence,
+                (cap.source_product_id=sp.id AND cap.supplier_id=s.id AND obs.supplier_id=s.id
+                 AND obs.source_product_id=sp.id AND cap.observed_at=obs.observed_at) AS receipt_identity_valid
+                FROM source_products sp JOIN suppliers s ON s.id=sp.supplier_id
+                LEFT JOIN LATERAL (SELECT co.* FROM offer_commercial_observations co JOIN offers o ON o.id=co.offer_id
+                    WHERE co.source_product_id=sp.id AND o.supplier_id=s.id AND o.active
+                    AND COALESCE(co.region_code,'')=COALESCE(sp.raw_data->>'_commercial_projection_region','')
+                    ORDER BY co.observed_at DESC,co.id DESC LIMIT 1) obs ON true
+                LEFT JOIN supplier_http_captures cap ON cap.id=obs.capture_id WHERE sp.active''')
+            commercial=list(q.fetchall())
+            q.execute('''SELECT sp.supplier_id,pm.status,pm.auto_accepted,count(*) AS n
+                FROM product_matches pm JOIN source_products sp ON sp.id=pm.source_product_id
+                WHERE pm.is_current GROUP BY sp.supplier_id,pm.status,pm.auto_accepted''')
+            matching=list(q.fetchall())
+        result={}
+        for s in suppliers:
+            view=public_settings(s,now);view['phases']={}
+            from universal_supplier.commercial_freshness import assess
+            from .source_hourly import bucket
+            from collections import Counter
+            counts={field:Counter() for field in ('price','availability','content')}
+            for card in commercial:
+                if card['supplier_id']!=s['id']:continue
+                freshness=assess(card,view['settings'],now)
+                for field in counts:counts[field][freshness[field]['state']]+=1
+            view['freshness']={field:dict(values) for field,values in counts.items()}
+            buckets=Counter()
+            for m in matching:
+                if m['supplier_id']==s['id']:buckets[bucket(m['status'],m['auto_accepted'])]+=m['n']
+            view['matching']=dict(buckets)
+            for p in phases:
+                if p['supplier_id']!=s['id'] or p['phase'] not in ('REFRESH','DISCOVERY'):continue
+                rt=(p.get('metadata') or {}).get('source_runtime') or {}
+                view['phases'][p['phase']]={**p,'runtime':rt}
+                if view['next'][p['phase']] is not None:
+                    view['next'][p['phase']]=next_due(view['settings'],p['phase'],now,p['scheduled_for'])
+            result[s['id']]=view
+        return result
+
+    def parsing_settings(self, supplier_id: int) -> dict:
+        from .supplier_automation import public_settings
+        with self._connect() as c,c.cursor() as q:
+            q.execute('SELECT id,code,name,base_url,enabled,rate_settings,crawl_settings FROM suppliers WHERE id=%s',(supplier_id,))
+            supplier=q.fetchone()
+            if not supplier:raise KeyError('Поставщик не найден')
+            q.execute('''SELECT DISTINCT ON (coalesce(j.settings_snapshot->'source_batch'->>'phase',
+                j.settings_snapshot->'source_input'->>'mode'))
+                coalesce(j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode') AS phase,
+                j.id,j.status,j.scheduled_for,j.finished_at,j.crawl_run_id,j.error_message,r.metadata
+                FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.supplier_id=%s
+                ORDER BY coalesce(j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode'),j.id DESC''',(supplier_id,))
+            phases=list(q.fetchall())
+            q.execute('''SELECT action,created_at,before_state,after_state FROM audit_events
+                WHERE entity_type='supplier' AND entity_id=%s AND action='PARSING_SETTINGS_CHANGED'
+                ORDER BY id DESC LIMIT 20''',(str(supplier_id),))
+            history=list(q.fetchall())
+        result=public_settings(supplier);result.update(supplier=supplier,phases=phases,history=history)
+        for row in phases:
+            row['runtime']=(row.get('metadata') or {}).get('source_runtime') or {}
+        return result
+
+    def save_parsing_settings(self, supplier_id: int, values: dict, expected_revision: int, actor_id=None) -> dict:
+        from .supplier_automation import settings_for,validate_settings,rate_for,VERSION,digest
+        from .admin_store import PostgresAdminStore
+        from psycopg.types.json import Jsonb
+        from datetime import datetime,timezone
+        with self._connect() as c,c.transaction(),c.cursor() as q:
+            q.execute('SELECT code,rate_settings,crawl_settings FROM suppliers WHERE id=%s FOR UPDATE',(supplier_id,))
+            row=q.fetchone()
+            if not row:raise KeyError('Поставщик не найден')
+            current=settings_for(row)
+            if type(expected_revision) is not int or expected_revision!=current['revision']:
+                raise ValueError('SETTINGS_REVISION_CHANGED: обновите страницу')
+            validated=validate_settings(values,current)
+            validated.update(version=VERSION,revision=current['revision']+1,
+                changed_at=datetime.now(timezone.utc).isoformat(),changed_by='admin-panel')
+            validated['settings_sha256']=digest({k:v for k,v in validated.items() if k!='settings_sha256'})
+            crawl={**(row['crawl_settings'] or {}),'automation':validated}
+            rate={**(row['rate_settings'] or {}),**rate_for(validated,row['rate_settings'])}
+            q.execute('UPDATE suppliers SET crawl_settings=%s,rate_settings=%s,updated_at=now() WHERE id=%s',
+                      (Jsonb(crawl),Jsonb(rate),supplier_id))
+            PostgresAdminStore._audit(q,actor_id,'PARSING_SETTINGS_CHANGED','supplier',supplier_id,
+                {'automation':current,'rate_settings':row['rate_settings']},
+                {'automation':validated,'rate_settings':rate},'Versioned settings; existing jobs retain snapshots')
+        return validated
+
+    def approve_parsing_host(self,supplier_id,revision,policy_sha,actor_id=None):
+        from .supplier_automation import settings_for,public_settings,rate_for,digest
+        from .host_fetch import host_key
+        from .admin_store import PostgresAdminStore
+        from psycopg.types.json import Jsonb
+        with self._connect() as c,c.transaction(),c.cursor() as q:
+            q.execute('SELECT id,code,base_url,rate_settings,crawl_settings FROM suppliers WHERE id=%s FOR UPDATE',(supplier_id,))
+            row=q.fetchone()
+            if not row:raise KeyError('Поставщик не найден')
+            cfg=settings_for(row);view=public_settings(row)
+            if cfg['revision']!=revision or view.get('host_policy_sha256')!=policy_sha:
+                raise ValueError('HOST_POLICY_CHANGED: обновите страницу')
+            approval={'host':host_key(row['base_url']),'reference':view['host_reference'],
+                      'approved_rate_sha256':digest(rate_for(cfg,row['rate_settings']))}
+            crawl={**(row['crawl_settings'] or {}),'host_policy_approval':approval}
+            q.execute('UPDATE suppliers SET crawl_settings=%s,updated_at=now() WHERE id=%s',(Jsonb(crawl),supplier_id))
+            PostgresAdminStore._audit(q,actor_id,'HOST_POLICY_APPROVED','supplier',supplier_id,
+                row['crawl_settings'],crawl,'Explicit ADMIN exact host/profile confirmation; no enqueue')
 
     def set_supplier_enabled(self, supplier_id: int, enabled: bool) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -429,7 +625,7 @@ class PostgresControlPlaneStore:
     def xml_canonical_snapshot(self, supplier: str = ""):
         from universal_supplier.yml_feed import FeedSnapshot, PostgresFeedStore
         import psycopg
-        with psycopg.connect(**self.config.kwargs(), autocommit=True) as connection:
+        with connect_postgres(self.config, autocommit=True) as connection:
             snapshot = PostgresFeedStore(connection).load_snapshot()
         if supplier:
             selected = tuple(row for row in snapshot.selected_rows if row.supplier_code == supplier)
@@ -632,7 +828,7 @@ class SnapshotControlPlaneStore:
         return {"considered":0,"selected":0,"no_selected_offer":0,"blocked_by_conflict":0,"needs_review":0,"safe_new":0,"accessories":0,"excluded_total":0,"without_price":0,"without_url":0,"without_category":0,"blocked_by_identity":0,"invalid_selected_data":0}
     def product_history(self, supplier_code, external_id): return []
 
-    def runs(self, limit=100): return []
+    def runs(self, limit=100, job_status=None): return []
     def run(self, run_id): return None
     def run_progress(self, run_id):
         if int(run_id) != 1:

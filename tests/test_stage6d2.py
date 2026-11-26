@@ -119,8 +119,8 @@ def test_rendered_normal_pages_have_no_raw_primary_codes_and_are_russian():
         response=client.get(path); assert response.status_code == 200, path
         text=visible_text(response.text)
         assert not [code for code in forbidden if code in text], (path,text)
-        assert "Универсальный поставщик" in text
-    assert "<title>Универсальный поставщик</title>" in client.get("/").text
+        assert "Рабочая панель" in text
+    assert "<title>Рабочая панель</title>" in client.get("/").text
 
 
 def test_product_filters_keep_codes_as_values_but_show_russian_text():

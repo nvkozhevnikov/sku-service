@@ -1,5 +1,36 @@
 # Matching V2.1 antipatterns
 
+## All11 candidate coverage — 16Nov
+
+REPOSITORY-VERIFIED NOT_ACCEPTED: index only the model column while ignoring visible
+own model titles; stop at one nonempty index and conceal duplicate canonical IDs;
+treat `4х-валковый`/axis count as a model; suppress a hard CONFLICT in a new review
+guard; invent brand from supplier/domain; call an old registry's NEW website absence;
+count product_matches events as products; apply an intermediate proposal list.
+The accepted61file is a review artifact, not execution permission. Existing1282
+links are not deleted due to revalidation flags. [Details](docs/unified-rc/ALL11_MATCHING_COVERAGE.md).
+
+## Empty current feed must not erase accumulated results — 16Nov
+
+REPOSITORY-VERIFIED: explained TTL regression formerly advanced latest.json to0/0.
+NOT_ACCEPTED: treating stale fields as missing products/identity; hiding117/48/206
+historical results; losing206NEW work; using equal counts to conceal replaced IDs;
+freezing continuity inventory before subsequently added rows. Also NOT_ACCEPTED:
+substituting last-known prices as current, or using historical links for Bitrix
+import. Preserve original bytes, independent current fields, stable IDs and complete
+per-row reasons. [Rule, implementation and limitations](docs/unified-rc/XML_CONTINUITY.md).
+
+## Release evidence — 2026-11-16
+
+- Do not treat SQL row counts or HTTP200 as proof that the monitoring projection
+  displays content. Historical coverage=null previously erased all projected data
+  behind a caught exception. Unknown coverage stays unknown, never complete.
+- Do not classify evidence missing from a .html-only index: raw HTML can use
+  .capture; git://commit/CATALOG.jsonl#ID fragments identify source_identity rather
+  than a line number. Resolve formats and preserve original references first.
+- Explicit historical-as-of XML scenarios are not current commercial freshness.
+  Archive byte deduplication by SHA256 must never merge source product identities.
+
 OPERATOR-CONFIRMED 2026-10-08. Supplement, not replacement of workspace antipatterns.
 
 1. Requiring N equal specs after strong full identity: missing/count differences

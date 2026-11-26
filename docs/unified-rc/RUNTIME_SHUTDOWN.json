@@ -1,0 +1,15 @@
+{
+  "status": "CLEAN_SERVER_STOPPED",
+  "scope": "Only own newly created RC cluster55461",
+  "data_directory": "C:\\Users\\man503\\.codex\\visualizations\\2026\\10\\19\\01a153ff-dc7c-77b3-a6be-d05f81a86e5c\\rc-pg-20261019",
+  "system_identifier": "7698346631476390904",
+  "before_stop_external_clients": 0,
+  "prepared_transactions": 0,
+  "pending_running_replay_jobs": 0,
+  "pid_file_absent": true,
+  "port55461_closed": true,
+  "control_state": "shut down",
+  "ui_processes": "stopped after browser QA",
+  "source_clusters_started_stopped_restarted": 0,
+  "safe_to_power_off_owned_runtime": true
+}

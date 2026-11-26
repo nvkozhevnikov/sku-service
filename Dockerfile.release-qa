@@ -1,0 +1,7 @@
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 CONTROL_PLANE_SKIP_DEFAULT_APP=YES CONTROL_PLANE_INSECURE_HTTP=YES
+WORKDIR /app
+COPY requirements-qa.lock /tmp/requirements-qa.lock
+RUN pip install --no-cache-dir -r /tmp/requirements-qa.lock
+COPY . /app
+CMD ["python", "-m", "pytest", "-p", "no:cacheprovider", "--basetemp=/tmp/release-pytest", "-q"]

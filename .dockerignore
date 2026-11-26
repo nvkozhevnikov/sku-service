@@ -1,5 +1,6 @@
 .env
 .env.*
+!.env.example
 .git
 .pytest_cache
 __pycache__
@@ -9,6 +10,10 @@ venv
 backups
 server-data
 reports
+competitor-data
+runtime-data
+runtime-secrets
+deployment-contract.json
 work
 release
 node_modules

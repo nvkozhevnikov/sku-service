@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from universal_supplier.partner_pilot import connect_postgres
+
 from dataclasses import dataclass
 import base64
 import hashlib
@@ -25,6 +27,9 @@ class AuthUser:
     role: str
     is_active: bool = True
     session_version: int = 1
+    must_change_password: bool = False
+    permissions: frozenset[str] | None = None
+    access_profile: str | None = None
 
 
 def normalize_username(value: str) -> str:
@@ -94,29 +99,37 @@ def throttle_digest(key) -> str:
 
 
 class PostgresLoginThrottle:
-    """Same contract as LoginThrottle, shared by all web workers via login_failures (migration 017)."""
+    """Shared throttle; migration018 retains history without runtime DELETE rights."""
 
-    def __init__(self, config, *, max_failures: int = 5, window_seconds: float = 900.0) -> None:
+    def __init__(self, config, *, max_failures: int = 5, window_seconds: float = 900.0,connection_factory=None) -> None:
         self.config, self.max_failures, self.window_seconds = config, max_failures, window_seconds
+        self.connection_factory=connection_factory
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True)
+        return (self.connection_factory or connect_postgres)(self.config, autocommit=True)
 
     def locked(self, key) -> bool:
         with self._connect() as c, c.cursor() as q:
-            q.execute("SELECT count(*) FROM login_failures WHERE throttle_key=%s AND failed_at > now() - make_interval(secs => %s)",
+            self._schema(q)
+            q.execute("SELECT count(*) FROM login_failures WHERE throttle_key=%s AND cleared_at IS NULL AND failed_at > now() - make_interval(secs => %s)",
                       (throttle_digest(key), self.window_seconds))
             return int(q.fetchone()[0]) >= self.max_failures
 
     def failure(self, key) -> None:
         with self._connect() as c, c.transaction(), c.cursor() as q:
-            q.execute("DELETE FROM login_failures WHERE failed_at <= now() - make_interval(secs => %s)", (self.window_seconds,))
             q.execute("INSERT INTO login_failures(throttle_key) VALUES (%s)", (throttle_digest(key),))
 
     def reset(self, key) -> None:
         with self._connect() as c, c.cursor() as q:
-            q.execute("DELETE FROM login_failures WHERE throttle_key=%s", (throttle_digest(key),))
+            self._schema(q)
+            q.execute("UPDATE login_failures SET cleared_at=now() WHERE throttle_key=%s AND cleared_at IS NULL", (throttle_digest(key),))
+
+    @staticmethod
+    def _schema(cursor):
+        cursor.execute("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='login_failures' AND column_name='cleared_at')")
+        if not cursor.fetchone()[0]:
+            raise PermissionError('AUTH_SCHEMA018_REQUIRED_FOR_RUNTIME_DML')
 
 
 PLACEHOLDER_SECRET_MARKERS = ("CHANGE_ME", "REPLACE_WITH")

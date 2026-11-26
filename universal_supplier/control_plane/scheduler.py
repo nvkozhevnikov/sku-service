@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from universal_supplier.partner_pilot import connect_postgres
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
@@ -85,18 +87,24 @@ class SchedulerPolicy:
 
 class Scheduler:
     def __init__(self, config: PostgresConfig, queue: PostgresJobQueue,
-                 policy: SchedulerPolicy | None = None, *, heartbeat=None) -> None:
+                 policy: SchedulerPolicy | None = None, *, heartbeat=None, automation=None) -> None:
         self.config = config
         self.queue = queue
         self.policy = policy or SchedulerPolicy()
         self.heartbeat = heartbeat
+        self.automation=automation
+        self.blocked={}
 
     def _connect(self):
         import psycopg
-        return psycopg.connect(**self.config.kwargs(), autocommit=True)
+        if self.automation is not None:
+            from .runtime_config import guarded_connect
+            return guarded_connect(self.config,autocommit=True)
+        return connect_postgres(self.config, autocommit=True)
 
     def tick(self, now: datetime | None = None) -> list[int]:
         now = now or datetime.now(timezone.utc)
+        if self.automation is not None:return self._tick_sources(now)
         enqueued = []
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
             cursor.execute(
@@ -127,6 +135,112 @@ class Scheduler:
         result = self.queue.enqueue(supplier_id, trigger_type="schedule", crawl_type=crawl_type, scheduled_for=occurrence)
         cursor.execute("UPDATE supplier_schedules SET last_enqueued_for=%s,last_evaluated_at=%s,updated_at=now() WHERE supplier_id=%s", (occurrence, now, supplier_id))
         return result.job_id if result.enqueued else None
+
+    def _tick_sources(self,now):
+        """Two modes, same queue and leases; never drives the frozen LIVE11 batch."""
+        from .commercial_refresh import is_refresh,tick
+        if is_refresh(self.automation.value):return tick(self,now)
+        from .supplier_automation import settings_for,due_occurrence,digest
+        from .automation_execution import require_active,require
+        from .source_failure import ROBOTS_LOCAL
+        session=require_active(self.automation.sha)
+        result=[];self.blocked={}
+        with self._connect() as c,c.cursor() as q:
+            q.execute('SELECT id,code,enabled,rate_settings,crawl_settings FROM suppliers ORDER BY code')
+            rows=q.fetchall()
+        for sid,code,enabled,rate,crawl in rows:
+            if code not in session.value['suppliers']:continue
+            paused=session.source_reason(code) if hasattr(session,'source_reason') else None
+            if paused:self.blocked[code]=paused;continue
+            cfg=settings_for({'code':code,'rate_settings':rate,'crawl_settings':crawl})
+            if not enabled or not cfg['schedule_enabled']:continue
+            approved=session.value['suppliers'][code]
+            if approved.get('settings_sha256') and digest(cfg)!=approved['settings_sha256']:
+                self.blocked[code]='AUTOMATION_SOURCE_SETTINGS_CHANGED: новый допуск для новой ревизии';continue
+            # A source refusal applies to both phases. In particular DISCOVERY
+            # must not bypass an earlier REFRESH403 (or vice versa) on a restart.
+            with self._connect() as c,c.cursor() as q:
+                phase_sql="coalesce(j.settings_snapshot->'automation'->>'phase',j.settings_snapshot->'source_batch'->>'phase',j.settings_snapshot->'source_input'->>'mode')"
+                q.execute(f'''SELECT DISTINCT ON ({phase_sql}) j.status,j.settings_snapshot,r.metadata,j.error_message
+                    FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.supplier_id=%s
+                    AND {phase_sql} IN ('REFRESH','DISCOVERY')
+                    ORDER BY {phase_sql},j.id DESC''',(sid,))
+                latest=q.fetchall()
+            for state,snap,metadata,error in latest:
+                if state in ('succeeded','queued','running','skipped_already_queued'):continue
+                marker=snap.get('automation') or {};rt=(metadata or {}).get('source_runtime') or {}
+                if snap.get('source_batch'):
+                    self.blocked[code]='LIVE11_REQUIRES_SEPARATE_RECOVERY';break
+                if marker.get('approval_sha256')!=session.sha:
+                    self.blocked[code]='PREVIOUS_EXECUTION_REQUIRES_OPERATOR';break
+                reason=rt.get('termination_reason') or error or 'UNPROVEN_PARENT'
+                if reason in ROBOTS_LOCAL or str(reason).startswith(('SOURCE_ROBOTS_','SOURCE_BLOCKED','SOURCE_CARD_ERROR_THRESHOLD','SOURCE_IDENTITY_MASS_FAILURE',
+                    'OPERATOR_STOP','SOURCE_HTTP_CIRCUIT_BREAKER','SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_RETRY_AFTER_HTTP_503')):
+                    self.blocked[code]=reason;break
+                if rt.get('resume_uncertain') or rt.get('resume_failed') or (state in ('partial','failed','stale_failed') and not rt.get('resume_available')):
+                    session.fail('AUTOMATION_CRITICAL_JOB:'+str(reason)[:150]);session.check()
+            if code in self.blocked:continue
+            for phase in ('REFRESH','DISCOVERY'):
+                if not cfg[phase.lower()+'_enabled']:continue
+                session.check()
+                with self._connect() as c,c.cursor() as q:
+                    q.execute("SELECT id FROM crawl_jobs WHERE supplier_id=%s AND status IN ('queued','running')",(sid,))
+                    if q.fetchone():break
+                    q.execute('''SELECT j.id,j.status,j.crawl_run_id,j.scheduled_for,j.settings_snapshot,j.error_message,r.metadata
+                        FROM crawl_jobs j LEFT JOIN crawl_runs r ON r.id=j.crawl_run_id WHERE j.supplier_id=%s
+                        AND coalesce(j.settings_snapshot->'automation'->>'phase',j.settings_snapshot->'source_batch'->>'phase',
+                                     j.settings_snapshot->'source_input'->>'mode')=%s ORDER BY j.id DESC LIMIT 1''',(sid,phase))
+                    previous=q.fetchone()
+                due=due_occurrence(cfg,phase,now);resume=None
+                if previous:
+                    jid,state,run,scheduled,snap,error,metadata=previous
+                    if state!='succeeded':
+                        if snap.get('source_batch'):
+                            self.blocked[code+':'+phase]='LIVE11_REQUIRES_SEPARATE_RECOVERY';continue
+                        marker=snap.get('automation') or {}
+                        if marker.get('approval_sha256')!=session.sha:
+                            self.blocked[code+':'+phase]='PREVIOUS_EXECUTION_REQUIRES_OPERATOR';continue
+                        rt=(metadata or {}).get('source_runtime') or {}
+                        if run is not None:
+                            if not rt.get('resume_available') or rt.get('resume_uncertain') or rt.get('resume_failed'):
+                                reason=rt.get('termination_reason') or error or 'UNPROVEN_PARENT'
+                                local=('SOURCE_ROBOTS_','SOURCE_BLOCKED_HTTP_403','SOURCE_BLOCKED_HTTP_429','SOURCE_CARD_ERROR_THRESHOLD',
+                                       'SOURCE_IDENTITY_MASS_FAILURE','OPERATOR_STOP','SOURCE_HTTP_CIRCUIT_BREAKER',
+                                       'SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_RETRY_AFTER_HTTP_503','SOURCE_BLOCKED_INTERSTITIAL')
+                                if reason not in ROBOTS_LOCAL and not str(reason).startswith(local):
+                                    session.fail('AUTOMATION_CRITICAL_JOB:'+str(reason)[:150]);session.check()
+                                self.blocked[code+':'+phase]=reason;continue
+                            self.queue.source_resume_status(jid)  # SQL + durable native proof, no HTTP.
+                            resume=jid;due=scheduled
+                        elif (state=='cancelled' and error in ('AUTOMATION_STOP','AUTOMATION_WINDOW_STOP')) or (
+                            state=='skipped_locked' and error=='SAME_DOMAIN_LOCK_NOT_ACQUIRED'):
+                            due=scheduled
+                        else:
+                            self.blocked[code+':'+phase]='UNSTARTED_PARENT_REQUIRES_OPERATOR';continue
+                    elif (snap.get('automation') or {}).get('approval_sha256')==session.sha and scheduled>=due:
+                        continue
+                rule=session.value['suppliers'][code]
+                # A fresh grant does not authorize replaying old calendar slots.
+                # Resume keeps the already admitted occurrence inside its grant.
+                if resume is None and (previous is None or previous[1]=='succeeded') and due<datetime.fromisoformat(session.value['not_before']):
+                    continue
+                try:
+                    if resume is not None:
+                        admitted=self.queue.enqueue(sid,trigger_type='schedule',crawl_type='full',scheduled_for=due,
+                            source_mode='RESUME',resume_job_id=resume,automation_sha256=session.sha)
+                    else:
+                        preview=self.queue.preview_source_canary(sid,rule['limits'][phase],phase)
+                        admitted=self.queue.enqueue(sid,trigger_type='schedule',crawl_type='full',scheduled_for=due,
+                            source_mode=phase,source_limit=rule['limits'][phase],
+                            source_preview_sha256=preview['confirmation_sha256'],automation_sha256=session.sha)
+                except (ValueError,PermissionError) as error:
+                    reason=str(error)
+                    if reason.startswith(('HOST_PROFILE','EXPLICIT_HOST','AUTOMATION_SCOPE_GROWTH',
+                        'AUTOMATION_QUEUE_ATTEMPTS_EXHAUSTED','Поставщик')):
+                        self.blocked[code+':'+phase]=reason;continue
+                    raise
+                if admitted.enqueued:result.append(admitted.job_id)
+        return result
 
     def run_forever(self) -> None:
         while True:

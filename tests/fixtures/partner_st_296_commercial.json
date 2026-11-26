@@ -1,0 +1,19 @@
+{
+  "supplier_code": "partner_st",
+  "external_id": "296",
+  "sku": "506001",
+  "name": "Универсальный заточной станок Partner PP-600F 506001",
+  "requested_url": "https://partner-st.ru/zatochnye-stanki/universalnye/partner-pp-600f/",
+  "final_url": "https://partner-st.ru/zatochnye-stanki/universalnye/partner-pp-600f/",
+  "canonical_url": "https://partner-st.ru/zatochnye-stanki/universalnye/partner-pp-600f/",
+  "http_status": 200,
+  "redirect_urls": [],
+  "price": "232000",
+  "old_price": "257786",
+  "currency": "RUB",
+  "availability_raw": "https://schema.org/InStock",
+  "availability_normalized": "in_stock",
+  "quantity": "7",
+  "description_text": "",
+  "description_html": ""
+}

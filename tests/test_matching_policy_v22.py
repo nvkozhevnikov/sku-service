@@ -10,11 +10,15 @@ def pair(name,model='V11 10000',brand='BLIN'):
 def test_complete_machining_center_not_rotating_tool_center():
     s=pair('Вертикальный фрезерный обрабатывающий центр BLIN V11 10000')
     t=deepcopy(s)
-    assert not assess_pair(s,t)['confirmed']
+    # F01/F03's current kind resolver already proves this complete machine.
+    # V22 must retain that acceptance, not fabricate a newly applied rule.
+    assert assess_pair(s,t)['confirmed']
     proof=assess_pair_v22(s,t)
-    assert proof['confirmed'] and proof['new_rule_applied']
-    assert proof['evidence']['kind_evidence'][0]['kind']=='milling_machine'
-    assert proof['evidence']['negative_guard_result']['all_current_guards_pass']
+    assert proof['confirmed'] and not proof['new_rule_applied']
+    assert proof['rule_id']=='V21_RETAINED' and not proof['blocking_reasons']
+    assert kind_proof(s)['kind']=='milling_machine'
+    tool=pair('Вращающийся центр BLIN V11 10000')
+    assert not assess_pair_v22(tool,t)['confirmed']
 
 def test_generic_belt_machine_refined_by_explicit_bandsaw_category():
     s=pair('Автоматический ленточнопильный станок Beka-Mak BMSO 230','BMSO230','Beka-Mak')

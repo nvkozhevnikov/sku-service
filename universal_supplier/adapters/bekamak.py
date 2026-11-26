@@ -8,6 +8,8 @@ import re
 
 from universal_supplier.commercial import ReadOnlySupplierProduct, extract_public_price
 from ._source_content import breadcrumb_category
+from ._commercial_dom import soup, schema_availability
+from universal_supplier.price_semantics import typed_extraction
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -39,14 +41,21 @@ def parse_bekamak_detail(source: str, *, source_url: str | None = None) -> ReadO
     # The first price matrix is the current detail card.  The later
     # "Похожее оборудование" slider is intentionally never searched.
     detail = source[:source.find("Похожее оборудование")] if "Похожее оборудование" in source else source
-    numeric = re.search(r'class=["\']price["\']\s+data-currency=["\']RUB["\']\s+data-value=["\']([^"\']+)', detail, re.I)
-    if numeric:
-        synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"><span class="price-current">{numeric.group(1)} RUB</span></main>'
+    dom=soup(detail)
+    prices=dom.select('.prices_block .price[data-currency][data-value]')
+    # Some saved detail snapshots omit the wrapper, but still carry the own
+    # product price matrix. Never choose an arbitrary second price.
+    if not prices:prices=dom.select('.price[data-currency][data-value]')
+    values={(p.get('data-value'),p.get('data-currency')) for p in prices}
+    price_node=prices[0] if len(values)==1 else None
+    if price_node:
+        synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"><span class="price-current">{escape(price_node.get("data-value", ""))} {escape(price_node.get("data-currency", ""))}</span></main>'
     else:
         synthetic = f'<main data-product-identity="{escape(identity, quote=True)}"></main>'
     price = extract_public_price(synthetic, product_identity=identity, source_url=url)
     price = replace(price, source_path=".prices_block .price[data-currency=RUB][data-value]", context_path="detail product before similar-products slider")
-    availability = "InStock" if re.search(r'itemprop=["\']availability["\'][^>]+InStock', detail, re.I) else None
+    price=typed_extraction(price,price_node.get_text(' ',strip=True) if price_node else '',source_path='.prices_block .price',declared=price_node.get('data-price-type') if price_node else None)
+    availability = schema_availability(dom)
     category, category_url = breadcrumb_category(source, url)
     return ReadOnlySupplierProduct(
         supplier="beka-mak", source_url=url, name=name, supplier_model=model,

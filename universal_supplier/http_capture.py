@@ -18,7 +18,7 @@ import re
 import time
 from typing import Callable, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit, quote
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, HTTPHandler, ProxyHandler, Request, build_opener
 
 from .commercial_persistence import HttpCapture
@@ -86,12 +86,15 @@ def _charset(content_type: str | None) -> str:
 
 class CaptureStatus(StrEnum):
     SUCCESS = "SUCCESS"
+    PARSE_ERROR = "PARSE_ERROR"
     HTTP_STATUS = "HTTP_STATUS"
     NON_HTML = "NON_HTML"
     BLOCKED = "BLOCKED"
     NETWORK_ERROR = "NETWORK_ERROR"
     UNSAFE_URL = "UNSAFE_URL"
     AMBIGUOUS = "AMBIGUOUS"
+    NON_PRODUCT_CATEGORY_PAGE = "NON_PRODUCT_CATEGORY_PAGE"
+    NON_PRODUCT_EDITORIAL_PAGE = "NON_PRODUCT_EDITORIAL_PAGE"
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,33 @@ class HttpResponse:
     content_type: str | None
     body: bytes
     redirects: tuple[str, ...] = ()
+    transport_url: str | None = None
+    headers: dict[str, str] | None = None
+
+
+def public_transport_url(url: str) -> str:
+    """UTF8 wire representation; never an identity/canonical normalizer.
+
+    Callers retain their original URI separately and apply their existing URL
+    allowlist to it before this conversion. Query delimiters/plus signs and valid
+    percent escapes are preserved. Fragments never enter an HTTP request target.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in {'http','https'} or not parts.hostname:
+        raise ValueError('only absolute public HTTP(S) URLs are transportable')
+    if parts.username is not None or parts.password is not None:
+        raise ValueError('userinfo is forbidden')
+    # Accessing port also rejects malformed ports before any network operation.
+    port = parts.port
+    netloc = parts.netloc
+    if not netloc.isascii():
+        host = parts.hostname.encode('idna').decode('ascii')
+        netloc = ('['+host+']' if ':' in host else host) + (':'+str(port) if port is not None else '')
+    def encode(value, safe):
+        value = re.sub(r'%(?![0-9a-fA-F]{2})','%25',value)
+        return quote(value,safe=safe,encoding='utf-8',errors='strict')
+    return urlunsplit((parts.scheme,netloc,encode(parts.path,"/:@!$&'()*+,;=-._~%"),
+                       encode(parts.query,"/?:@!$&'()*+,;=-._~%"),''))
 
 
 class PublicHttpClient(Protocol):
@@ -123,49 +153,99 @@ class FilesystemEvidenceStore:
         return f"capture://{host}/{evidence_sha256}.html"
 
 
+class ProductTargetOutsideBatch(ValueError):
+    """A safe, unlisted target. It is never eligible for a second GET here."""
+
+
+class UnfollowedProductRedirect(ValueError):
+    """A real redirect was refused before dispatching its target."""
+
+    def __init__(self, status: int, target: str) -> None:
+        super().__init__('PRODUCT_REDIRECT_OUTSIDE_BATCH')
+        self.status = status
+        self.target_sha256 = hashlib.sha256(target.encode()).hexdigest()
+
+
 class _BoundedRedirectHandler(HTTPRedirectHandler):
     max_redirections = 3
 
-    def __init__(self, validator: Callable[[str], None] | None = None) -> None:
+    def __init__(self, validator: Callable[[str], None] | None = None,
+                 before_request: Callable[[str], None] | None = None) -> None:
         super().__init__()
         self.redirects: list[str] = []
         self.validator = validator or _validate_public_url
+        self.before_request = before_request
 
     def redirect_request(self, request, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         if len(self.redirects) >= self.max_redirections:
             raise URLError("redirect limit exceeded")
-        self.validator(newurl)
+        try:
+            self.validator(newurl)
+        except ProductTargetOutsideBatch as error:
+            raise UnfollowedProductRedirect(code, newurl) from error
         self.redirects.append(newurl)
-        return super().redirect_request(request, fp, code, msg, headers, newurl)
+        wire = public_transport_url(newurl)
+        self.validator(wire)
+        redirected = super().redirect_request(request, fp, code, msg, headers, wire)
+        if redirected is not None and self.before_request:
+            self.before_request(newurl)
+        return redirected
 
 
 class UrllibPublicHttpClient:
     """No cookie jar, no proxy environment and no authentication headers."""
 
+    def __init__(self, before_request: Callable[[str], None] | None = None) -> None:
+        self.before_request = before_request
+
     def _get(self, url: str, *, timeout_seconds: float, validator: Callable[[str], None]) -> HttpResponse:
+        from .url_safety import validate_public_http_url
+        from .public_connection import PublicHTTPHandler,PublicHTTPSHandler
+        source_validator=validator
+        def validator(target):
+            validate_public_http_url(target)
+            source_validator(target)
         validator(url)
-        redirects = _BoundedRedirectHandler(validator)
-        opener = build_opener(ProxyHandler({}), redirects, HTTPHandler(), HTTPSHandler())
-        request = Request(url, headers={
+        wire_url = public_transport_url(url)
+        validator(wire_url)
+        redirects = _BoundedRedirectHandler(validator, self.before_request)
+        opener = build_opener(ProxyHandler({}), redirects, PublicHTTPHandler(), PublicHTTPSHandler())
+        request = Request(wire_url, headers={
             "Accept": "text/html,application/xhtml+xml",
             "User-Agent": "UniversalSupplierReadOnly/1.0 (+https://sterbrust.com)",
         })
         try:
+            if self.before_request:
+                self.before_request(url)
             with opener.open(request, timeout=timeout_seconds) as response:
                 return HttpResponse(
-                    final_url=response.geturl(),
+                    final_url=url if not redirects.redirects and response.geturl()==wire_url else response.geturl(),
                     status_code=response.status,
                     content_type=response.headers.get("Content-Type"),
                     body=_read_bounded(response),
                     redirects=tuple(redirects.redirects),
+                    transport_url=response.geturl(),
+                    headers={k:response.headers[k] for k in ("Retry-After","Date") if response.headers.get(k)} or None,
                 )
         except HTTPError as error:
+            try:
+                body = _read_bounded(error)
+            except (TimeoutError, ConnectionError, http.client.IncompleteRead):
+                if error.code not in (403, 429, 503):
+                    raise
+                # The status and headers are already known. Keep the host's
+                # refusal even if its error body was interrupted.
+                body = b""
+            finally:
+                error.close()
             return HttpResponse(
-                final_url=error.geturl() or url,
+                final_url=url if not redirects.redirects and error.geturl()==wire_url else error.geturl() or url,
                 status_code=error.code,
                 content_type=error.headers.get("Content-Type") if error.headers else None,
-                body=_read_bounded(error),
+                body=body,
                 redirects=tuple(redirects.redirects),
+                transport_url=error.geturl() or wire_url,
+                headers={k:error.headers[k] for k in ("Retry-After","Date") if error.headers and error.headers.get(k)} or None,
             )
 
     def get(self, url: str, *, timeout_seconds: float) -> HttpResponse:

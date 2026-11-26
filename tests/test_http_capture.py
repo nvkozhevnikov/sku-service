@@ -1,9 +1,10 @@
 from datetime import timezone
 from pathlib import Path
 import unittest
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
+from unittest.mock import Mock, patch
 
-from universal_supplier.http_capture import CaptureStatus, HttpResponse, capture_public_html, sanitise_html
+from universal_supplier.http_capture import CaptureStatus, HttpResponse, UrllibPublicHttpClient, capture_public_html, sanitise_html
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,20 @@ class RecordingEvidenceStore:
 
 class HttpCaptureTests(unittest.TestCase):
     URL = "https://example.test/card"
+
+    def test_interrupted_http_error_body_preserves_host_refusal(self):
+        for status in (403, 429, 503):
+            with self.subTest(status=status):
+                stream = Mock()
+                stream.read.side_effect = ConnectionResetError("connection reset")
+                error = HTTPError(self.URL, status, "refused", {"Retry-After": "60"}, stream)
+                with patch("universal_supplier.http_capture.build_opener") as opener:
+                    opener.return_value.open.side_effect = error
+                    response = UrllibPublicHttpClient().get(self.URL, timeout_seconds=2)
+                self.assertEqual(response.status_code, status)
+                self.assertEqual(response.headers, {"Retry-After": "60"})
+                self.assertEqual(response.body, b"")
+                stream.close.assert_called_once()
 
     def capture(self, client):
         self.evidence = RecordingEvidenceStore()

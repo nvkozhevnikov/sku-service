@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -41,15 +41,6 @@ def _bounded_text(response) -> str:  # type: ignore[no-untyped-def]
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 
-def _is_redirect(response) -> bool:  # type: ignore[no-untyped-def]
-    """As requests defines it: a redirect status *with* a Location header."""
-    if isinstance(response, requests.Response):
-        return response.is_redirect or response.is_permanent_redirect
-    headers = getattr(response, "headers", None) or {}
-    return (int(getattr(response, "status_code", 0)) in REDIRECT_STATUSES
-            and bool(headers.get("Location") or headers.get("location")))
-
-
 class HttpTransport:
     """Direct HTTP transport with shared rate limiting and redirect evidence.
 
@@ -72,9 +63,15 @@ class HttpTransport:
         random_uniform=None,
         deadline: float | None = None,
         url_validator: Callable[[str], str] | None = None,
+        abort_requested=None,
     ) -> None:
+        self._explicit_url_validator = url_validator is not None
         self.url_validator = url_validator or validate_public_http_url
         self.session = session or requests.Session()
+        if session is None:
+            from .public_connection import public_requests_adapter
+            self.session.mount('http://',public_requests_adapter())
+            self.session.mount('https://',public_requests_adapter())
         self.session.trust_env = False
         self.session.headers.update({"User-Agent": user_agent, "Accept": "text/html,application/xml;q=0.9,*/*;q=0.8"})
         self.retry = retry_policy or RetryPolicy()
@@ -98,6 +95,7 @@ class HttpTransport:
         self.min_interval = self.policy.min_request_interval_seconds
         self.clock = clock or SystemClock()
         self.deadline = deadline
+        self.abort_requested = abort_requested
         self.metrics = RequestMetrics()
         self.limiter = DomainRateLimiter(
             self.policy, clock=self.clock, random_uniform=random_uniform,
@@ -108,13 +106,23 @@ class HttpTransport:
         self.limiter.wait(self.metrics)
 
     def get(self, url: str, *, deadline: float | None = None) -> FetchRecord:
-        return self.get_validated(url, self.url_validator, deadline=deadline)
+        if self._explicit_url_validator:
+            # Crawlers bind their supplier host allowlist (develop group 2).
+            return self.get_validated(url, self.url_validator, deadline=deadline)
+        # Without a binding only the requested host is allowed, redirects included.
+        from .url_safety import host_validator
+        return self.get_validated(url, host_validator((urlsplit(url).hostname,), resolve_dns=False), deadline=deadline)
 
     def get_validated(self, url: str, validator, *, deadline: float | None = None,
                       max_redirects: int = 5) -> FetchRecord:
         """Follow redirects manually so every target is validated before I/O."""
         started = self.clock.monotonic()
         effective_deadline = self.deadline if deadline is None else deadline
+        from .url_safety import validate_public_http_url
+        source_validator=validator
+        def validator(target):
+            validate_public_http_url(target)
+            return source_validator(target)
         current = validator(url)
         redirects: list[str] = []
         total_attempts = 0
@@ -122,12 +130,17 @@ class HttpTransport:
             response, attempts = request_with_resilience(
                 lambda: self.session.get(current, timeout=self.timeout, allow_redirects=False, stream=True),
                 self.policy, self.limiter, clock=self.clock, metrics=self.metrics,
-                breaker=self.breaker, deadline=effective_deadline,
+                breaker=self.breaker, deadline=effective_deadline, abort_requested=self.abort_requested,
             )
             total_attempts += attempts
-            if _is_redirect(response):
+            if int(getattr(response, "status_code", 0)) in REDIRECT_STATUSES:
                 headers = getattr(response, "headers", None) or {}
                 location = headers.get("Location") or headers.get("location")
+                if not location:
+                    # A redirect without a target is never stored as page content.
+                    if isinstance(response, requests.Response):
+                        response.close()
+                    raise ValueError("Redirect без Location")
                 if isinstance(response, requests.Response):
                     response.close()
                 redirects.append(current)

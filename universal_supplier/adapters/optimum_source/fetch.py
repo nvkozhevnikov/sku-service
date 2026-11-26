@@ -82,9 +82,11 @@ class HttpFetcher:
         self.url_validator = url_validator or host_validator(OPTIMUM_HOSTS, resolve_dns=resolve)
         # A resolving validator blocks on getaddrinfo: run it off the event loop.
         self._validator_blocks = url_validator is not None or resolve
+        from universal_supplier.public_connection import public_async_transport
         self.client = client or httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT}, timeout=self.policy.request_timeout_seconds,
             follow_redirects=False,
+            trust_env=False,transport=public_async_transport(),
         )
 
     async def close(self):

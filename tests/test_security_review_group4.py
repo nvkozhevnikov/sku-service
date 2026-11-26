@@ -140,7 +140,9 @@ def test_html_responses_carry_security_headers_and_a_fresh_nonce():
     for response in (first, second):
         headers = response.headers
         assert headers["x-frame-options"] == "DENY" and headers["x-content-type-options"] == "nosniff"
-        assert headers["referrer-policy"] == "no-referrer" and headers["cache-control"] == "no-store"
+        # same-origin, not no-referrer: with no-referrer Chromium sends Origin: null on
+        # same-origin form POSTs and require_trusted_origin would refuse them.
+        assert headers["referrer-policy"] == "same-origin" and headers["cache-control"] == "no-store"
         csp = headers["content-security-policy"]
         for directive in ("default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'"):
             assert directive in csp
@@ -162,8 +164,11 @@ def test_inline_script_nonce_matches_the_csp_header():
     client = TestClient(create_app(store=Store(), queue=InMemoryJobQueue(), admin_store=InMemoryAdminStore(),
                                    auth_required=False))
     response = client.get("/runs/1")
-    nonces = re.findall(r'<script nonce="([^"]+)">', response.text)
-    assert nonces and all(f"'nonce-{nonce}'" in response.headers["content-security-policy"] for nonce in nonces)
+    # Every <script> tag (inline or module) carries the per-request nonce from the CSP header.
+    tags = re.findall(r"<script\b[^>]*>", response.text)
+    nonces = [re.search(r'\bnonce="([^"]+)"', tag) for tag in tags]
+    assert tags and all(nonces), tags
+    assert all(f"'nonce-{match.group(1)}'" in response.headers["content-security-policy"] for match in nonces)
 
 
 def test_session_cookie_secure_by_default(monkeypatch):
@@ -336,18 +341,26 @@ def test_reparse_preview_is_claimed_atomically_before_ingest():
 def test_last_active_admin_cannot_be_deactivated_in_memory():
     admin = InMemoryAdminStore(users() + [{"id": 3, "username": "admin2", "display_name": "B", "role": "ADMIN",
                                            "is_active": False, "password_hash": "x"}], [])
-    with pytest.raises(ValueError, match="последнего"):
+    # An unknown or non-admin actor is refused before any guard (sterbrust actor check).
+    with pytest.raises(PermissionError):
         admin.set_user_active(1, False, 99)
+    # The only active admin is the actor itself here, so the self-guard stops it first.
+    with pytest.raises(ValueError, match="Нельзя отключить"):
+        admin.set_user_active(1, False, 1)
     admin.set_user_active(3, True, 1)
     admin.set_user_active(1, False, 3)
     assert not admin.user_by_id(1).is_active
 
 
 def test_postgres_last_admin_guard_runs_inside_the_transaction():
-    cursor = _Rows([{"username": "a", "display_name": "A", "role": "ADMIN", "is_active": True}, []])
+    # Answers: actor (active admin), target, other active admins (none).
+    cursor = _Rows([{"role": "ADMIN", "is_active": True},
+                    {"username": "a", "display_name": "A", "role": "ADMIN", "is_active": True}, []])
     with pytest.raises(ValueError, match="последнего"):
         _store(cursor).set_user_active(1, False, 2)
-    assert "FOR UPDATE" in cursor.sql[1] and not any(sql.startswith("UPDATE") for sql in cursor.sql)
+    other_admins = [sql for sql in cursor.sql if "role='ADMIN'" in sql]
+    assert other_admins and all("FOR UPDATE" in sql for sql in other_admins)
+    assert not any(sql.startswith("UPDATE") for sql in cursor.sql)
 
 
 def test_login_success_and_failure_are_audited_without_password():
@@ -362,11 +375,11 @@ def test_login_success_and_failure_are_audited_without_password():
     assert {event["after_state"]["reason"] for event in events} == {"bad_password", "unknown_user", "password"}
 
 
-def test_migration_018_adds_recent_audit_index_and_runner_pins_016_017():
-    sql = (ROOT / "migrations/018_audit_events_recent_index.sql").read_text(encoding="utf-8")
+def test_migration_022_adds_recent_audit_index_and_runner_pins_016_017():
+    sql = (ROOT / "migrations/022_audit_events_recent_index.sql").read_text(encoding="utf-8")
     assert "audit_events (created_at DESC, id DESC)" in sql and sql.startswith("BEGIN;") and sql.rstrip().endswith("COMMIT;")
     import importlib.util
-    spec = importlib.util.spec_from_file_location("migrate_018", ROOT / "scripts/docker_postgres_migrate.py")
+    spec = importlib.util.spec_from_file_location("migrate_022", ROOT / "scripts/docker_postgres_migrate.py")
     migrate = importlib.util.module_from_spec(spec); spec.loader.exec_module(migrate)
     expected = migrate.expected_hashes()
     for name in ("016_review_decisions_source_product_index.sql", "017_session_revocation_login_throttle_heartbeats.sql"):
