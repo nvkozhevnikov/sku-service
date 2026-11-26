@@ -191,3 +191,42 @@ def test_import_needs_media_permission():
 def test_browser_module_info_has_no_absolute_path():
     source = (ROOT / "content_studio/app.py").read_text(encoding="utf-8")
     assert "{'folder':'browser_import'," in source and "browser_import').resolve()" not in source
+
+
+# --- B1/B5: competitor_intel transport ------------------------------------------------------------
+
+@pytest.mark.parametrize("url,answer,expected", [
+    ("http://127.0.0.1:8000/admin", None, False),
+    ("http://169.254.169.254/latest/meta-data/", None, False),
+    ("https://10.0.0.5/", None, False),
+    ("http://[::1]/", None, False),
+    ("https://cdn.example/app.js", "93.184.216.34", True),
+    ("https://cdn.example:8443/app.js", "93.184.216.34", False),
+    ("https://rebind.example/x", "10.0.0.1", False),
+    ("https://user:pw@cdn.example/x", "93.184.216.34", False),
+    ("ftp://cdn.example/x", None, False),
+    ("data:image/png;base64,AAAA", None, True),
+    ("blob:https://shop.example/1", None, True),
+])
+def test_browser_sub_requests_only_reach_public_hosts(monkeypatch, url, answer, expected):
+    import socket
+    from competitor_intel.transport import public_browser_request
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, *args, **kwargs:
+                        [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (answer or "10.255.0.1", port))])
+    assert public_browser_request(url, {}) is expected
+
+
+def test_competitor_http_body_is_capped(monkeypatch, tmp_path):
+    import io
+    import requests
+    from competitor_intel import transport
+    from competitor_intel.transport import HttpTransport, SourceBlocked, read_body
+    monkeypatch.setattr(transport, "MAX_BODY_BYTES", 1000)
+    response = requests.Response(); response.status_code = 200; response.raw = io.BytesIO(b"x" * 5000)
+    with pytest.raises(SourceBlocked, match="RESPONSE_TOO_LARGE"):
+        read_body(response)
+    small = requests.Response(); small.status_code = 200; small.raw = io.BytesIO(b"<title>ok</title>")
+    assert read_body(small) == b"<title>ok</title>" and small.text == "<title>ok</title>"
+    session = HttpTransport(tmp_path, sleeper=lambda seconds: None).session
+    from universal_supplier.public_connection import public_requests_adapter
+    assert type(session.get_adapter("https://metalmaster.ru/")).__name__ == type(public_requests_adapter()).__name__

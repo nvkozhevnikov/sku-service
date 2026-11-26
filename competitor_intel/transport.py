@@ -16,6 +16,52 @@ USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrom
 
 class SourceBlocked(RuntimeError): pass
 
+# Bounded body read for competitor pages (review 2026-11-26 B5): same 20 MiB cap
+# as the supplier crawler, plus a wall-clock limit on the whole body.
+MAX_BODY_BYTES = 20 * 1024 * 1024
+BODY_READ_SECONDS = 90
+
+
+def read_body(response):
+    """Stream at most MAX_BODY_BYTES within BODY_READ_SECONDS; fills response.content."""
+    if not isinstance(response, requests.Response):  # injected test double with a ready body
+        body = response.content or b''
+        if len(body) > MAX_BODY_BYTES: raise SourceBlocked('RESPONSE_TOO_LARGE')
+        return body
+    if response._content is not False:  # already loaded (non-streamed or a prepared response)
+        body = response._content or b''
+    else:
+        started = time.monotonic(); chunks = []; size = 0
+        for chunk in response.iter_content(65536):
+            size += len(chunk)
+            if size > MAX_BODY_BYTES:
+                response.close(); raise SourceBlocked('RESPONSE_TOO_LARGE')
+            if time.monotonic() - started > BODY_READ_SECONDS:
+                response.close(); raise SourceBlocked('RESPONSE_READ_DEADLINE')
+            chunks.append(chunk)
+        body = b''.join(chunks)
+    if len(body) > MAX_BODY_BYTES: raise SourceBlocked('RESPONSE_TOO_LARGE')
+    response._content = body; response._content_consumed = True
+    return body
+
+
+def public_browser_request(url, cache):
+    """Browser sub-resources may go only to public HTTP(S) hosts on 80/443 (review B1)."""
+    scheme = urlsplit(url).scheme.lower()
+    if scheme in ('data', 'blob', 'about'):
+        return True
+    if scheme not in ('http', 'https'):
+        return False
+    parts = urlsplit(url)
+    key = (scheme, parts.netloc.lower())
+    if key not in cache:
+        from universal_supplier.url_safety import UnsafeUrlError, validate_public_http_url
+        try:
+            validate_public_http_url(url, None, resolve_dns=True); cache[key] = True
+        except (UnsafeUrlError, OSError, ValueError):
+            cache[key] = False
+    return cache[key]
+
 @dataclass
 class Capture:
     url: str
@@ -38,6 +84,9 @@ class HttpTransport:
     def __init__(self, capture_dir, sleeper=time.sleep, rng=None):
         self.directory = Path(capture_dir); self.directory.mkdir(parents=True, exist_ok=True)
         self.session = requests.Session(); self.session.trust_env = False
+        # Connect only to public addresses, checked at connect time (no DNS rebinding).
+        from universal_supplier.public_connection import public_requests_adapter
+        self.session.mount('https://', public_requests_adapter()); self.session.mount('http://', public_requests_adapter())
         self.session.headers['User-Agent'] = USER_AGENT
         self.sleep = sleeper; self.rng = rng or random.SystemRandom()
         self.started = False; self.events = []; self.robots = {}; self.blocked_hosts = set()
@@ -63,7 +112,8 @@ class HttpTransport:
             self.pace()
             observed = datetime.now(timezone.utc)
             try:
-                r = self.session.get(current, timeout=35, allow_redirects=False)
+                r = self.session.get(current, timeout=35, allow_redirects=False, stream=True)
+                read_body(r)
                 r.encoding = 'utf-8'
                 event = {'url': current, 'status': r.status_code, 'attempt': attempt+1, 'observed_at': observed.isoformat()}
                 self.events.append(event)
@@ -121,7 +171,7 @@ class BrowserTransport:
             browser = p.chromium.launch(channel='msedge', headless=True)
             context = browser.new_context(user_agent=USER_AGENT)
             page = context.new_page()
-            protected = []
+            protected = []; public_hosts = {}
             page.on('response', lambda r: protected.append(r.status) if urlsplit(r.url).netloc == host and r.status in (403,429) else None)
             def route(req):
                 request_url=req.request.url
@@ -132,6 +182,10 @@ class BrowserTransport:
                     self.http.resource_gaps.append({'url':request_url,'resource_type':req.request.resource_type,'status':'ROBOTS_BLOCKED','reason':self.http.robots[host].decision(request_url)[1]})
                     req.abort()
                 elif req.request.is_navigation_request() and urlsplit(request_url).netloc != host:
+                    req.abort()
+                elif not public_browser_request(request_url, public_hosts):
+                    # Page JS must not reach the operator's LAN, loopback or cloud metadata.
+                    self.http.events.append({'url':request_url,'resource_type':req.request.resource_type,'blocked':'NON_PUBLIC_TARGET'})
                     req.abort()
                 else: req.continue_()
             page.route('**/*', route)
