@@ -26,7 +26,11 @@ def semantic_export_hold(row):
     sid = str(get('source_product_id') or '')
     external = str(get('external_id') or get('supplier_external_id') or '')
     for source_id, external_id, reason in HOLDS:
-        if sid == str(source_id) or external == external_id:
+        # The Partner-ST external ID is the offer identity and is the same in every
+        # database. source_product_id is a surrogate key of the production DB only,
+        # so it decides only when a row carries no external ID (review 2026-11-26):
+        # on another database id 15 is an unrelated product.
+        if (external == external_id) if external else (sid == str(source_id)):
             return {'code': 'SEMANTIC_EXPORT_HOLD', 'version': VERSION,
                     'supplier': 'partner_st', 'source_product_id': source_id,
                     'external_id': external_id, 'reason': reason,

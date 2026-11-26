@@ -443,8 +443,15 @@ def test_dashboard_lateral_counts_match_legacy_group_by(fixture):
     for age in ('1 day','2 days','40 days'):
         c.execute("""INSERT INTO crawl_errors(crawl_run_id,supplier_id,url,error_type,message,created_at)
             VALUES(%s,%s,'https://example.invalid/e','TIMEOUT','scratch',now()-%s::interval)""",(run,f['supplier'],age))
-    legacy=c.execute(LEGACY_DASHBOARD_SQL).fetchall()
-    current=c.execute(DASHBOARD_SQL).fetchall()
-    assert current==legacy
-    partner=next(row for row in current if row[0]==f['supplier'])
-    assert partner[8]>=2  # errors_30d counts each recent error once
+    def named(sql):
+        cursor=c.execute(sql);names=[column.name for column in cursor.description]
+        return [dict(zip(names,row)) for row in cursor.fetchall()]
+    legacy=named(LEGACY_DASHBOARD_SQL);current=named(DASHBOARD_SQL)
+    # The merged dashboard adds columns and shows the latest job (not only an
+    # active one) in job_status/job_id; every shared column must still agree,
+    # in particular the counts the legacy join used to multiply.
+    shared=[name for name in legacy[0] if name not in {'job_status','job_id'}]
+    assert len(current)==len(legacy)
+    assert [{k:row[k] for k in shared} for row in current]==[{k:row[k] for k in shared} for row in legacy]
+    partner=next(row for row in current if row['id']==f['supplier'])
+    assert partner['errors_30d']>=2  # errors_30d counts each recent error once

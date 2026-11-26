@@ -297,3 +297,16 @@ def test_stop_pilot_without_stop_file_setting_is_a_clear_503():
     source = (ROOT / "universal_supplier/control_plane/web.py").read_text(encoding="utf-8")
     assert "os.environ['PARTNER_PILOT_STOP_FILE']" not in source
     assert "Не задан PARTNER_PILOT_STOP_FILE" in source
+
+
+# --- DB run finding: semantic export holds follow the supplier external ID ------------------------
+
+def test_semantic_hold_matches_external_id_not_another_databases_surrogate():
+    from universal_supplier.export_eligibility import semantic_export_hold
+    # Same surrogate id as a held production row, different offer: not held.
+    assert semantic_export_hold({"supplier_code": "partner_st", "source_product_id": 15, "external_id": "999001"}) is None
+    # The held offer under another surrogate id (another database): still held.
+    held = semantic_export_hold({"supplier_code": "partner_st", "source_product_id": 7, "external_id": "309"})
+    assert held and held["reason"] == "voltage_380_vs_220"
+    # A trace that carries only the surrogate id keeps the production mapping (fail closed).
+    assert semantic_export_hold({"supplier_code": "partner_st", "source_product_id": 15})
