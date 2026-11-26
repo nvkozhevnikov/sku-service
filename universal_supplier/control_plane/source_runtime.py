@@ -28,6 +28,7 @@ LEASE_ALIVE = ContextVar('source_collector_lease_alive', default=None)
 MODES = ('REFRESH', 'DISCOVERY', 'RESUME')
 AGENT = 'UniversalSupplierReadOnly/1.0'
 ROBOTS_EXCEPTION_KIND = 'robots-policy-exception/v1'
+MANUAL_NETWORK_PAUSES = (60, 120, 240)
 
 
 def signed_robots_exception(code, robots_sha256, minimum):
@@ -232,7 +233,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     http_started=clock.monotonic();http_seconds=0.;sql_seconds=0.;parse_seconds=0.;matching_seconds=None
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     robots_exception_applied=None
-    isolated=[];consecutive_card_errors=0
+    isolated=[];consecutive_card_errors=0;network_pauses=0
     from .source_resume import MANUAL_TRANSPORT_ERRORS, manual_transport_receipt, quarantine_evidence_present
 
     def deferred_count(checkpoint):
@@ -376,9 +377,33 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             retry=first and rate.max_attempts>1
             checkpoint.record_terminal([receipt],defer_to_tail=retry)
             consecutive_card_errors+=1
-            if consecutive_card_errors>=rate.consecutive_error_threshold:
+            if consecutive_card_errors>=rate.consecutive_error_threshold and not fetcher.network_pause.is_set():
                 fetcher.stop('SOURCE_CARD_ERROR_THRESHOLD')
             return True
+
+        def wait_for_network():
+            nonlocal network_pauses,consecutive_card_errors
+            if network_pauses==len(MANUAL_NETWORK_PAUSES):
+                fetcher.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
+                return False
+            delay=max(rate.cooldown_seconds,MANUAL_NETWORK_PAUSES[network_pauses])
+            until=clock.monotonic()+delay
+            if until>=deadline:
+                fetcher.stop('SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW')
+                return False
+            network_pauses+=1
+            if backend:backend.progress({'phase':'NETWORK_COOLDOWN','network_pauses':network_pauses})
+            while not fetcher.aborted():
+                remaining=until-clock.monotonic()
+                if remaining<=0:
+                    if clock.monotonic()>=deadline:
+                        fetcher.stop('MAX_RUN_DURATION_EXCEEDED')
+                        return False
+                    fetcher.reopen_for_probe()
+                    consecutive_card_errors=0
+                    return True
+                clock.sleep(min(remaining,1))
+            return False
 
         budget=limit+pages+4
         def fetch(urls,request_scope='product'):
@@ -620,6 +645,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 dispatch_limit=limit*2 if manual and rate.max_attempts>1 else limit
                 while cp.state['frontier'] and fetched_count<dispatch_limit and not fetcher.aborted():
                     if clock.monotonic()>=deadline:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');break
+                    if fetcher.network_pause.is_set() and not wait_for_network():break
                     # Do not schedule card N+1 until the first N exact SQL
                     # receipts have passed. The SAME immutable job then continues.
                     gate_target=min(gate_size,len(entries))
@@ -628,8 +654,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     # Quarantine is not SQL proof. Keep narrow dispatch until
                     # enough eligible cards have actual COMMITTED readbacks.
                     batch=min(rate.max_concurrency,dispatch_limit-fetched_count,1000)
-                    if not gate_passed:batch=min(batch,max(1,gate_target-verified))
-                    urls=cp.claim_batch(batch);outcomes=fetch(urls);fetched_count+=len(urls)
+                    if fetcher.network_probe:batch=1
+                    elif not gate_passed:batch=min(batch,max(1,gate_target-verified))
+                    urls=cp.claim_batch(batch);outcomes=fetch(urls)
+                    # A paused executor can return claimed addresses without
+                    # starting a GET. Those claims do not consume HTTP budget.
+                    fetched_count+=sum(o.transport_started is not False for o in outcomes) if manual else len(urls)
                     for outcome in outcomes:
                         if defer_transport_error(cp,outcome):continue
                         if outcome.scope_refusal or outcome.dispatch_refusal or outcome.timeout_refusal:
@@ -647,7 +677,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                         if outcome.error or outcome.response is None or outcome.response.status_code!=200:
                             if outcome.response is None and outcome.transport_started is False:
                                 cp.return_not_requested({'url':outcome.url,'state':'NOT_REQUESTED','transport_started':False,'origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcome.error})
-                                fetcher.stop(fetcher.stop_reason or 'SOURCE_REQUEST_NOT_DISPATCHED');continue
+                                if not fetcher.network_pause.is_set():
+                                    fetcher.stop(fetcher.stop_reason or 'SOURCE_REQUEST_NOT_DISPATCHED')
+                                continue
                             receipt={'url':outcome.url,'state':'FAILED' if outcome.response else 'UNCERTAIN','origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcome.error or 'HTTP_'+str(outcome.response.status_code)}
                             if outcome.response is not None and not outcome.error and not fetcher.stop_reason and outcome.url in records:
                                 isolate(byurl[outcome.url],CardExtractionError('HTTP_'+str(outcome.response.status_code)),record=records[outcome.url],category='http')
@@ -703,7 +735,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                                       and not discovery.state['frontier'] and not deferred_count(discovery)),
             'external_catalog_completeness':'NOT_PROVEN','deactivation_allowed':False,
             'sql_committed':sum(x['state']=='COMMITTED' for x in cp.state['terminal'].values()),
-            'deferred':deferred,'deferred_urls':deferred_urls,
+            'deferred':deferred,'deferred_urls':deferred_urls,'network_pauses':network_pauses,
             'sql_committed_this_job':len(committed),'rows':rows,'errors':len(errors)+sum(x['state']=='QUARANTINED' for x in cp.state['terminal'].values()),'error_details':errors,
             'quarantined':[x['receipt'] for x in cp.state['terminal'].values() if x['state']=='QUARANTINED'],
             'collection_complete':not termination and not errors and not remaining and not deferred

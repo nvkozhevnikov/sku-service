@@ -38,30 +38,34 @@ def offline(monkeypatch,tmp_path):
 
 
 def native_manual(*, fail_tail=False, end_window=False, block=False, robots_replies=None, robots_limit=2,
-                  product_error=TimeoutError, second_error=None, all_cards_fail=False):
+                  product_error=TimeoutError, second_error=None, all_cards_fail=False,
+                  card_count=3, initial_network_failures=0, duration=100, block_card=None,
+                  stop_during_cooldown=False):
     code='partner_st'
     base='https://partner-st.ru'
     rate_values={'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0}
     if all_cards_fail:rate_values['consecutive_error_threshold']=2
     rate=approved_policy(code,base,rate_values)
-    known=[{'url':base+f'/item-{i}/','source_external_id':str(i)} for i in (1,2,3)]
+    known=[{'url':base+f'/item-{i}/','source_external_id':str(i)} for i in range(1,card_count+1)]
     data={'format':'source-runtime-input/v1','supplier_code':code,'mode':'REFRESH','entries':known,
           'seeds':[],'rate_policy':rate.snapshot(),'engine_sha256':engine_fingerprint()}
-    settings={'collection_mode':'REFRESH','persist_source_data':True,'max_products':3,
-              'max_run_duration_seconds':100,'host_policy_approval':approval_for(base)}
+    settings={'collection_mode':'REFRESH','persist_source_data':True,'max_products':card_count,
+              'max_run_duration_seconds':duration,'host_policy_approval':approval_for(base)}
     job=CrawlJob(1,1,code,code,base+'/','manual','full','running',datetime.now(timezone.utc),
         {'source_input':data,'rate_settings':rate.snapshot(),'crawl_settings':settings,'manual_collection':{'signed':True}})
     if robots_replies is not None:
         supplier=(code,code,base+'/',True,{'host_policy_approval':approval_for(base),
-                                          'max_run_duration_seconds':100},rate.snapshot())
+                                          'max_run_duration_seconds':duration},rate.snapshot())
         rows=[(i,entry['source_external_id'],entry['url'],len(known)) for i,entry in enumerate(known,1)]
         snapshot=build_preview(job.supplier_id,supplier,rows,CFG,len(rows))['snapshot']
         snapshot['manual_collection']={'robots_attempts':robots_limit}
         job=replace(job,settings_snapshot=snapshot)
     clock=Clock();backend=Backend()
     backend.matching=lambda ids:{'status':'succeeded','matching_applied':False}
+    backend.product_started_at=[]
     calls=[]
     persisted=backend.persist
+    progress=backend.progress
 
     def persist(product,capture):
         written=persisted(product,capture)
@@ -69,6 +73,12 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
         return written
 
     backend.persist=persist
+    def track(summary):
+        progress(summary)
+        if stop_during_cooldown and summary['phase']=='NETWORK_COOLDOWN':
+            from universal_supplier.control_plane.source_runtime import job_dir
+            (job_dir(code,job.id)/'STOP_REQUESTED').touch()
+    backend.progress=track
 
     class Client:
         def get_validated(self,url,*,validator,timeout_seconds):
@@ -83,11 +93,13 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
                 return HttpResponse(url,200,'text/plain',b'User-agent: *\nAllow: /\n')
             number=int(url.removesuffix('/').rsplit('-',1)[-1])
             calls.append(number)
-            if all_cards_fail or (number==1 and (calls.count(1)==1 or fail_tail)):
+            backend.product_started_at.append(clock.monotonic())
+            if (all_cards_fail or sum(type(item) is int for item in calls)<=initial_network_failures
+                    or (number==1 and (calls.count(1)==1 or fail_tail))):
                 raise product_error('no response')
             if number==2 and second_error and calls.count(2)==1:
                 raise second_error('connection reset')
-            if number==2 and block:return HttpResponse(url,429,'text/plain',b'busy')
+            if (number==2 and block) or number==block_card:return HttpResponse(url,429,'text/plain',b'busy')
             return HttpResponse(url,200,'text/html; charset=utf-8',html(number).encode())
 
     def run(value):
@@ -119,11 +131,38 @@ def test_manual_transport_failure_moves_to_tail_once(fail_tail,product_error):
 
 @pytest.mark.parametrize('product_error',[lambda message:URLError(TimeoutError(10060,message)),ConnectionResetError])
 def test_consecutive_transport_failures_stop_with_resumable_queue(product_error):
-    run,job,backend,calls=native_manual(all_cards_fail=True,product_error=product_error)
+    run,job,backend,calls=native_manual(all_cards_fail=True,product_error=product_error,duration=600)
     result=run(job)
-    assert calls==[1,2] and not backend.writes
+    assert calls==[1,2,3,1,2] and not backend.writes
     assert result['termination_reason']=='SOURCE_NETWORK_CIRCUIT_OPEN'
-    assert result['deferred']==2 and result['remaining']==3 and result['resume_available']
+    assert result['network_pauses']==3
+    assert result['deferred']==3 and result['remaining']==1 and result['resume_available']
+    starts=backend.product_started_at
+    assert [b-a for a,b in zip(starts[1:],starts[2:])]==pytest.approx([60,120,240])
+
+
+@pytest.mark.parametrize(('block_card','stop_during_cooldown','duration','expected_reason','expected_calls'),[
+    (None,False,600,None,[1,2,3,4,5,6,1,2,3,4,5]),
+    (6,False,600,'SOURCE_BLOCKED_HTTP_429',[1,2,3,4,5,6]),
+    (None,True,600,'OPERATOR_STOP',[1,2,3,4,5]),
+    (None,False,45,'SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW',[1,2,3,4,5]),
+])
+def test_night_collection_waits_after_five_failed_cards(block_card,stop_during_cooldown,duration,
+                                                       expected_reason,expected_calls):
+    run,job,backend,calls=native_manual(card_count=6,initial_network_failures=5,
+        duration=duration,robots_replies=iter((200,)),block_card=block_card,
+        stop_during_cooldown=stop_during_cooldown)
+    result=run(job)
+    assert calls==['robots',*expected_calls]
+    assert result['termination_reason']==expected_reason
+    if expected_reason is None:
+        assert result['status']=='succeeded' and result['sql_committed']==len(backend.writes)==6
+        assert result['canary']['robots_requests']==1 and result['network_pauses']==1
+    else:
+        assert not backend.writes
+    assert any(summary.get('phase')=='NETWORK_COOLDOWN' for summary in backend.summaries)==(duration==600)
+    if len(expected_calls)>5:
+        assert backend.product_started_at[5]-backend.product_started_at[4]>=60
 
 
 def test_timeout_then_reset_does_not_stop_remaining_cards():

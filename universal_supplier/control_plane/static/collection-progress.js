@@ -13,6 +13,8 @@ const percentText = new Intl.NumberFormat("ru", { maximumFractionDigits: 1 });
 
 for (const root of document.querySelectorAll("[data-collection-progress]")) {
   const phase = root.querySelector("[data-phase]");
+  const jobId = root.dataset.collectionProgress.match(/^\/api\/jobs\/(\d+)\/progress$/)?.[1];
+  const rowStatus = jobId ? document.querySelector(`[data-job-status-for="${jobId}"]`) : null;
   async function refresh() {
     try {
       const response = await fetch(root.dataset.collectionProgress, { cache: "no-store" });
@@ -26,6 +28,7 @@ for (const root of document.querySelectorAll("[data-collection-progress]")) {
         return;
       }
       phase.textContent = (active && progress.phase_label_ru) || statuses[status] || "Ожидается";
+      if (rowStatus && statuses[status]) rowStatus.textContent = statuses[status];
       const durable = progress.durable_progress === true;
       const count = (durable ? progress.succeeded : progress.processed) ?? 0;
       const total = progress.total;

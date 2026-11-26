@@ -8,5 +8,5 @@ def failure_scope(reason,runtime):
     if reason in ROBOTS_LOCAL or str(reason).startswith(('SOURCE_BLOCKED_HTTP_403','SOURCE_BLOCKED_HTTP_429',
         'SOURCE_BLOCKED_INTERSTITIAL','SOURCE_HTTP_CIRCUIT_BREAKER','SOURCE_NETWORK_CIRCUIT_OPEN',
         'SOURCE_CARD_ERROR_THRESHOLD','SOURCE_IDENTITY_MASS_FAILURE','SOURCE_RETRY_AFTER_HTTP_503')):return 'supplier'
-    if reason in ('MAX_RUN_DURATION_EXCEEDED','PRODUCT_BATCH_BUDGET') and runtime.get('resume_available'):return 'resume'
+    if reason in ('MAX_RUN_DURATION_EXCEEDED','PRODUCT_BATCH_BUDGET','SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW') and runtime.get('resume_available'):return 'resume'
     return 'system'

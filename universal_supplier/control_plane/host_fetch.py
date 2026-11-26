@@ -125,6 +125,9 @@ class BoundedHostFetcher:
         self.prevent_unknown_retry=prevent_unknown_retry
         self.manual_product_attempts=manual_product_attempts
         self.manual_robots_attempts=manual_robots_attempts
+        self.network_pause=threading.Event()
+        self.network_probe=False
+        self._product_transport_failures=0
         self.source=source;self.robots_url=robots_url;self.error_sink=error_sink
     def stop(self,reason='OPERATOR_STOP'):
         with self._lock:
@@ -136,6 +139,15 @@ class BoundedHostFetcher:
         reason=self.stop_requested()
         if reason:self.stop(reason if isinstance(reason,str) else 'OPERATOR_STOP')
         return self.stopped.is_set()
+    def dispatch_paused(self):
+        return self.aborted() or self.network_pause.is_set()
+    def reopen_for_probe(self):
+        """Called only after the product batch drained and its cooldown elapsed."""
+        with self._lock:
+            self.breaker.success()
+            self.network_probe=True
+            self._product_transport_failures=0
+            self.network_pause.clear()
     def _validate(self,url):
         self.validator(url)
         if host_key(url)!=self.host:raise ValueError('CROSS_HOST_REDIRECT_FORBIDDEN')
@@ -170,7 +182,9 @@ class BoundedHostFetcher:
                 initial[0]=True
                 # Once the transport is entered, absence of a response is
                 # uncertain. A limiter deadline BEFORE send proves no GET.
-                transport_started=True
+                with self._lock:
+                    if self.network_pause.is_set():raise RequestAborted('PRODUCT_NETWORK_COOLDOWN')
+                    transport_started=True
                 request_started=self.clock.monotonic()
                 try:
                     response=client.get_validated(url,validator=self._validate,timeout_seconds=min(self.rate.request_timeout_seconds,max(.001,deadline-self.clock.monotonic())))
@@ -207,9 +221,15 @@ class BoundedHostFetcher:
                     with self._lock:
                         error_type=type(error).__name__
                         self.metrics.record_network_error(self.clock.monotonic()-request_started,error_type)
+                        trips_before=self.metrics.circuit_breaker_trips
                         self.breaker.failure(error_type)
-                        tripped=self.metrics.circuit_breaker_trips>0
-                    if tripped:self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
+                        tripped=self.metrics.circuit_breaker_trips>trips_before
+                        temporary_product_error=category is not None and request_scope=='product'
+                        if temporary_product_error:
+                            self._product_transport_failures+=1
+                            if self.network_probe or self._product_transport_failures>=self.rate.consecutive_error_threshold:
+                                self.network_pause.set()
+                    if tripped and not self.network_pause.is_set():self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
                     if category==MANUAL_DISCONNECT:raise RemoteDisconnectRefusal('REMOTE_DISCONNECTED_UNKNOWN') from error
                     raise ReadTimeoutRefusal(url) from error
                 self._validate(response.final_url)
@@ -220,13 +240,16 @@ class BoundedHostFetcher:
                     # attempt. A later job needs a fresh operator boundary.
                     stop_statuses.add(503);self.stop('SOURCE_RETRY_AFTER_HTTP_503')
                 elif has_blocking_interstitial(response.body):self.stop('SOURCE_BLOCKED_INTERSTITIAL')
+                with self._lock:
+                    self._product_transport_failures=0
+                    self.network_probe=False
                 return response
             policy=self.rate
             if request_scope=='robots' and self.manual_robots_attempts is not None:
                 policy=replace(self.rate,max_attempts=self.manual_robots_attempts)
             elif request_scope!='robots' and self.manual_product_attempts:
                 policy=replace(self.rate,max_attempts=1)
-            response,attempts=request_with_resilience(send,policy,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=stop_statuses,abort_requested=self.aborted)
+            response,attempts=request_with_resilience(send,policy,self.limiter,clock=self.clock,metrics=self.metrics,breaker=self.breaker,deadline=deadline,stop_statuses=stop_statuses,abort_requested=self.dispatch_paused)
             if self.prevent_unknown_retry and self.metrics.circuit_breaker_trips:
                 self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
             observed=datetime.now(timezone.utc)
@@ -275,7 +298,7 @@ class BoundedHostFetcher:
             with ThreadPoolExecutor(max_workers=self.rate.max_concurrency) as pool:
                 try:
                     while pending or cursor<len(urls):
-                        while cursor<len(urls) and len(pending)<self.rate.max_concurrency and not self.aborted() and self.clock.monotonic()<deadline:
+                        while cursor<len(urls) and len(pending)<self.rate.max_concurrency and not self.dispatch_paused() and self.clock.monotonic()<deadline:
                             url=urls[cursor];cursor+=1;pending[pool.submit(self._fetch,url,deadline,request_scope)]=url
                         if not pending:break
                         done,_=wait(pending,return_when=FIRST_COMPLETED)

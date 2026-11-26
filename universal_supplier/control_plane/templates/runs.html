@@ -9,7 +9,7 @@
   <td>{% if r.entry_type=='job' %}Задание №{{r.id}}{% if r.crawl_run_id %} · <a href="/runs/{{r.crawl_run_id}}">Запуск №{{r.crawl_run_id}}</a>{% endif %}
       {% else %}<a href="/runs/{{r.id}}">Запуск №{{r.id}}</a>{% endif %}</td>
   <td>{{r.supplier_name}}</td>
-  <td>{{'Нет связи с исполнителем' if r.manual_job_expired and r.status=='running' else r.status|ru}}
+  <td><span{% if r.entry_type=='job' %} data-job-status-for="{{r.id}}"{% endif %}>{{'Нет связи с исполнителем' if r.manual_job_expired and r.status=='running' else r.status|ru}}</span>
       {% set reason=r.error_message or (r.metadata or {}).get('failure') %}
       {% if reason and r.status not in ['queued','running','succeeded'] %}<p>{{job_message(reason) or 'Подробности в запуске.'}}</p>{% endif %}</td>
   <td>{{(r.started_at or r.created_at or 'нет данных')|msk}}{% if r.entry_type!='job' %}<br>{{duration_label(r)}}{% endif %}</td>

@@ -103,6 +103,8 @@ def job_message(value):
         return 'На товарной странице произошёл сетевой сбой. Подробности сохранены в запуске.'
     if upper in {'SOURCE_NETWORK_CIRCUIT_OPEN','SOURCE_CARD_ERROR_THRESHOLD'}:
         return 'Несколько карточек подряд завершились ошибкой. Сбор остановлен, очередь сохранена.'
+    if upper == 'SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW':
+        return 'До конца окна сбора не хватило времени для повторной проверки связи. Очередь сохранена.'
     if upper == 'MAX_RUN_DURATION_EXCEEDED':
         return 'Истекло время сбора. Необработанные карточки остались в очереди.'
     if upper.startswith('SOURCE_BLOCKED_HTTP_403'):
