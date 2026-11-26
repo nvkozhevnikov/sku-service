@@ -1,6 +1,7 @@
 {% extends 'base.html' %}{% from '_collection_progress.html' import progress_meter %}{% block content %}
 <h2>Запуски и задания очереди</h2>
-{% if job_id %}<section class="panel"><h3>Задание №{{job_id}}</h3>{{ progress_meter(url='/api/jobs/' ~ job_id ~ '/progress', show_link=true) }}</section>{% endif %}
+{% set listed_job_ids = runs|selectattr('entry_type','equalto','job')|map(attribute='id')|map('string')|list %}
+{% if job_id and job_id not in listed_job_ids %}<section class="panel"><h3>Задание №{{job_id}}</h3>{{ progress_meter(url='/api/jobs/' ~ job_id ~ '/progress', show_link=true) }}</section>{% endif %}
 <p><a href="/runs?job_status=queued">В очереди</a> · <a href="/runs?job_status=running">Выполняются</a> · <a href="/runs">Последние записи</a> · <a href="/exports/runs.xlsx">Скачать Excel</a> · <a href="/exports/runs.csv">CSV</a></p>
 <form method="get" action="/changes/export.xlsx"><select name="period"><option value="last_run">Последний запуск</option><option value="24h">24часа</option><option value="7d">7дней</option><option value="between">Между A и B</option></select><input name="run_a" type="number" min="1" placeholder="Run A"><input name="run_b" type="number" min="1" placeholder="Run B"><button>Экспорт истории Excel</button><button formaction="/changes/export.csv">CSV</button></form>
 <table><thead><tr><th>Запись</th><th>Поставщик</th><th>Статус / сообщение</th><th>Время</th><th>Результат</th></tr></thead><tbody>
@@ -14,9 +15,9 @@
       {% if reason and r.status not in ['queued','running','succeeded'] %}<p>{{job_message(reason) or 'Подробности в запуске.'}}</p>{% endif %}</td>
   <td>{{(r.started_at or r.created_at or 'нет данных')|msk}}{% if r.entry_type!='job' %}<br>{{duration_label(r)}}{% endif %}</td>
   <td>{% if r.entry_type=='job' %}
-        {% if r.status in ['queued','running'] and r.id|string != job_id %}{{ progress_meter(url='/api/jobs/' ~ r.id ~ '/progress', show_link=true) }}{% else %}—{% endif %}
+        {% if r.status in ['queued','running'] or r.id|string == job_id %}{{ progress_meter(url='/api/jobs/' ~ r.id ~ '/progress', show_link=not r.crawl_run_id) }}{% else %}—{% endif %}
       {% elif r.metadata and r.metadata.get('source_runtime') %}
-        {{ progress_meter(run_collection_progress(r.metadata), '/api/runs/' ~ r.id ~ '/progress' if r.status=='running' and not job_id else '') }}
+        {{ progress_meter(run_collection_progress(r.metadata), '/api/runs/' ~ r.id ~ '/progress' if r.status=='running' and not r.manual_job_expired else '') }}
       {% else %}{% set f=phase_summary(r) %}Сохранено: {{f.sql_count if f.sql_count is not none else 'нет данных'}}{% endif %}</td>
 </tr>
 {% else %}<tr><td colspan="5">Записей нет.</td></tr>{% endfor %}
