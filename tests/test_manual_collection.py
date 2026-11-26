@@ -189,6 +189,48 @@ def test_operator_cannot_change_admin_speed_and_disabled_source_requires_admin()
     assert not db.snapshots and MANUAL_POLICIES.get() is None
 
 
+def test_recovery_checks_scope_and_original_approval_before_dispatch():
+    db = DB('uss_stanko')
+    queue = db.queue()
+    actor = AuthUser(1, 'qa', 'QA', 'ADMIN')
+    other = AuthUser(2, 'other', 'Other', 'ADMIN')
+    request = ManualRequest(actor, KEY, '2', '3', 0)
+    queue.enqueue(1, trigger_type='manual', crawl_type='full', source_mode='REFRESH',
+                  source_limit=2, requested_by_user_id=actor.id, manual_request=request)
+    snapshot = db.snapshots[0]
+    statements = []
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def transaction(self): return nullcontext()
+        def cursor(self): return self
+        def execute(self, sql, args=None):
+            self.args = args
+            statements.append(sql)
+        def fetchone(self):
+            if self.args == (44, 1):
+                return snapshot, actor.id, True, 'https://uss-stanko.com/'
+
+    queue._connect = Connection
+    queue.recover_queued_manual_job(1, 44, actor, KEY, cancel=False)
+    assert "j.status='queued'" in statements[-1] and 'FOR UPDATE OF j' in statements[-1]
+    with pytest.raises(ValueError, match='принадлежит другому поставщику'):
+        queue.recover_queued_manual_job(2, 44, actor, KEY, cancel=False)
+    with pytest.raises(PermissionError, match='только его автор'):
+        queue.recover_queued_manual_job(1, 44, other, KEY, cancel=False)
+    snapshot['manual_collection']['expires_at'] = '2000-01-01T00:00:00+00:00'
+    marker = snapshot['manual_collection']
+    marker['signature'] = manual_collection.signature({k: v for k, v in marker.items() if k != 'signature'}, KEY)
+    with pytest.raises(PermissionError, match='Время запуска истекло'):
+        queue.recover_queued_manual_job(1, 44, actor, KEY, cancel=False)
+    assert not any('UPDATE crawl_jobs' in sql for sql in statements)
+    queue.recover_queued_manual_job(1, 44, other, KEY, cancel=True)
+    assert "SET status='cancelled'" in statements[-1]
+    queue.fail_waiting_manual_job(44, 'MANUAL_WORKER_REFUSED')
+    assert "AND status='queued'" in statements[-1] and 'started_at IS NULL' in statements[-1]
+
+
 def test_ivstankomaster_one_click_freezes_full_catalog_mode():
     db=DB('ivstankomaster')
     queue=db.queue()

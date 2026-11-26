@@ -66,6 +66,18 @@ def collection_notice(code):
     return {'title': title, 'explanation': explanation}
 
 
+MANUAL_RESUME_BLOCKERS = {
+    'UNCERTAIN_OR_FAILED_RESUME': 'Нужна сверка карточек с неподтверждённым результатом. Очередь сохранена.',
+    'UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR': 'Нужна сверка карточек с неподтверждённым результатом. Очередь сохранена.',
+    'UNCERTAIN_PRODUCT_RECEIPT_REQUIRES_OPERATOR': 'Нужна сверка незавершённого запроса. Очередь сохранена.',
+    'UNCERTAIN_DISCOVERY': 'Нужна сверка последней проверенной страницы каталога.',
+    'RESUME_CHECKPOINT_MISSING': 'Файл сохранённой очереди недоступен.',
+    'RESUME_CHECKPOINT_CHANGED': 'Не удалось подтвердить целостность сохранённой очереди.',
+    'RESUME_PARENT_NOT_LATEST': 'У поставщика есть более новое задание. Откройте его в разделе «Сбор и запуски».',
+    'RESUME_SUPPLIER_DISABLED': 'Источник отключён. Администратор может продолжить сбор.',
+}
+
+
 def error_presentation(message, path):
     """Deterministic same-site GET links, independent of history/Referer/JS."""
     code = str(message)
@@ -82,9 +94,8 @@ def error_presentation(message, path):
                 'EXPLICIT_HOST_PROFILE_REQUIRED', 'SOURCE_RUNTIME_NOT_ENABLED',
                 'SOURCE_WRITES_NOT_AUTHORIZED', 'SUPPLIER_HTTP_NOT_AUTHORIZED'}:
         notice = collection_notice(code)
-    elif code in {'UNCERTAIN_OR_FAILED_RESUME','UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR'}:
-        notice = {'title': 'Очередь сохранена. Нужна сверка одной или нескольких карточек',
-                  'explanation': 'Продолжение временно недоступно. Откройте последние результаты сбора и проверьте причину остановки.'}
+    elif code in MANUAL_RESUME_BLOCKERS:
+        notice = {'title': 'Продолжение недоступно', 'explanation': MANUAL_RESUME_BLOCKERS[code]}
     elif re.fullmatch(r'[A-Z][A-Z0-9_ :;=.-]*', code):
         notice = {'title': 'Действие заблокировано',
                   'explanation': 'Проверка безопасности не пройдена. Сбор не запущен; обратитесь к администратору.'}
@@ -98,6 +109,12 @@ def job_message(value):
     upper = str(value or '').upper()
     if upper == 'ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT':
         return 'Исполнитель перестал отвечать. Прерванное задание закрыто, сохранённые данные доступны.'
+    if upper == 'MANUAL_WAITING_CANCELLED':
+        return 'Ожидающее задание закрыто до начала сбора.'
+    if upper == 'MANUAL_WORKER_BUSY':
+        return 'Исполнитель был занят. Можно создать новый запуск.'
+    if upper == 'MANUAL_WORKER_REFUSED':
+        return 'Подтверждение запуска не прошло проверку. Откройте поставщика, чтобы создать новый запуск.'
     if upper in {'SOURCE_ROBOTS_UNAVAILABLE','CANARY_ROBOTS_REQUEST_LIMIT'}:
         return 'Не удалось получить правила сайта (robots.txt). До карточек сбор не дошёл.'
     if upper in {'ROBOTS_NOT_PROVEN','ROBOTS_NOT_TEXT'}:
@@ -164,6 +181,8 @@ def collection_issue_message(receipt):
         return 'Карточка не ответила вовремя и была отложена.'
     if category == 'manual_out_of_scope_redirect':
         return 'Карточка ведёт на другой адрес. Исходный адрес отложен для проверки.'
+    if category == 'manual_stop_interrupted':
+        return 'Сбор остановлен во время запроса. Карточка оставлена на проверку.'
     if category == 'matching':
         return job_message(reason) if 'EXISTING_LINK_CONFLICT' in str(reason) else 'Обновление требует проверки сопоставления.'
     if category == 'identity':

@@ -1,2 +1,4 @@
 .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}.metrics article{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column}.metrics span{color:var(--muted);font-size:12px}.metrics strong{font-size:24px;color:var(--navy)}
 .warning{background:#fff0cf;color:#704b00}.pagehead>.button{white-space:nowrap}
+.xml-file-details .xml-file-checksum{color:var(--muted);margin:14px 0 0}
+.xml-file-checksum code{display:block;margin-top:4px;max-width:100%;overflow-wrap:anywhere;color:var(--navy)}

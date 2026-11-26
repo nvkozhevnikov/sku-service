@@ -204,6 +204,70 @@ class PostgresJobQueue:
                 {'status':'stale_failed','run_id':run_id,'run_status':'partial' if run_status=='running' else run_status},
                 'Expired manual lease closed without starting a job or changing receipts')
 
+    def recover_queued_manual_job(self, supplier_id, job_id, actor, key, *, cancel):
+        """Recover or close the exact manual job before it has been claimed."""
+        from .manual_collection import enabled, require, verify
+        from .access_policy import allowed
+
+        require(enabled() and actor.id > 0 and actor.is_active and not actor.must_change_password
+                and allowed(actor, 'supplier.manage'), 'Нет прав на восстановление задания')
+        with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
+            cursor.execute("""SELECT j.settings_snapshot,j.requested_by_user_id,s.enabled,s.base_url
+                FROM crawl_jobs j JOIN suppliers s ON s.id=j.supplier_id
+                WHERE j.id=%s AND j.supplier_id=%s AND j.status='queued'
+                  AND j.crawl_run_id IS NULL AND j.started_at IS NULL
+                  AND j.trigger_type='manual' AND j.settings_snapshot ? 'manual_collection'
+                FOR UPDATE OF j""", (job_id, supplier_id))
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError('Задание уже запущено, закрыто или принадлежит другому поставщику. Обновите страницу.')
+            snapshot, requested_by, source_enabled, base_url = row
+            if cancel:
+                require(actor.id == requested_by or actor.role == 'ADMIN', 'Закрыть это задание может его автор или администратор')
+                cursor.execute("""UPDATE crawl_jobs SET status='cancelled',finished_at=now(),updated_at=now(),
+                    error_message='MANUAL_WAITING_CANCELLED' WHERE id=%s""", (job_id,))
+                return
+            require(actor.id == requested_by, 'Запустить ожидающее задание может только его автор')
+            require(source_enabled, 'Источник выключен. Закройте ожидающее задание перед новым запуском')
+            require(normalized_domain(base_url) == snapshot.get('domain'), 'Адрес источника изменился. Закройте ожидающее задание')
+            approval = verify(snapshot, key)
+            require((approval['actor_id'], approval['actor_role'], approval['actor_sv']) ==
+                    (actor.id, actor.role, actor.session_version), 'Права изменились. Закройте ожидающее задание')
+
+    def fail_waiting_manual_job(self, job_id, message):
+        """A losing launcher may never change a claimed job."""
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("""UPDATE crawl_jobs SET status='failed',finished_at=now(),updated_at=now(),
+                error_message=%s WHERE id=%s AND status='queued' AND started_at IS NULL
+                  AND crawl_run_id IS NULL AND settings_snapshot ? 'manual_collection'""", (message, job_id))
+
+    @staticmethod
+    def _latest_resume_parent(cursor, supplier_id, job_id, *, lock=False):
+        sql = """SELECT j.status,j.settings_snapshot,r.metadata
+            FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id
+            WHERE j.id=%s AND j.supplier_id=%s
+              AND NOT EXISTS (SELECT 1 FROM crawl_jobs newer WHERE newer.supplier_id=j.supplier_id
+                  AND newer.id>j.id AND newer.status<>'skipped_already_queued')"""
+        cursor.execute(sql + (' FOR SHARE OF j' if lock else ''), (job_id, supplier_id))
+        previous = cursor.fetchone()
+        if not previous:
+            raise ValueError('RESUME_PARENT_NOT_LATEST')
+        return previous
+
+    def manual_resume_status(self, supplier_id, job_id, request):
+        """Read-only equivalent of the resume admission used at enqueue."""
+        request.validate(supplier_id, None, 'manual', 'RESUME')
+        with self._connect() as connection:
+            connection.read_only = True
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute("""SELECT code,adapter_name,base_url,enabled,crawl_settings,rate_settings
+                    FROM suppliers WHERE id=%s""", (supplier_id,))
+                supplier = cursor.fetchone()
+                if not supplier or (not supplier[3] and request.actor.role != 'ADMIN'):
+                    raise PermissionError('RESUME_SUPPLIER_DISABLED')
+                parent = self._latest_resume_parent(cursor, supplier_id, job_id)
+                request.resume(self.config, supplier_id, supplier, job_id, parent)
+
     def source_resume_status(self,job_id):
         from .source_controls import verify_resume
         from .source_runtime import runtime_enabled,read_input
@@ -284,14 +348,7 @@ class PostgresJobQueue:
                 "crawl_settings": crawl_settings or {}, "rate_settings": rate_settings or {},
             }
             if manual_request is not None and source_mode=='RESUME':
-                cursor.execute("""SELECT j.status,j.settings_snapshot,r.metadata
-                    FROM crawl_jobs j JOIN crawl_runs r ON r.id=j.crawl_run_id
-                    WHERE j.id=%s AND j.supplier_id=%s
-                      AND NOT EXISTS (SELECT 1 FROM crawl_jobs newer WHERE newer.supplier_id=j.supplier_id
-                          AND newer.id>j.id AND newer.status<>'skipped_already_queued')
-                    FOR SHARE OF j""",(resume_job_id,supplier_id))
-                previous=cursor.fetchone()
-                if not previous:raise ValueError('Выберите последнее задание этого поставщика')
+                previous = self._latest_resume_parent(cursor, supplier_id, resume_job_id, lock=True)
                 snapshot=manual_request.resume(self.config,supplier_id,supplier,resume_job_id,previous)
             elif source_limit is not None:
                 preview=(manual_request.preview(self,connection,cursor,supplier_id,supplier,source_limit) if manual_request is not None else self._canary_preview(connection,cursor,supplier_id,supplier,source_limit,source_mode))
@@ -452,6 +509,8 @@ class PostgresJobQueue:
                 return None
             if job_id is not None:
                 if row[0]!=job_id or not row[9].get('manual_collection'):raise PermissionError('Чужое задание не запускается')
+                if normalized_domain(row[4]) != row[9].get('domain'):
+                    raise PermissionError('Домен источника изменился')
                 manual_validator(row[9])
             from . import automation_execution
             if automation_execution.ACTIVE is not None and not row[9].get('automation'):

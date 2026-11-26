@@ -1,5 +1,12 @@
 # XML continuity / LAST KNOWN GOOD — 2026-11-16
 
+26.11.2026. В предпросмотре пустой короткий XML поясняет, что выбранных
+предложений нет, и указывает на полный XML для просмотра карточек поставщика.
+Размер, дата формирования и контрольная сумма находятся в «Сведениях о
+файле» или «Сведениях об образце». Время показано в формате панели.
+Изменение относится к отображению. Правила отбора, состав XML и блокировка
+импорта сохраняются.
+
 OPERATOR-CONFIRMED: accumulated results must survive TTL, failed collection and
 technical changes. Empty current previews alone are NOT_ACCEPTED as the system's
 delivered result. Scope: existing autonomous-system feature, base

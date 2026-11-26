@@ -29,23 +29,22 @@
   {% if rt.get('remaining') %}<p>В очереди осталось карточек: {{rt.remaining}}</p>{% endif %}
   {% if rt.get('discovery_remaining') %}<p>Осталось проверить страниц каталога: {{rt.discovery_remaining}}</p>{% endif %}
   {% if rt.get('network_retry_count') %}<p>Повторный сбор сетевых ошибок. Карточек в этой попытке: {{rt.network_retry_count}}</p>{% endif %}
-  {% if latest_manual and (stop_reason!='ORCHESTRATOR_LEASE_EXPIRED_UNCERTAIN_RESULT' or (rt.owner_job_id and rt.input_sha256)) and manual_collection_enabled and source_runtime_enabled and item.status in ['partial','failed','cancelled','stale_failed'] and current_user.role in ['ADMIN','OPERATOR'] and not control_plane_read_only and (rt.remaining or rt.resume_available or rt.discovery_remaining) %}
+  {% if manual_resume_available %}
     <form method="post" action="/suppliers/{{item.supplier_id}}/manual-start">
       <input type="hidden" name="csrf_token" value="{{csrf_token}}">
       <input type="hidden" name="collection_mode" value="RESUME">
       <input type="hidden" name="resume_job_id" value="{{item.manual_job_id}}">
-      <button>Продолжить сбор</button>
-      <p>Уже сохранённые карточки повторно не запрашиваются.</p>
-    </form>
-  {% elif latest_manual and manual_collection_enabled and source_runtime_enabled and item.status=='partial' and current_user.role in ['ADMIN','OPERATOR'] and not control_plane_read_only and not rt.get('termination_reason') and rt.get('remaining')==0 and not rt.get('discovery_remaining') and rt.get('deferred') and not rt.get('resume_uncertain') %}
-    <form method="post" action="/suppliers/{{item.supplier_id}}/manual-start">
-      <input type="hidden" name="csrf_token" value="{{csrf_token}}">
-      <input type="hidden" name="collection_mode" value="RESUME">
-      <input type="hidden" name="resume_job_id" value="{{item.manual_job_id}}">
+      {% if manual_resume_available=='retry_network' %}
       <input type="hidden" name="retry_network" value="yes">
       <button>Повторить сетевые ошибки</button>
       <p>Одна попытка для каждой карточки, которая не ответила. Уже сохранённые товары не запрашиваются.</p>
+      {% else %}
+      <button>Продолжить сбор</button>
+      <p>Уже сохранённые карточки повторно не запрашиваются.</p>
+      {% endif %}
     </form>
+  {% elif manual_resume_blocker %}
+    <p class="notice">{{manual_resume_blocker}}</p>
   {% elif item.manual_job_id and not latest_manual and item.latest_supplier_job_id %}
     <p><a href="/runs?job_id={{item.latest_supplier_job_id}}">Открыть последнее задание поставщика</a></p>
   {% elif not item.manual_job_id and rt and item.status in ['partial','failed','cancelled','stale_failed'] and source_runtime_enabled and not control_plane_read_only and current_user.role in ['ADMIN','OPERATOR'] %}

@@ -114,7 +114,8 @@ class ManualRequest:
     def resume(self, config, sid, supplier, parent_id, previous):
         from .source_controls import verify_resume
         from .source_runtime import job_dir, read_input
-        from .source_resume import FROZEN_BATCH_REFUSAL, manual_redirect_receipt, manual_transport_receipt, retryable_network_urls
+        from .source_resume import (FROZEN_BATCH_REFUSAL, STOPPED_REQUEST, manual_redirect_receipt,
+                                    manual_stop_receipt, manual_transport_receipt, retryable_network_urls)
         status, prior, metadata=previous
         require(status in TERMINAL, 'Дождитесь завершения исходного задания')
         prior_marker=authenticated_marker(prior,self.key)
@@ -139,10 +140,11 @@ class ManualRequest:
             state=json.loads((folder/'checkpoint.json').read_text(encoding='utf-8'))
             receipt=None
             legacy_redirect=None
+            legacy_stop=None
             # Use only the last signed job's evidence. The checkpoint can
             # belong to the original job even if the failed request was in a child.
             reason=result.get('termination_reason')
-            if original['mode']=='REFRESH' and reason in ('SOURCE_CARD_HTTP_FAILED',FROZEN_BATCH_REFUSAL):
+            if original['mode']=='REFRESH' and reason in ('SOURCE_CARD_HTTP_FAILED',FROZEN_BATCH_REFUSAL,'OPERATOR_STOP'):
                 uncertain=[r['receipt'] for r in state['terminal'].values() if r['state']=='UNCERTAIN']
                 if len(uncertain)==1:
                     item=uncertain[0]
@@ -152,6 +154,9 @@ class ManualRequest:
                                 if reason==FROZEN_BATCH_REFUSAL:
                                     if item['reason']!='ValueError:'+FROZEN_BATCH_REFUSAL:break
                                     legacy_redirect=manual_redirect_receipt(item['origin'],item['url'],parent_id,path,legacy=True)
+                                elif reason=='OPERATOR_STOP':
+                                    if item['reason']!=STOPPED_REQUEST:break
+                                    legacy_stop=manual_stop_receipt(item['origin'],item['url'],parent_id,path)
                                 else:
                                     receipt=manual_transport_receipt(item['origin'],item['url'],parent_id,path,
                                                                      expected_error=item['reason'])
@@ -163,7 +168,7 @@ class ManualRequest:
                         'Сначала завершите оставшуюся очередь')
                 retries=retryable_network_urls(state)
                 require(bool(retries), 'В этом запуске нет сетевых ошибок для повторного сбора')
-            plan=verify_resume(code,owner,sha,original,config,manual_isolation=legacy_redirect or receipt,
+            plan=verify_resume(code,owner,sha,original,config,manual_isolation=legacy_redirect or legacy_stop or receipt,
                                require_pending=not self.retry_network)
             if self.retry_network:
                 require(plan is not None and not plan['offline_pending'],'Сначала завершите оставшуюся очередь')
@@ -176,6 +181,7 @@ class ManualRequest:
                                    'previous_engine':original['engine_sha256'],
                                    'checkpoint_sha256':state['checksum'],'legacy_timeout':receipt}
         if legacy_redirect:snapshot['manual_resume']['legacy_redirect']=legacy_redirect
+        if legacy_stop:snapshot['manual_resume']['legacy_stop']=legacy_stop
         if retries:snapshot['manual_resume']['retry_network_urls']=retries
         return snapshot
 
@@ -228,7 +234,7 @@ def verify(snapshot, key, *, now=None):
         if retries is not None:
             require(isinstance(retries,list) and 0<len(retries)<=canary['max_products']
                     and all(isinstance(url,str) for url in retries) and len(set(retries))==len(retries)
-                    and not any(resume.get(a) for a in ('legacy_redirect','legacy_timeout')),
+                    and not any(resume.get(a) for a in ('legacy_redirect','legacy_timeout','legacy_stop')),
                     'Изменился список повторных запросов')
     else:
         require(not resume and snapshot['source_input']['engine_sha256']==marker['engine'], 'Изменился исходный запуск')

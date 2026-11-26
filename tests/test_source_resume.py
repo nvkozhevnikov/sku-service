@@ -64,6 +64,22 @@ def test_stale_writer_does_not_overwrite_and_failed_write_preserves_memory(tmp_p
     with pytest.raises(RuntimeError,match='ANOTHER_WRITER'):stale.claim_batch(1)
     assert stale.state==before and cp(tmp_path).state==a.state
 
+def test_resume_reads_legacy_formatted_checkpoint_and_refuses_corruption(tmp_path):
+    checkpoint = cp(tmp_path)
+    checkpoint.add_urls(['https://vekprom.ru/а', 'https://vekprom.ru/б'])
+    saved = json.loads(checkpoint.path.read_bytes())
+    checkpoint.path.write_text(json.dumps(saved, indent=2), encoding='utf-8')
+    resumed = cp(tmp_path)
+    assert resumed.claim_batch(1) == ['https://vekprom.ru/а']
+    assert b'\n' not in resumed.path.read_bytes()
+    assert cp(tmp_path).state == resumed.state
+    corrupted = json.loads(resumed.path.read_bytes())
+    corrupted['frontier'].clear()
+    resumed.path.write_text(json.dumps(corrupted), encoding='utf-8')
+    with pytest.raises(ValueError, match='CHECKPOINT_CHECKSUM'):
+        resumed.claim_batch(1)
+    assert resumed.state['frontier'] == ['https://vekprom.ru/б']
+
 def test_foreign_url_validation_is_atomic(tmp_path):
     a=cp(tmp_path);before=deepcopy(a.state)
     with pytest.raises(ValueError,match='namespace'):a.add_urls(['https://vekprom.ru/a','https://foreign.example/a'])

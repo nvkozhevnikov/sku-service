@@ -24,7 +24,7 @@ from universal_supplier.control_plane.manual_collection import MANUAL_EXECUTION,
 from universal_supplier.control_plane.queue import CrawlJob, EnqueueResult
 from universal_supplier.control_plane.security import AuthUser
 from universal_supplier.control_plane.source_backend import SourceBackend
-from universal_supplier.control_plane.source_resume import manual_redirect_receipt, manual_transport_receipt
+from universal_supplier.control_plane.source_resume import manual_redirect_receipt, manual_stop_receipt, manual_transport_receipt
 from universal_supplier.control_plane.source_runtime import LEASED_HOST, engine_fingerprint, run_source
 from universal_supplier.http_capture import HttpResponse, _BoundedRedirectHandler
 
@@ -44,7 +44,7 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
                   product_error=TimeoutError, second_error=None, all_cards_fail=False,
                   card_count=3, initial_network_failures=0, duration=100, block_card=None,
                   stop_during_cooldown=False, redirect_target=None, redirect_card=1,
-                  first_card_failures=1, missing_cards=0):
+                  first_card_failures=1, missing_cards=0, pause_card=None):
     code='partner_st'
     base='https://partner-st.ru'
     rate_values={'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0}
@@ -98,6 +98,11 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
             number=int(url.removesuffix('/').rsplit('-',1)[-1])
             calls.append(number)
             backend.product_started_at.append(clock.monotonic())
+            if number == pause_card:
+                from universal_supplier.control_plane.source_runtime import job_dir
+                (job_dir(code,job.id)/'STOP_REQUESTED').write_text('OPERATOR_STOP', encoding='utf-8')
+                # Simulate a previously entered request whose next hop is stopped.
+                self.before_request(url)
             if number==redirect_card and redirect_target:
                 handler=_BoundedRedirectHandler(validator,self.before_request)
                 handler.redirect_request(Request(url),None,302,'Found',{},redirect_target)
@@ -231,6 +236,32 @@ def test_manual_redirect_does_not_refetch_a_saved_address_inside_batch():
     assert calls==['robots',1,2,3] and result['termination_reason'] is None
     assert result['sql_committed']==len(backend.writes)==2
     assert result['quarantined'][0]['isolation']['category']=='manual_out_of_scope_redirect'
+
+
+def test_manual_pause_mid_request_continues_other_cards_after_proof(tmp_path):
+    run, job, backend, calls = native_manual(robots_replies=iter((200, 200)), first_card_failures=0, pause_card=2)
+    first = run(job)
+    assert calls == ['robots', 1, 2]
+    assert first['termination_reason'] == 'OPERATOR_STOP'
+    assert first['sql_committed'] == first['remaining'] == 1
+    receipt, = first['quarantined']
+    assert receipt['isolation']['category'] == 'manual_stop_interrupted'
+    checkpoint = json.loads(Path(first['checkpoint']).read_bytes())
+    snapshot = job.settings_snapshot
+    resumed = replace(job, id=2, settings_snapshot={
+        **snapshot, 'manual_resume': {'previous_engine':snapshot['source_input']['engine_sha256'],
+                                      'checkpoint_sha256':checkpoint['checksum']},
+        'crawl_settings':{**snapshot['crawl_settings'], 'collection_mode':'RESUME',
+                          'resume_owner_job_id':1,'resume_input_sha256':first['input_sha256']}})
+    result = run(resumed)
+    assert calls == ['robots', 1, 2, 'robots', 3]
+    assert result['sql_committed'] == 2 and result['remaining'] == 0
+    assert result['quarantined'] == [receipt]
+    proof = Path(first['checkpoint']).parent/'transport-errors'/receipt['stop_evidence']['file']
+    first_stop = proof.parent.parent/'FIRST_STOP.json'
+    first_stop.write_text('{"reason":"HOST_LEASE_LOST","job_id":1}', encoding='utf-8')
+    with pytest.raises(ValueError, match='MANUAL_STOP_PROOF_REQUIRED'):
+        manual_stop_receipt(receipt['origin'], receipt['url'], 1, proof)
 
 
 @pytest.mark.parametrize('try_committed',[False,True])
@@ -455,9 +486,14 @@ def test_drained_manual_collection_offers_a_separate_retry_action(tmp_path,monke
     details={'id':105,'supplier_name':'КАМИ','status':'partial','supplier_id':5812,'manual_job_id':214,
              'metadata':{'source_runtime':{'remaining':0,'deferred':2}},'errors':[]}
     monkeypatch.setattr(store,'run',lambda run_id:details)
+    checks=[]
+    def check(sid,jid,approval):
+        checks.append((sid,jid,approval.retry_network))
+    monkeypatch.setattr(c.app.state.queue,'manual_resume_status',check,raising=False)
     page=c.get('/runs/105')
     assert 'Повторить сетевые ошибки' in page.text and 'name="retry_network" value="yes"' in page.text
     assert 'Продолжить сбор' not in page.text
+    assert checks==[(5812,214,True)]
     requests=[]
     def enqueue(*args,**kwargs):
         requests.append(kwargs)
@@ -472,9 +508,44 @@ def test_drained_manual_collection_offers_a_separate_retry_action(tmp_path,monke
     details['metadata']['source_runtime']['remaining']=3
     page=c.get('/runs/105')
     assert 'Продолжить сбор' in page.text and 'Повторить сетевые ошибки' not in page.text
+    assert checks[-1]==(5812,214,False)
+    details['metadata']['source_runtime']['resume_uncertain']=True
+    assert 'Продолжить сбор' in c.get('/runs/105').text
+    def refuse(*args):
+        raise ValueError('UNCERTAIN_OR_FAILED_RESUME')
+    monkeypatch.setattr(c.app.state.queue,'manual_resume_status',refuse)
+    page=c.get('/runs/105')
+    assert 'Продолжить сбор' not in page.text and 'Нужна сверка' in page.text
     details['latest_supplier_job_id']=217
     page=c.get('/runs/105')
     assert 'Продолжить сбор' not in page.text and '/runs?job_id=217' in page.text
+
+
+def test_waiting_manual_job_recovery_dispatches_existing_job_only(tmp_path,monkeypatch):
+    monkeypatch.setenv('STERBRUST_MANUAL_COLLECTION_ENABLED','YES')
+    c,store=client(tmp_path,monkeypatch)
+    rows=store.suppliers
+    monkeypatch.setattr(store,'suppliers',lambda:[{**row,'manual_job_queued':True,
+        'job_status':'queued','job_id':176,'manual_job_actor_id':1} for row in rows()])
+    queue=c.app.state.queue
+    requests=[];launched=[]
+    def recover(supplier,job,actor,key,*,cancel):
+        requests.append((supplier,job,actor.id,cancel))
+    monkeypatch.setattr(queue,'recover_queued_manual_job',recover,raising=False)
+    monkeypatch.setattr('universal_supplier.control_plane.manual_collection.launch',
+                        lambda jid,**kwargs:launched.append(jid))
+    page=c.get('/suppliers/1')
+    assert 'Запустить ожидающее задание' in page.text and 'Начать парсинг' not in page.text
+    path='/suppliers/1/recover-queued-job'
+    data={'job_id':'176','action':'launch'}
+    assert c.post(path,data=data,follow_redirects=False).status_code==403
+    data['csrf_token']=csrf(page)
+    response=c.post(path,data=data,follow_redirects=False)
+    assert response.status_code==303 and response.headers['location']=='/runs?job_id=176'
+    assert requests==[(1,176,1,False)] and launched==[176] and not queue.jobs
+    data['action']='cancel'
+    assert c.post(path,data=data,follow_redirects=False).status_code==303
+    assert requests[-1]==(1,176,1,True) and launched==[176]
 
 
 def test_expired_job_action_is_scoped_and_requires_csrf(tmp_path,monkeypatch):

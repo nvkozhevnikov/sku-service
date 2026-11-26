@@ -236,7 +236,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     robots_exception_applied=None
     isolated=[];consecutive_card_errors=0;network_pauses=0
-    from .source_resume import MANUAL_TRANSPORT_ERRORS, manual_redirect_receipt, manual_transport_receipt, quarantine_evidence_present
+    from .source_resume import (MANUAL_TRANSPORT_ERRORS, STOPPED_REQUEST, manual_redirect_receipt,
+                                manual_stop_receipt, manual_transport_receipt, quarantine_evidence_present)
 
     def deferred_count(checkpoint):
         return sum(item['receipt'].get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS
@@ -521,12 +522,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         # bounded batches; unselected URLs remain provably NOT_REQUESTED.
         if entries and not termination:
             cp.add_urls([e['url'] for e in entries]);byurl={e['url']:e for e in entries}
-            receipt=(manual_resume or {}).get('legacy_redirect') or (manual_resume or {}).get('legacy_timeout')
+            legacy = manual_resume or {}
+            requires_sql = legacy.get('legacy_redirect') or legacy.get('legacy_stop')
+            receipt = requires_sql or legacy.get('legacy_timeout')
             if receipt:
                 if not quarantine_evidence_present(receipt,{'url':receipt['url']}):
                     raise ValueError('MANUAL_ISOLATION_PROOF_REQUIRED')
-                if receipt==manual_resume.get('legacy_redirect') and backend.probe(byurl[receipt['url']],receipt)!='NOT_FOUND':
-                    raise ValueError('MANUAL_REDIRECT_SQL_ABSENCE_NOT_PROVEN')
+                if requires_sql and backend.probe(byurl[receipt['url']],receipt)!='NOT_FOUND':
+                    raise ValueError('MANUAL_ISOLATION_SQL_ABSENCE_NOT_PROVEN')
                 cp.record_terminal([receipt])
             if scope_policy_active and original['mode']=='DISCOVERY':
                 from .source_recovery import scope_policy_exclusions
@@ -691,6 +694,13 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                             cp.record_terminal([receipt])
                             consecutive_card_errors=0
                             continue
+                        if (manual and canary and original['mode']=='REFRESH' and backend is not None
+                                and outcome.error==STOPPED_REQUEST and outcome.transport_started is True
+                                and fetcher.stop_reason=='OPERATOR_STOP'):
+                            receipt = manual_stop_receipt(origin, outcome.url, job.id, error_files[outcome.url])
+                            if backend.probe(byurl[outcome.url], receipt) == 'NOT_FOUND':
+                                cp.record_terminal([receipt])
+                                continue
                         if outcome.scope_refusal or outcome.dispatch_refusal or outcome.timeout_refusal:
                             if (not scope_policy_active or original['mode']!='REFRESH' or backend is None or
                                     outcome.response is not None or outcome.transport_started is not True):

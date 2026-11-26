@@ -2,8 +2,18 @@
 <h3>Сбор товаров</h3><p>{% if item.code=='ivstankomaster' %}Система обойдёт открытые разделы каталога и обработает карточки в пределах указанного лимита.{% else %}Задайте скорость и количество карточек. Система запустит одно задание обновления известных товаров.{% endif %}</p>
 {% if item.manual_job_expired %}<p class="notice">Нет связи с исполнителем. Можно закрыть прерванное задание, сохранив его результаты.</p><form method="post" action="/suppliers/{{item.id}}/close-expired-job"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="job_id" value="{{item.job_id}}"><button class="secondary">Закрыть прерванное задание</button></form>
 {% elif item.has_running_job or item.job_status=='running' %}<p class="notice">Сбор выполняется. Ход работы — в разделе «Сбор и запуски».</p><form method="post" action="/suppliers/{{item.id}}/stop-source"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="job_id" value="{{item.job_id}}"><button class="secondary">Остановить парсинг</button></form>
+{% elif item.manual_job_queued %}
+<p class="notice">Задание №{{item.job_id}} ожидает начала. Если оно осталось в очереди после перезапуска, откройте его с теми же настройками.</p>
+{% if item.manual_job_actor_id == current_user.id or current_user.role=='ADMIN' %}
+<form method="post" action="/suppliers/{{item.id}}/recover-queued-job">
+  <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+  <input type="hidden" name="job_id" value="{{item.job_id}}">
+  {% if item.manual_job_actor_id == current_user.id %}<button name="action" value="launch">Запустить ожидающее задание</button>{% endif %}
+  <button class="secondary" name="action" value="cancel">Закрыть ожидающее задание</button>
+</form>
+{% endif %}
 {% elif item.has_queued_job or item.job_status=='queued' %}<p class="notice">Задание ожидает начала. Повторный запуск не создаст второй сбор.</p>{% endif %}
-{% if not item.manual_job_expired %}<form method="post" action="/suppliers/{{item.id}}/manual-start" class="manual-start">
+{% if not item.manual_job_expired and not item.manual_job_queued %}<form method="post" action="/suppliers/{{item.id}}/manual-start" class="manual-start">
 <input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="revision" value="{{cfg.revision}}">
 {% if item.code=='ivstankomaster' %}<input type="hidden" name="collection_mode" value="DISCOVERY">{% endif %}
 <fieldset><legend>Пауза между запросами, сек.</legend><div class="collection-range"><label>От<input type="number" name="delay_min_seconds" min="0.001" max="86400" step="0.001" value="{{cfg.delay_min_seconds|number}}" required {{'readonly' if current_user.role!='ADMIN'}}></label><label>До<input type="number" name="delay_max_seconds" min="0.001" max="86400" step="0.001" value="{{cfg.delay_max_seconds|number}}" required {{'readonly' if current_user.role!='ADMIN'}}></label></div></fieldset>

@@ -16,6 +16,8 @@ from .transport_diagnostics import MANUAL_DISCONNECT, MANUAL_TIMEOUT, manual_tra
 STATES=frozenset({'COMMITTED','HTTP_CAPTURED_NOT_COMMITTED','FAILED','NOT_REQUESTED','UNCERTAIN','QUARANTINED'})
 MANUAL_TRANSPORT_ERRORS = frozenset({MANUAL_TIMEOUT, MANUAL_DISCONNECT})
 MANUAL_REDIRECT = 'manual_out_of_scope_redirect'
+MANUAL_STOP_INTERRUPTED = 'manual_stop_interrupted'
+STOPPED_REQUEST = 'RequestAborted:HOST_STOPPED'
 FROZEN_BATCH_REFUSAL = 'CANARY_URL_OUTSIDE_FROZEN_BATCH'
 
 
@@ -45,6 +47,43 @@ def manual_redirect_receipt(origin,url,job_id,evidence_path,*,legacy=False):
     if not quarantine_evidence_present(receipt,{'url':url}):
         raise ValueError('MANUAL_REDIRECT_PROOF_REQUIRED')
     return receipt
+
+
+def manual_stop_receipt(origin, url, job_id, path):
+    """Isolate an interrupted GET. Its transport outcome remains unknown."""
+    proof = {'job_id':job_id,'file':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+    receipt = {'url':url,'state':'QUARANTINED','origin':dict(origin),'stop_evidence':proof,
+               'isolation':{'category':MANUAL_STOP_INTERRUPTED,'before_ingest':True,'reason':STOPPED_REQUEST}}
+    if not quarantine_evidence_present(receipt, {'url':url}):
+        raise ValueError('MANUAL_STOP_PROOF_REQUIRED')
+    return receipt
+
+
+def _manual_stop_proven(receipt, entry):
+    from .source_runtime import job_dir
+    origin = receipt['origin']
+    proof = receipt['stop_evidence']
+    source, job_id, name = origin['source'], proof['job_id'], proof['file']
+    if (source not in SUPPLIER_CONFIGS or type(job_id) is not int or job_id < origin['job_id']
+            or not re.fullmatch(r'[a-f0-9]{64}\.json', name)):
+        return False
+    folder = job_dir(source, job_id)
+    raw = (folder/'transport-errors'/name).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != proof['sha256']:
+        return False
+    record = json.loads(raw)
+    stop = json.loads((folder/'FIRST_STOP.json').read_bytes())
+    diagnostic = record['diagnostics']
+    exception = diagnostic['original_exception']
+    return (
+        receipt['url'] == entry['url'] and record['url'] == safe_message(entry['url'])
+        and record['job_id'] == job_id and record['owner_job_id'] == origin['job_id']
+        and record['input_sha256'] == origin['manifest_sha256'] and record['http_status'] is None
+        and record['transport_started'] is True and stop['job_id'] == job_id and stop['reason'] == 'OPERATOR_STOP'
+        and diagnostic['source'] == source and diagnostic['request_scope'] == 'product'
+        and diagnostic['wire_outcome'] == 'UNKNOWN' and diagnostic['response_available'] is False
+        and (exception['module'], exception['type'], exception['message']) ==
+            ('universal_supplier.control_plane.rate_control', 'RequestAborted', 'HOST_STOPPED'))
 
 
 def _manual_redirect_proven(receipt,entry):
@@ -98,6 +137,9 @@ def original_capture_present(receipt,entry):
 
 def quarantine_evidence_present(receipt,entry):
     category=receipt.get('isolation',{}).get('category')
+    if category == MANUAL_STOP_INTERRUPTED:
+        try:return _manual_stop_proven(receipt, entry)
+        except (OSError,ValueError,KeyError,TypeError):return False
     if category==MANUAL_REDIRECT:
         try:return _manual_redirect_proven(receipt,entry)
         except (OSError,ValueError,KeyError,TypeError):return False
@@ -162,7 +204,7 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
             if state=='QUARANTINED' and not quarantine_evidence_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not (receipt.get('isolation',{}).get('before_ingest') is True and
                     receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope',
-                                                            MANUAL_REDIRECT,*MANUAL_TRANSPORT_ERRORS)):state='UNCERTAIN'
+                                                            MANUAL_REDIRECT,MANUAL_STOP_INTERRUPTED,*MANUAL_TRANSPORT_ERRORS)):state='UNCERTAIN'
             if state=='QUARANTINED' and receipt['isolation']['category']=='matching':
                 proof=receipt['isolation'].get('rejection_proof',{})
                 if not (proof.get('rollback_verified') is True and proof.get('sql_absent') is True and
@@ -209,34 +251,40 @@ class SourceCheckpoint:
         if len(manifest_sha)!=64 or any(c not in '0123456789abcdef' for c in manifest_sha):raise ValueError('MANIFEST_SHA256')
         self.path=Path(evidence_root).resolve()/source/('job-'+str(job_id))/'checkpoint.json';self.path.parent.mkdir(parents=True,exist_ok=True)
         self.validator=validator;self.lock=threading.RLock();self.expected=None
+        self.expected_bytes=None
         self.state={'format':'source-discovery-checkpoint/v1','source':source,'job_id':job_id,'manifest_sha256':manifest_sha,'revision':0,'frontier':[],'inflight':{},'terminal':{},'visited':[],'discovery_receipts':{},'discovery_finished':False,'category_failures':[]}
         if self.path.exists():
-            existing=json.loads(self.path.read_text(encoding='utf-8'));checksum=existing.pop('checksum')
+            raw=self.path.read_bytes()
+            existing=json.loads(raw);checksum=existing.pop('checksum')
             if digest(existing)!=checksum:raise ValueError('CHECKPOINT_CHECKSUM')
             for key in ('format','source','job_id','manifest_sha256'):
                 if existing[key]!=self.state[key]:raise ValueError('CHECKPOINT_OWNER_MISMATCH')
             for url in list(existing['frontier'])+list(existing['inflight'])+list(existing['terminal'])+list(existing['visited']):self.validator(url)
-            self.state=existing;self.expected=checksum
+            self.state=existing;self.expected=checksum;self.expected_bytes=raw
     def _save(self):
         guard=self.path.with_suffix('.writer.lock');fd=os.open(guard,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
         try:
-            if self.path.exists():
-                recorded=json.loads(self.path.read_text(encoding='utf-8'))
+            raw = self.path.read_bytes() if self.path.exists() else None
+            if raw is None and self.expected is not None:
+                raise RuntimeError('CHECKPOINT_CHANGED_BY_ANOTHER_WRITER')
+            if raw != self.expected_bytes:
+                recorded=json.loads(raw)
                 recorded_checksum=recorded.pop('checksum')
                 if digest(recorded)!=recorded_checksum:raise ValueError('CHECKPOINT_CHECKSUM')
                 if recorded_checksum!=self.expected:raise RuntimeError('CHECKPOINT_CHANGED_BY_ANOTHER_WRITER')
             self.state['revision']+=1;checksum=digest(self.state)
-            write_checkpoint(self.path,{**self.state,'checksum':checksum},durable=True);self.expected=checksum
+            self.expected_bytes=write_checkpoint(self.path,{**self.state,'checksum':checksum},durable=True,compact=True)
+            self.expected=checksum
         finally:os.close(fd);guard.unlink()
     @contextmanager
     def _change(self):
         with self.lock:
-            old=deepcopy(self.state);expected=self.expected
+            old=deepcopy(self.state);expected=self.expected;expected_bytes=self.expected_bytes
             try:
                 yield
                 self._save()
             except BaseException:
-                self.state=old;self.expected=expected;raise
+                self.state=old;self.expected=expected;self.expected_bytes=expected_bytes;raise
     def add_urls(self,urls):
         with self._change():
             known=set(self.state['frontier'])|set(self.state['inflight'])|set(self.state['terminal'])|set(self.state['visited'])

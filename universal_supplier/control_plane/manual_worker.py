@@ -30,7 +30,8 @@ def run(job_id):
         return proof
     with guarded_connect(cfg,autocommit=True) as c:
         row=c.execute("SELECT settings_snapshot,status FROM crawl_jobs WHERE id=%s",(job_id,)).fetchone()
-    require(row and row[1]=='queued','Задание уже обработано или отсутствует')
+    if not row or row[1] != 'queued':
+        return
     proof=validate(row[0])
     os.environ.update(STERBRUST_UNIFIED_RC='YES',STERBRUST_SOURCE_RUNTIME_ENABLED='YES',
         STERBRUST_ALLOW_SUPPLIER_HTTP='YES',STERBRUST_ALLOW_SOURCE_WRITES='YES',
@@ -40,9 +41,13 @@ def run(job_id):
     for _ in range(30):
         job=queue.claim_next(job_id=job_id,manual_validator=validate)
         if job:break
+        with guarded_connect(cfg,autocommit=True) as c:
+            status = c.execute('SELECT status FROM crawl_jobs WHERE id=%s', (job_id,)).fetchone()
+        if status != ('queued',):
+            return
         time.sleep(1)
     if not job:
-        queue.complete(job_id,'failed',error_message='MANUAL_WORKER_BUSY: исполнитель занят; повторите запуск позже')
+        queue.fail_waiting_manual_job(job_id, 'MANUAL_WORKER_BUSY')
         return
     worker=Orchestrator(cfg,queue=queue,max_parallel_supplier_jobs=1)
     token=MANUAL_EXECUTION.set(job.id)
@@ -58,10 +63,9 @@ if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--job-id',type=int,required=True);args=p.parse_args()
     try:run(args.job_id)
     except Exception:
-        # Never print credentials or a raw database exception. Complete only our
-        # own queued/running manual job; native terminal outcomes are immutable.
+        # Do not print private data or change a job claimed by another process.
         try:
             cfg=runtime_config()
-            with guarded_connect(cfg,autocommit=True) as c:
-                c.execute("UPDATE crawl_jobs SET status='failed',finished_at=now(),updated_at=now(),error_message='MANUAL_WORKER_REFUSED: запуск не прошёл проверку' WHERE id=%s AND status IN ('queued','running') AND settings_snapshot ? 'manual_collection'",(args.job_id,))
+            queue = PostgresJobQueue(cfg, connection_factory=guarded_connect)
+            queue.fail_waiting_manual_job(args.job_id, 'MANUAL_WORKER_REFUSED')
         finally:raise SystemExit(1)

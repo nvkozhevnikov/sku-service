@@ -533,10 +533,42 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         except (ValueError,PermissionError,KeyError,TypeError) as error:
             return page_error(request,str(error))
         except Exception:
-            if result and result.enqueued:queue.complete(result.job_id,'failed',error_message='Не удалось запустить исполнитель')
-            return page_error(request,'Не удалось запустить исполнитель. Повторите попытку или обратитесь к администратору',503)
+            message = ('Задание сохранено. Откройте поставщика и нажмите «Запустить ожидающее задание».'
+                       if result and result.enqueued else 'Не удалось подготовить сбор. Повторите попытку позже.')
+            return page_error(request, message, 503)
         target=result.job_id if result.enqueued else (result.deduplicated_job_id or result.job_id)
         return RedirectResponse(f'/runs?job_id={target}&enqueue_status={result.status}',303)
+
+    @app.post('/suppliers/{supplier_id}/recover-queued-job')
+    async def recover_queued_job(request: Request, supplier_id: int):
+        user = guard(request, MUTATING_ROLES)
+        require_trusted_origin(request)
+        values = await form_values(request)
+        check_csrf(request, values)
+        if getattr(type(store), 'read_only', False):
+            raise HTTPException(403, 'Источник доступен только для чтения')
+        from .manual_collection import launch
+        from .source_runtime import runtime_enabled
+        if not runtime_enabled():
+            return page_error(request, 'SOURCE_RUNTIME_NOT_ENABLED', 403)
+        try:
+            job_id = optional_int(values.get('job_id'), 'Номер задания')
+            action = values.get('action')
+            if not job_id or job_id < 1 or action not in ('launch', 'cancel'):
+                raise ValueError('Выберите ожидающее задание и действие')
+            key = signer.secret.decode('utf-8')
+            queue.recover_queued_manual_job(supplier_id, job_id, user, key, cancel=action=='cancel')
+            if action == 'cancel':
+                return RedirectResponse(f'/suppliers/{supplier_id}', 303)
+            if manual_launcher is not None:
+                manual_launcher(job_id)
+            else:
+                launch(job_id, key=key)
+        except (PermissionError, ValueError) as error:
+            return page_error(request, str(error))
+        except Exception:
+            return page_error(request, 'Не удалось восстановить задание. Обновите страницу поставщика.', 503)
+        return RedirectResponse(f'/runs?job_id={job_id}', 303)
 
     @app.post("/suppliers/{supplier_id}/enabled")
     async def supplier_enabled(request: Request, supplier_id: int):
@@ -790,11 +822,14 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):
-        from .presentation import collection_issue_message
+        from .manual_collection import ManualRequest, TERMINAL, enabled as manual_enabled
+        from .presentation import MANUAL_RESUME_BLOCKERS, collection_issue_message
+        from .source_runtime import runtime_enabled
         from .transport_diagnostics import safe_message
-        guard(request); item = store.run(run_id)
+        user = guard(request); item = store.run(run_id)
         if not item: raise HTTPException(404, "Запуск не найден")
-        if request.query_params.get('check_source_resume')=='1' and (item.get('metadata') or {}).get('source_runtime'):
+        parent_id = item.get('manual_job_id')
+        if not parent_id and request.query_params.get('check_source_resume')=='1' and (item.get('metadata') or {}).get('source_runtime'):
             from copy import deepcopy
             item=deepcopy(item)
             try:
@@ -805,7 +840,27 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 item['metadata']['source_runtime']['resume_available']=False
                 item['metadata']['source_runtime']['resume_check']='Продолжение заблокировано: '+str(error)
         metadata = item.get('metadata') or {}
-        receipts = (metadata.get('source_runtime') or {}).get('quarantined') or []
+        runtime = metadata.get('source_runtime') or {}
+        manual_resume_available = None
+        manual_resume_blocker = None
+        if (parent_id and item.get('latest_supplier_job_id', parent_id) == parent_id
+                and item['status'] in TERMINAL and user.role in MUTATING_ROLES
+                and not getattr(type(store), 'read_only', False) and manual_enabled() and runtime_enabled()):
+            remaining = runtime.get('remaining') or runtime.get('discovery_remaining') or runtime.get('resume_available')
+            retry_network = (item['status'] == 'partial' and runtime.get('remaining') == 0
+                             and not runtime.get('termination_reason') and bool(runtime.get('deferred')))
+            if remaining or retry_network:
+                approval = ManualRequest(user, signer.secret.decode('utf-8'), '', '', -1, 'RESUME',
+                                         retry_network=not remaining)
+                try:
+                    queue.manual_resume_status(item['supplier_id'], parent_id, approval)
+                except Exception as error:
+                    code = str(error) if isinstance(error, (ValueError, PermissionError)) else ''
+                    manual_resume_blocker = MANUAL_RESUME_BLOCKERS.get(
+                        code, 'Не удалось подтвердить сохранённую очередь. Обновите страницу или обратитесь к администратору.')
+                else:
+                    manual_resume_available = 'retry_network' if approval.retry_network else 'continue'
+        receipts = runtime.get('quarantined') or []
         progress = run_collection_progress(metadata)
         issues = []
         for receipt in receipts[:50]:
@@ -816,7 +871,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                            'linked_id': linked_id if is_id(linked_id) else None})
         return templates.TemplateResponse(request, "run_detail.html",
             context(request, item=item, active="runs", collection_progress=progress,
-                    collection_issues=issues, collection_issues_total=len(receipts)))
+                    collection_issues=issues, collection_issues_total=len(receipts),
+                    manual_resume_available=manual_resume_available, manual_resume_blocker=manual_resume_blocker))
 
     def progress_response(item):
         if item is None:raise HTTPException(404, "Запуск не найден")

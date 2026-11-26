@@ -142,6 +142,9 @@ class PostgresControlPlaneStore:
                        EXISTS(SELECT 1 FROM crawl_jobs WHERE supplier_id=s.id AND status='queued') AS has_queued_job,
                        EXISTS(SELECT 1 FROM crawl_jobs WHERE supplier_id=s.id AND status='running') AS has_running_job,
                        active.status AS job_status,active.id AS job_id,active.error_message AS job_error_message,
+                       coalesce(active.status='queued' AND active.started_at IS NULL AND active.crawl_run_id IS NULL
+                           AND active.trigger_type='manual' AND active.settings_snapshot ? 'manual_collection',false) AS manual_job_queued,
+                       active.requested_by_user_id AS manual_job_actor_id,
                        coalesce(active.status='running' AND active.lease_expires_at<now()
                            AND active.settings_snapshot ? 'manual_collection',false) AS manual_job_expired,
                        active.crawl_run_id AS job_run_id,active.created_at AS job_created_at,
@@ -151,7 +154,8 @@ class PostgresControlPlaneStore:
                 LEFT JOIN LATERAL (SELECT count(*) AS n FROM source_products WHERE supplier_id=s.id AND active) product_counts ON true
                 LEFT JOIN LATERAL (SELECT count(*) AS n FROM crawl_errors WHERE supplier_id=s.id AND created_at>now()-interval '30 days') error_counts ON true
                 LEFT JOIN LATERAL (SELECT id,status,started_at,finished_at,discovered_count,new_count,changed_count,error_count,metadata FROM crawl_runs WHERE supplier_id=s.id ORDER BY started_at DESC LIMIT 1) last_run ON true
-                LEFT JOIN LATERAL (SELECT id,status,error_message,crawl_run_id,created_at,lease_expires_at,settings_snapshot
+                LEFT JOIN LATERAL (SELECT id,status,error_message,crawl_run_id,created_at,lease_expires_at,settings_snapshot,
+                    started_at,trigger_type,requested_by_user_id
                     FROM crawl_jobs WHERE supplier_id=s.id
                     ORDER BY (status IN ('queued','running')) DESC,id DESC LIMIT 1) active ON true
                 LEFT JOIN supplier_schedules ss ON ss.supplier_id=s.id
