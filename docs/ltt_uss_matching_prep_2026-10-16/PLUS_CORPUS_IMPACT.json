@@ -1,0 +1,813 @@
+{
+  "status": "PASS",
+  "active_rows_checked": 2449,
+  "rows_containing_literal_plus": 78,
+  "normalization_or_title_extraction_changes": 2,
+  "non_plus_rows_changed": 0,
+  "changed_rows": [
+    {
+      "source": "ltt_msk",
+      "external_id": "1870",
+      "name": "Подрезная пила \"Sharp\" 120*22*2,8/3,6*12T+12T составная",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "12t",
+      "title_model_after": "12t+12t"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "1916",
+      "name": "Пильный диск (пила) 205x45x2.4x30ZY+3T для круглопильных станков",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "205x45x24x30zy",
+      "title_model_after": "205x45x24x30zy+3t"
+    }
+  ],
+  "all_plus_rows": [
+    {
+      "source": "ltt_msk",
+      "external_id": "106",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z1410 (100Вт) + чиллер 3000",
+      "stored_model": "LTT-Z1410",
+      "model_normalized_before": "lttz1410",
+      "model_normalized_after": "lttz1410",
+      "title_model_before": "lttz1410",
+      "title_model_after": "lttz1410"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "107",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z9060H (100Вт) + чиллер 5000",
+      "stored_model": "LTT-Z9060H",
+      "model_normalized_before": "lttz9060h",
+      "model_normalized_after": "lttz9060h",
+      "title_model_before": "lttz9060h",
+      "title_model_after": "lttz9060h"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "108",
+      "name": "Станок лазерно-гравировальный с ЧПУ LТТ-Z1610S (130Вт) + чиллер 5000",
+      "stored_model": "LТТ-Z1610S",
+      "model_normalized_before": "lttz1610s",
+      "model_normalized_after": "lttz1610s",
+      "title_model_before": "lttz1610s",
+      "title_model_after": "lttz1610s"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "113",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z1410H (130 Вт) + чиллер 5000",
+      "stored_model": "LTT-Z1410H",
+      "model_normalized_before": "lttz1410h",
+      "model_normalized_after": "lttz1410h",
+      "title_model_before": "lttz1410h",
+      "title_model_after": "lttz1410h"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "1618",
+      "name": "Форматно-раскроечный станок Y45-2, 5,5+1,1 кВт, наклон, 3200 роликовая",
+      "stored_model": "Y45-2",
+      "model_normalized_before": "y452",
+      "model_normalized_after": "y452",
+      "title_model_before": "y452",
+      "title_model_after": "y452"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "1655",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z1411 (100Вт) + чиллер 5200",
+      "stored_model": "LTT-Z1411",
+      "model_normalized_before": "lttz1411",
+      "model_normalized_after": "lttz1411",
+      "title_model_before": "lttz1411",
+      "title_model_after": "lttz1411"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "1870",
+      "name": "Подрезная пила \"Sharp\" 120*22*2,8/3,6*12T+12T составная",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "12t",
+      "title_model_after": "12t+12t"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "1913",
+      "name": "Форматно-раскроечный станок Y45-6, 5,5+1,1 кВт, наклон, 3200 роликовая",
+      "stored_model": "Y45-6",
+      "model_normalized_before": "y456",
+      "model_normalized_after": "y456",
+      "title_model_before": "y456",
+      "title_model_after": "y456"
+    },
+    {
+      "source": "ltt_msk",
+      "external_id": "1916",
+      "name": "Пильный диск (пила) 205x45x2.4x30ZY+3T для круглопильных станков",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "205x45x24x30zy",
+      "title_model_after": "205x45x24x30zy+3t"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "107",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z9060H (100Вт) + чиллер 5000",
+      "stored_model": "LTT-Z9060H",
+      "model_normalized_before": "lttz9060h",
+      "model_normalized_after": "lttz9060h",
+      "title_model_before": "lttz9060h",
+      "title_model_after": "lttz9060h"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "108",
+      "name": "Станок лазерно-гравировальный с ЧПУ LТТ-Z1610S (130Вт) + чиллер 5000",
+      "stored_model": "LТТ-Z1610S",
+      "model_normalized_before": "lttz1610s",
+      "model_normalized_after": "lttz1610s",
+      "title_model_before": "lttz1610s",
+      "title_model_after": "lttz1610s"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "113",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z1410H (130 Вт) + чиллер 5000",
+      "stored_model": "LTT-Z1410H",
+      "model_normalized_before": "lttz1410h",
+      "model_normalized_after": "lttz1410h",
+      "title_model_before": "lttz1410h",
+      "title_model_after": "lttz1410h"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "122",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z2513QH (180Вт) + чиллер 5000 (AWC708C)",
+      "stored_model": "LTT-Z2513QH",
+      "model_normalized_before": "lttz2513qh",
+      "model_normalized_after": "lttz2513qh",
+      "title_model_before": "lttz2513qh",
+      "title_model_after": "lttz2513qh"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1467",
+      "name": "Комплект накопитель + фильтр D=480 H=850 (MF1, MF2)",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "mf1",
+      "title_model_after": "mf1"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1482",
+      "name": "Пила дисковая 450х50х4,6/3,0 z=24+4 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "450x50x4",
+      "title_model_after": "450x50x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1483",
+      "name": "Пила дисковая 550х30х5,1/3,5 z=18+6 БАРС WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "550x30x5",
+      "title_model_after": "550x30x5"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1484",
+      "name": "Пила дисковая 550х50х3,6/5,4 z=18+6 ТТН с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "550x50x3",
+      "title_model_after": "550x50x3"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1485",
+      "name": "Пила дисковая 550х50х5,1/3,5 z=18+18+6 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "550x50x5",
+      "title_model_after": "550x50x5"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1492",
+      "name": "Дисковая пила подрезная 100х20х2,8-3,6х12+12 LI16MBA3 Freud (составная, «сэндвич»)",
+      "stored_model": "LI16MBA3",
+      "model_normalized_before": "li16mba3",
+      "model_normalized_after": "li16mba3",
+      "title_model_before": "100x20x2",
+      "title_model_after": "100x20x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1603",
+      "name": "Пила дисковая 400х50х2,8/4,2 z=18+4 ТТН с напайками НМ и зачистными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "400x50x2",
+      "title_model_after": "400x50x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1737",
+      "name": "Пила дисковая 450х50х4,8/3,2 z=24+4 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "450x50x4",
+      "title_model_after": "450x50x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1763",
+      "name": "Пила дисковая 600х50х5,4/3,6 z=24+6 ТТН с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "600x50x5",
+      "title_model_after": "600x50x5"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1858",
+      "name": "Пила дисковая 180х40х2,2/1,6х16+2 RED SAMURAI с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "180x40x2",
+      "title_model_after": "180x40x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1859",
+      "name": "Пила дисковая 200х40х2,2/1,6х16+2 RED SAMURAI с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "200x40x2",
+      "title_model_after": "200x40x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1947",
+      "name": "Пила дисковая 400х50х4,2/2,8 z=18+18+4 WoodTec с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "400x50x4",
+      "title_model_after": "400x50x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1950",
+      "name": "Пила дисковая 500х50х4,8/3,2 z=18+18+6 WoodTec с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "500x50x4",
+      "title_model_after": "500x50x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1951",
+      "name": "Пила дисковая 560х50х6,0/4,0 z=18+18+6 WoodTec с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "560x50x6",
+      "title_model_after": "560x50x6"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "1996",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z1411 - 150 Вт + чиллер 5200",
+      "stored_model": "LTT-Z1411",
+      "model_normalized_before": "lttz1411",
+      "model_normalized_after": "lttz1411",
+      "title_model_before": "lttz1411",
+      "title_model_after": "lttz1411"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2004",
+      "name": "Станок лазерно-гравировальный с ЧПУ LTT-Z1411 - 100 Вт + чиллер 5200",
+      "stored_model": "LTT-Z1411",
+      "model_normalized_before": "lttz1411",
+      "model_normalized_after": "lttz1411",
+      "title_model_before": "lttz1411",
+      "title_model_after": "lttz1411"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2069",
+      "name": "657.191.11B - Фреза обгонная верхний+нижний подшипник S=8 D=19 l=30 L=90 z=2 RH сменные ножи НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "65719111b",
+      "title_model_after": "65719111b"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2070",
+      "name": "657.993.11В - Фреза обгонная верхний+нижний подшипник S=12 D=19 l=50 L=110 z=2 RH сменные ножи HM",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "65799311b",
+      "title_model_after": "65799311b"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2122",
+      "name": "Пила дисковая 380x80x4,4/3,2 z=72 RED SAMURAI (4/9/100 + 2/9/110 + 2/14/110)",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "380x80x4",
+      "title_model_after": "380x80x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2128",
+      "name": "Кромкооблицовочный станок HH506RL PUR+EVA",
+      "stored_model": "HH506RL",
+      "model_normalized_before": "hh506rl",
+      "model_normalized_after": "hh506rl",
+      "title_model_before": "hh506rl",
+      "title_model_after": "hh506rl"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2153",
+      "name": "Пила дисковая 380x60x4,4/3,2 z=72 RED SAMURAI (4/9/100 + 2/9/110 + 2/14/110)",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "380x60x4",
+      "title_model_after": "380x60x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2154",
+      "name": "Пила дисковая 400x75x4,4/3,2 z=72 RED SAMURAI (4/15/105 + 2/7/110)",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "400x75x4",
+      "title_model_after": "400x75x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2293",
+      "name": "Пила дисковая 200х40х2,5/1,8 z=16+2 WoodCraft с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "200x40x2",
+      "title_model_after": "200x40x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2327",
+      "name": "Пила дисковая 500х50х4,8/3,2 z=24+24+6 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "500x50x4",
+      "title_model_after": "500x50x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2328",
+      "name": "Пила дисковая 550х50х3,6/5,4 z=24+6 ТТН с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "550x50x3",
+      "title_model_after": "550x50x3"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2329",
+      "name": "Пила дисковая 180х40х2,2/1,6х16+2 Pilana с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "180x40x2",
+      "title_model_after": "180x40x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2330",
+      "name": "Пила дисковая 160х30/40х2,2/1,6х16+2 Pilana с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "160x3040x2",
+      "title_model_after": "160x3040x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2354",
+      "name": "Пила дисковая 600х50х6,0/3,8 z=18+18+6 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "600x50x6",
+      "title_model_after": "600x50x6"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "2455",
+      "name": "Кромкооблицовочный станок HH504JR + PUR станция (с прифуговкой и раундом)",
+      "stored_model": "HH504JR",
+      "model_normalized_before": "hh504jr",
+      "model_normalized_after": "hh504jr",
+      "title_model_before": "hh504jr",
+      "title_model_after": "hh504jr"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "569",
+      "name": "Фреза прифуговочная KDT 150х30х35 (4+4) алмазная",
+      "stored_model": "KDT 150х30х35",
+      "model_normalized_before": "kdt150x30x35",
+      "model_normalized_after": "kdt150x30x35",
+      "title_model_before": "kdt150x30x35",
+      "title_model_after": "kdt150x30x35"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "808",
+      "name": "Нож HSS18%+ 150х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "812",
+      "name": "Нож HSS18%+ 260х32х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "814",
+      "name": "Нож HSS18%+ 240х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "815",
+      "name": "Нож HSS18% + 230х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "817",
+      "name": "Нож HSS18%+ 610х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "818",
+      "name": "Нож HSS18%+ 310х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "822",
+      "name": "Нож HSS18%+ 260х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "826",
+      "name": "Нож HSS18%+ 160х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "827",
+      "name": "Нож HSS18%+ 100х32х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "828",
+      "name": "Нож HSS18%+ 120х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "829",
+      "name": "Нож HSS18%+ 100х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "831",
+      "name": "Нож HSS18%+ 200х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "832",
+      "name": "Нож HSS18%+ 200х32х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "833",
+      "name": "Нож HSS18%+ 180х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "834",
+      "name": "Нож HSS18%+ 180х32х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "835",
+      "name": "Нож HSS18%+ 180х30х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "836",
+      "name": "Нож HSS18%+ 170х40х3",
+      "stored_model": "HSS18",
+      "model_normalized_before": "hss18",
+      "model_normalized_after": "hss18",
+      "title_model_before": "hss18",
+      "title_model_after": "hss18"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "893",
+      "name": "Дисковая пила подрезная алмазная PCD 120х22х2,8-3,6х12+12 Sharp (составная, «сэндвич»)",
+      "stored_model": "PCD 120х22х2",
+      "model_normalized_before": "pcd120x22x2",
+      "model_normalized_after": "pcd120x22x2",
+      "title_model_before": "pcd120x22x2",
+      "title_model_after": "pcd120x22x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "894",
+      "name": "Пила дисковая 450х50х3,0/4,6 z=18+6 ТТН с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "450x50x3",
+      "title_model_after": "450x50x3"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "898",
+      "name": "Пила дисковая 400х50х4,2/2,8 z=18+18+4 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "400x50x4",
+      "title_model_after": "400x50x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "900",
+      "name": "Пила дисковая 610х50х6,0/3,8 z=24+24+6 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "610x50x6",
+      "title_model_after": "610x50x6"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "907",
+      "name": "Пила дисковая 500х50х3,4/5,0 z=18+18+6 ТТН с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "500x50x3",
+      "title_model_after": "500x50x3"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "909",
+      "name": "Пила дисковая 500х50х3,2/4,8 z=24+6 ТТН с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "500x50x3",
+      "title_model_after": "500x50x3"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "912",
+      "name": "Пила дисковая 450х50х4,6/3,2 z=24+6 ТТН с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "450x50x4",
+      "title_model_after": "450x50x4"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "920",
+      "name": "Пила дисковая 600х50х6,0/3,8 z=18+18+6 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "600x50x6",
+      "title_model_after": "600x50x6"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "929",
+      "name": "Дисковая пила подрезная 120х20х2,8-3,6х12+12 Sharp (составная, «сэндвич»)",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "120x20x2",
+      "title_model_after": "120x20x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "932",
+      "name": "Дисковая пила подрезная алмазная PCD 120х20х2,8-3,6х12+12 Sharp (составная, «сэндвич»)",
+      "stored_model": "PCD 120х20х2",
+      "model_normalized_before": "pcd120x20x2",
+      "model_normalized_after": "pcd120x20x2",
+      "title_model_before": "pcd120x20x2",
+      "title_model_after": "pcd120x20x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "938",
+      "name": "Дисковая пила подрезная 120х22х2,8/3,6х12+12 Freud LI16M AB3 (составная, «сэндвич»)",
+      "stored_model": "AB3",
+      "model_normalized_before": "ab3",
+      "model_normalized_after": "ab3",
+      "title_model_before": "120x22x2",
+      "title_model_after": "120x22x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "939",
+      "name": "Пила дисковая 530х50х5,0/3,7 z=24+4 Sharp с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "530x50x5",
+      "title_model_after": "530x50x5"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "953",
+      "name": "Пила дисковая 350х50х2,8/4,2 z=20+4 ТТН с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "350x50x2",
+      "title_model_after": "350x50x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "954",
+      "name": "Дисковая пила подрезная Sharp 120х22х2,8-3,6х12+12 (составная, «сэндвич»)",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "120x22x2",
+      "title_model_after": "120x22x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "957",
+      "name": "Дисковая пила подрезная 120х20х2,8/3,6х12+12 Freud LI16MAA3 (составная, «сэндвич»)",
+      "stored_model": "LI16MAA3",
+      "model_normalized_before": "li16maa3",
+      "model_normalized_after": "li16maa3",
+      "title_model_before": "120x20x2",
+      "title_model_after": "120x20x2"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "962",
+      "name": "Пила дисковая 560х50х3,6/5,4 z=18+6 ТТН с напайками НМ и подрезными ножами",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "560x50x3",
+      "title_model_after": "560x50x3"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "964",
+      "name": "Пила дисковая 300х50х3,5/2,2 z=18+18+2 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "300x50x3",
+      "title_model_after": "300x50x3"
+    },
+    {
+      "source": "ltt_sib",
+      "external_id": "978",
+      "name": "Пила дисковая 400х50х4,4/3,0 z=24+4 WoodCraft с напайками НМ",
+      "stored_model": "",
+      "model_normalized_before": "",
+      "model_normalized_after": "",
+      "title_model_before": "400x50x4",
+      "title_model_after": "400x50x4"
+    }
+  ],
+  "source_mutations": 0,
+  "matching_executed": false
+}

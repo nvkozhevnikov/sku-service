@@ -177,7 +177,7 @@ def name_tokens(value: object) -> tuple[str, ...]:
 def _raw_title_tokens(value: object) -> list[str]:
     text = unicodedata.normalize("NFKC", str(value or ""))
     text = re.sub(r"[\u2010-\u2015\u2212]", "-", text)
-    return re.findall(r"(?iu)[a-zа-я0-9]+(?:[-./×xх][a-zа-я0-9]+)*", text)
+    return re.findall(r"(?iu)[a-zа-я0-9]+(?:[-./×xх+][a-zа-я0-9]+)*\+*", text)
 
 
 def _model_suffix(raw_token: str) -> str:
@@ -259,11 +259,14 @@ def extract_model(value: object) -> str:
 def model_identity_evidence(value: object) -> dict[str, object]:
     """Explain the first title model, its execution and whether it is a reference."""
     text = normalize_text(value)
-    tokens = re.findall(r"(?iu)[a-zа-я0-9]+(?:[-./×xх][a-zа-я0-9]+)*", text)
+    tokens = [normalize_text(token) for token in _raw_title_tokens(value)]
     # Preserve original capitalization for compact separated suffix detection.
     identity = extract_model(value)
     base = identity
     qualifier = ""
+    if identity.endswith("+"):
+        qualifier = identity[len(identity.rstrip("+")):]
+        base = identity.rstrip("+")
     for item in MODEL_EXECUTION_QUALIFIERS:
         normalized = normalize_model(item)
         if identity.endswith(normalized) and len(identity) > len(normalized):

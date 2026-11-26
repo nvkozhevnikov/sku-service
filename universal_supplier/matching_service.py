@@ -17,6 +17,7 @@ from sterbrust_matching.normalization import (
 from sterbrust_matching.product_identity import identity_properties, own_model_for_identity, classify_model_role, OWN_MODEL, property_values
 
 from .models import ProductCard
+from .matching_input import matching_product
 
 
 @dataclass
@@ -202,15 +203,8 @@ def _candidate(row: dict) -> Product:
 
 
 def _source(card: ProductCard) -> Product:
-    category = " / ".join(node.name for node in card.categories if node.name)
-    # supplier_code is not a brand, and a compatibility model is not own_model.
-    brand = (card.brand or "").strip() or brand_evidenced_by_name(card.name)
-    return Product(key=card.external_id, name=card.name, brand=brand,
-                   model=own_model_for_identity(card.name, category), supplier_article=card.sku,
-                   manufacturer_article=(card.sku if (card.raw_data.get("source_identity") or {}).get("manufacturer_article_explicit") is True else ""),
-                   supplier_code=card.supplier_code,
-                   category=category, properties=identity_properties(
-                       (item.name, item.value, item.unit) for item in card.properties))
+    # Same builder as identity_service.source_product (matching_input).
+    return matching_product(card.as_jsonable())
 
 
 def _candidates(source: Product, registry: RegistryContext) -> list[dict]:

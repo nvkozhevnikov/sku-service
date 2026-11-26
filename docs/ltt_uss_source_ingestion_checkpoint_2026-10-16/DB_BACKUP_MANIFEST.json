@@ -1,0 +1,22 @@
+{
+  "absolute_path": "D:\\documents\\personal\\ChatGPT\\Стербруст\\work\\sku-service-ltt-uss\\reports\\LTT_USS_INTEGRATION_2026-10-13\\SOURCE_INGESTION_FINALIZATION_2026-10-16\\LTT_USS_SOURCE_INGESTION_VERIFIED_2026-10-16.dump",
+  "active_source_products": 2449,
+  "branch": "feature/universal-supplier-ltt-uss-ingestion",
+  "database": "universal_supplier_ltt_uss",
+  "filename": "LTT_USS_SOURCE_INGESTION_VERIFIED_2026-10-16.dump",
+  "format": "PostgreSQL custom; no owner/ACL; external artifact, never Git",
+  "full_qa": "400/400 PASS",
+  "name": "SOURCE-INGESTION VERIFIED CHECKPOINT DATABASE",
+  "postgres_version": "17.11",
+  "pre_commit_head": "45052a6d21dae5e5f56e890f3a6e79466dcce733",
+  "sha256": "1ca3f3bab00b28ba55957c335630b0cd31fd7b3a7504bb78f19875dff53aae54",
+  "size": 1793733,
+  "source_counts": {
+    "offer_commercial_observations": 2533,
+    "offers": 2453,
+    "source_products": 2453,
+    "supplier_http_captures": 2533
+  },
+  "source_system_id": "7696153366151515704",
+  "timestamp": "2026-10-16T15:22:12.264262+00:00"
+}

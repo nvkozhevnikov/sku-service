@@ -198,7 +198,6 @@ tests/test_ltt_yug_page_role.py -text
 tests/test_product_kind_batch_fix.py -text
 tests/test_product_kind_checkpoint.py -text
 tests/test_product_kind_metadata_correction.py -text
-tests/test_public_url_transport.py -text
 tests/test_replay_seal_loader.py -text
 tests/test_uss_h2_qa_witness.py -text
 tests/test_uss_horizontal_single_qa_witness.py -text
@@ -225,3 +224,22 @@ docs/ltt_uss_source_ingestion_checkpoint_2026-10-16/** -text
 /docs/CABINET_UX_20261022.md text eol=lf
 /docs/CABINET_UX_SPEC_20261022.md text eol=lf
 /docs/cabinet-ux-prototype/index.html text eol=lf
+
+# From feature/ltt-uss-matching-prep (merged 2026-11-26).
+# Preserve accepted matching-prep code/evidence bytes on Windows checkout.
+docs/ltt_uss_matching_prep_2026-10-16/CROSS_SOURCE_GROUPING_CONTRACT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/FINAL_ARTIFACT_SEAL.json -text
+docs/ltt_uss_matching_prep_2026-10-16/FINAL_CHECKPOINT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/LOADER_FIX.json -text
+docs/ltt_uss_matching_prep_2026-10-16/LTT_USS_MATCHING_PREP_CODE_READY_2026-10-16.md -text
+docs/ltt_uss_matching_prep_2026-10-16/MATCHING_ONLY_PATH.json -text
+docs/ltt_uss_matching_prep_2026-10-16/PLUS_CORPUS_IMPACT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/PLUS_SIGN_FIX.json -text
+docs/ltt_uss_matching_prep_2026-10-16/PREFLIGHT_VERIFICATION.json -text
+docs/ltt_uss_matching_prep_2026-10-16/REGISTRY_LOAD_CONTRACT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/REGISTRY_REFRESH_PLAN.json -text
+docs/ltt_uss_matching_prep_2026-10-16/TEST_RECEIPT.json -text
+docs/ltt_uss_matching_prep_2026-10-16/TEST_SELECTION.json -text
+scripts/audit_ltt_uss_matching_input.py -text
+scripts/matching_prep_test_guard.py -text
+scripts/run_ltt_uss_matching.py -text

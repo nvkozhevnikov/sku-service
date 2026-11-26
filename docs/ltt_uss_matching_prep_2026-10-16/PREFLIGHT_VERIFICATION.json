@@ -1,0 +1,37 @@
+{
+  "provenance": "REPOSITORY-VERIFIED code; PACKAGED-EVIDENCE snapshot; OPERATOR-CONFIRMED scope",
+  "base_sha": "94deab99fcf3e8c7c6b525ca572e36aa763b7909",
+  "A": {
+    "verified": "PACKAGED-EVIDENCE",
+    "sterbrust_products": 0,
+    "sterbrust_product_supplier_identifiers": 0,
+    "catalog_products": 0,
+    "source": "sealed SOURCE_LIVE_SNAPSHOT.json; no fresh SQL claim"
+  },
+  "B": {
+    "verified": "REPOSITORY-VERIFIED",
+    "prior": "normalize_model_with_flags omitted+ via alphanumeric regex",
+    "after": "literal+ retained; focused protected negatives PASS"
+  },
+  "C": {
+    "verified": "REPOSITORY-VERIFIED",
+    "nuance": "Existing loader already selected brand_raw, manufacturer_raw and relational categories/properties. LTT/USS enriched brand/kind/model/category are in raw_data and _source/classify_identity_card ignored those stored values. Shared matching_input fixes the missing path."
+  },
+  "D": {
+    "verified": "REPOSITORY-VERIFIED",
+    "prior": "RuntimeIdentityService.reconcile calls offer selection after review sync",
+    "after": "matching-only path returns before selection import/construction/evaluate/apply"
+  },
+  "E": {
+    "verified": "REPOSITORY-VERIFIED",
+    "prior": "allowed_sources validation rejects4 namespaces",
+    "after": "explicit opt-in SUPPORTED_SOURCES addition; historical3-source default/guards unchanged"
+  },
+  "F": {
+    "verified": "REPOSITORY-VERIFIED",
+    "prior": "property_map_path.open unconditional, CSV absent in finalized/new worktrees",
+    "after": "registry contract documented; no fake CSV or registry load"
+  },
+  "db_connections": 0,
+  "db_writes": 0
+}

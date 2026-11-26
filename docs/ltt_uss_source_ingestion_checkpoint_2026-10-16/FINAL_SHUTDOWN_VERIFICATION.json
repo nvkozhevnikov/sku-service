@@ -1,0 +1,15 @@
+{
+  "POSTGRES_55455_SHUTDOWN": "CLEAN_SERVER_STOPPED",
+  "RESTORE_SERVER_SHUTDOWN": "YES",
+  "unexpected_clients": 0,
+  "open_transactions": 0,
+  "prepared_transactions": 0,
+  "workers": 0,
+  "ports_closed": [
+    55455,
+    55457
+  ],
+  "postmaster_pid_absent": true,
+  "SAFE_TO_POWER_OFF": "YES",
+  "process_receipt": "Fresh CIM process and TCP listener inspection: target workers0, listeners0; unrelated PostgreSQL untouched"
+}

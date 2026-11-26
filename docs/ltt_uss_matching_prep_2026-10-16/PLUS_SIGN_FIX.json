@@ -1,0 +1,18 @@
+{
+  "status": "IMPLEMENTED_FOCUSED_PASS",
+  "paths": [
+    "sterbrust_matching/normalization.py",
+    "sterbrust_matching/matching.py"
+  ],
+  "semantics": "Literal+ survives model normalization, title tokens, compound model and execution evidence. Plus count mismatch is a hard execution conflict, including stronger identifier paths; no product-specific exceptions.",
+  "protected": [
+    "45/500S+ !=45/500S",
+    "50/650S+ !=50/650S",
+    "PRO",
+    "NEW",
+    "V",
+    "NC",
+    "CNC"
+  ],
+  "bundle": "Standalone plus in title prose does not attach to model token; LTT-Z1410 (100Вт)+chiller retains LTT-Z1410"
+}

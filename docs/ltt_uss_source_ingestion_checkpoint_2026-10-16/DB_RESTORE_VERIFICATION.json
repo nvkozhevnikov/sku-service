@@ -1,0 +1,62 @@
+{
+  "RESTORED_ACTIVE_SOURCE_PRODUCTS": 2449,
+  "RESTORED_DB_COUNTS": {
+    "offer_commercial_observations": 2533,
+    "offers": 2453,
+    "source_products": 2453,
+    "supplier_http_captures": 2533
+  },
+  "RESTORE_ERRORS": 0,
+  "RESTORE_FINGERPRINT_RESULT": "PASS: all51 tables,40 sequences,all2453 product/offer pairs and special cases identical",
+  "RESTORE_TARGET": {
+    "data": "D:\\documents\\personal\\ChatGPT\\Стербруст\\work\\sku-service-ltt-uss\\reports\\LTT_USS_INTEGRATION_2026-10-13\\SOURCE_INGESTION_FINALIZATION_2026-10-16\\PRIVATE\\restore_ab8b976f55ca",
+    "database": "ltt_uss_checkpoint_restore",
+    "port": 55457,
+    "system_identifier": "7697286338204747432"
+  },
+  "RESTORE_TEST": "PASS",
+  "active_source_products": 2449,
+  "articles": [
+    [
+      225,
+      false,
+      0,
+      225,
+      false
+    ],
+    [
+      226,
+      false,
+      0,
+      226,
+      false
+    ],
+    [
+      227,
+      false,
+      0,
+      227,
+      false
+    ],
+    [
+      228,
+      false,
+      0,
+      228,
+      false
+    ]
+  ],
+  "checked_at": "2026-10-16T15:22:20.537191+00:00",
+  "clients": {
+    "open_transactions": 0,
+    "other_clients": 0,
+    "prepared_transactions": 0
+  },
+  "integrity": {
+    "captures_without_product": 0,
+    "observations_without_capture": 0,
+    "observations_without_offer": 0,
+    "offers_without_product": 0,
+    "unvalidated_foreign_keys": 0
+  }
+}
