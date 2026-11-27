@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import asdict,replace
 from datetime import datetime, timezone
 from pathlib import Path
-import hashlib, json, math, os, time, threading
+import hashlib, json, math, os, re, time, threading
 from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -19,7 +19,8 @@ from .source_jobs import RUNTIME_SOURCES, NATIVE_SOURCES, validate_url, parse_ex
 from .rate_control import SystemClock
 from .source_backend import SourceUpdateRejected
 from universal_supplier.commercial_persistence import HttpCapture, product_card_from_snapshot
-from universal_supplier.http_capture import ProductTargetOutsideBatch, UrllibPublicHttpClient, MAX_RESPONSE_BYTES, sanitise_html
+from universal_supplier.http_capture import (ProductTargetOutsideBatch, UrllibPublicHttpClient,
+                                             MAX_RESPONSE_BYTES, public_transport_url, sanitise_html)
 from universal_supplier.ltt_uss_capture import sanitise_for_charset, charset_from_response
 from universal_supplier.kami_checkpoint import write_checkpoint
 
@@ -141,7 +142,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     from .manual_collection import running_manually
     manual=running_manually(job)
     manual_resume=job.settings_snapshot.get('manual_resume') if manual else None
-    manual_robots_attempts=job.settings_snapshot['manual_collection'].get('robots_attempts',1) if manual else None
+    manual_marker = job.settings_snapshot.get('manual_collection') if manual else {}
+    manual_robots_attempts=manual_marker.get('robots_attempts',1) if manual else None
     if job.settings_snapshot.get('source_batch'):
         from .source_batch import validate_snapshot
         validate_snapshot(job.settings_snapshot)
@@ -161,6 +163,13 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     if type(limit) is not int or not 1<=limit<=100000 or type(pages) is not int or not 1<=pages<=100000:raise ValueError('SOURCE_URL_BUDGET')
     if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<seconds<=86400:raise ValueError('SOURCE_TIME_BUDGET')
     clock=clock or SystemClock();start=clock.monotonic();deadline=start+seconds
+    approval_deadline = None
+    if 'max_parallel_suppliers' in manual_marker:
+        approval_deadline = datetime.fromisoformat(manual_marker['expires_at'])
+        remaining_seconds = (approval_deadline - datetime.now(timezone.utc)).total_seconds()
+        if remaining_seconds <= 0:
+            raise PermissionError('MANUAL_WAITING_EXPIRED')
+        deadline = min(deadline, start + remaining_seconds)
     rate=compile_policy(code,'https://'+HOSTS[code],job.settings_snapshot.get('rate_settings'),approval=settings.get('host_policy_approval'))
     if seconds>rate.max_run_duration_seconds:raise ValueError('TIME_BUDGET_EXCEEDS_HOST_PROFILE')
     # A resume must use the original input AND original policy; no hidden speedup.
@@ -214,6 +223,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     lease_alive=LEASE_ALIVE.get()
     batch_execution_until=None
     def stopped():
+        if approval_deadline is not None and datetime.now(timezone.utc) >= approval_deadline:
+            return 'MAX_RUN_DURATION_EXCEEDED'
         from .source_autonomy import stop_reason
         autonomous_stop=stop_reason()
         if autonomous_stop:return autonomous_stop
@@ -236,7 +247,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     robots_exception_applied=None
     isolated=[];consecutive_card_errors=0;network_pauses=0
-    from .source_resume import (MANUAL_TRANSPORT_ERRORS, STOPPED_REQUEST, manual_redirect_receipt,
+    from .source_resume import (MANUAL_TRANSPORT_ERRORS, MANUAL_TLS_EOF, STOPPED_REQUEST, manual_redirect_receipt,
                                 manual_stop_receipt, manual_transport_receipt, quarantine_evidence_present)
 
     def deferred_count(checkpoint):
@@ -296,7 +307,15 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                                            robots_limit=manual_robots_attempts or 1)
             if retry_network is not None:dispatch_budget.attempts=1
         frozen_urls={entry['url'] for entry in original['entries']}
+        wire_scope = {}
+        if manual and canary and code in ('ltt_msk', 'ltt_sib', 'ltt_yug') and original['mode']=='REFRESH':
+            for logical in frozen_urls:
+                wire = public_transport_url(logical)
+                if wire in wire_scope and wire_scope[wire] != logical:
+                    raise ValueError('SOURCE_TRANSPORT_URL_COLLISION')
+                wire_scope[wire] = logical
         def request_url(url):
+            url = wire_scope.get(url, url)
             if url in blocked_scope_urls:
                 if fetcher is not None:fetcher.stop('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
                 raise ValueError('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
@@ -338,7 +357,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             prevent_unknown_retry=bool(job.settings_snapshot.get('automation')),robots_url=robots_url,
             manual_product_attempts=manual,manual_robots_attempts=manual_robots_attempts)
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
-        if dispatch_budget:fetcher.request_start_guard=dispatch_budget
+        if dispatch_budget:
+            fetcher.request_start_guard=lambda url:dispatch_budget(wire_scope.get(url,url))
         capture_archive_lock = threading.Lock()
         def archive(outcome):
             if outcome.response is None:return
@@ -388,9 +408,13 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if not (manual and (outcome.timeout_refusal or outcome.disconnect_refusal) and outcome.response is None
                     and outcome.transport_started is True):return False
             receipt=manual_transport_receipt(origin,outcome.url,job.id,error_files[outcome.url])
+            is_tls_eof = receipt['isolation']['category'] == MANUAL_TLS_EOF
+            if is_tls_eof and not (canary and original['mode']=='REFRESH' and backend
+                                  and backend.probe(byurl[outcome.url],receipt)=='NOT_FOUND'):
+                return False
             history=checkpoint.state['terminal'].get(outcome.url,{}).get('history',[])
             first=not any(item.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS for item in history)
-            retry=first and rate.max_attempts>1
+            retry=not is_tls_eof and first and rate.max_attempts>1
             checkpoint.record_terminal([receipt],defer_to_tail=retry)
             consecutive_card_errors+=1
             if consecutive_card_errors>=rate.consecutive_error_threshold and not fetcher.network_pause.is_set():
@@ -523,14 +547,31 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         if entries and not termination:
             cp.add_urls([e['url'] for e in entries]);byurl={e['url']:e for e in entries}
             legacy = manual_resume or {}
-            requires_sql = legacy.get('legacy_redirect') or legacy.get('legacy_stop')
-            receipt = requires_sql or legacy.get('legacy_timeout')
+            receipt = legacy.get('legacy_redirect') or legacy.get('legacy_stop') or legacy.get('legacy_timeout')
             if receipt:
                 if not quarantine_evidence_present(receipt,{'url':receipt['url']}):
                     raise ValueError('MANUAL_ISOLATION_PROOF_REQUIRED')
-                if requires_sql and backend.probe(byurl[receipt['url']],receipt)!='NOT_FOUND':
+                category = receipt['isolation']['category']
+                if category not in MANUAL_TRANSPORT_ERRORS and backend.probe(byurl[receipt['url']],receipt)!='NOT_FOUND':
                     raise ValueError('MANUAL_ISOLATION_SQL_ABSENCE_NOT_PROVEN')
                 cp.record_terminal([receipt])
+            recovered = legacy.get('recovered_receipt')
+            if recovered:
+                url = recovered['url']
+                previous = cp.state['terminal'][url]
+                if recovered.get('wire_evidence'):
+                    if (previous['state']!='UNCERTAIN' or recovered['state']!='NOT_REQUESTED'
+                            or backend.probe(byurl[url],recovered)!='NOT_FOUND'):
+                        raise ValueError('MANUAL_WIRE_REFUSAL_NOT_PROVEN')
+                    cp.restore_wire_refusal(recovered)
+                else:
+                    from .manual_saved_recovery import optimum_archive_receipt
+                    filename = recovered['saved_response']['file']
+                    if (previous['state']!='FAILED' or not re.fullmatch(r'[a-f0-9]{64}\.json',filename)
+                            or digest(optimum_archive_receipt(previous['receipt'],folder/'responses'/filename))!=digest(recovered)
+                            or backend.probe(byurl[url],recovered) not in ('NOT_FOUND','COMMITTED')):
+                        raise ValueError('MANUAL_SAVED_CAPTURE_NOT_PROVEN')
+                    cp.record_terminal([recovered])
             if scope_policy_active and original['mode']=='DISCOVERY':
                 from .source_recovery import scope_policy_exclusions
                 for entry,receipt in scope_policy_exclusions(backend.repo.connection,approved,code,entries,owner,sha):
@@ -552,7 +593,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                         receipts.append(receipt)
                     elif url in cp.state['frontier']:receipts.append({'url':url,'state':'NOT_REQUESTED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha}})
                 def probe(e,r):
-                    if r and r['state']=='NOT_REQUESTED':return 'NOT_FOUND'
+                    if r and r['state']=='NOT_REQUESTED' and not r.get('wire_evidence'):return 'NOT_FOUND'
                     return backend.probe(e,r) if backend else 'UNKNOWN'
                 classified=classify(entries,receipts,probe,source=code,parent_job_id=owner,manifest_sha256=sha)
                 from . import automation_execution

@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+{% from '_collection_progress.html' import progress_meter %}
+{% block content %}
+<a class="back" href="/suppliers">← Поставщики</a>
+<div class="pagehead"><h2>Параллельный сбор</h2></div>
+{% if results is defined %}
+<section class="panel">
+  <h3>Задания поставщиков</h3>
+  <div class="grid2">
+    {% for row in results %}
+    <div>
+      <h4>{{ row.name }}</h4>
+      {% if row.message != 'В очереди.' %}<p>{{ row.message }}</p>{% endif %}
+      {% if row.job_id %}
+      <p><a href="/runs?job_id={{ row.job_id }}">Задание №{{ row.job_id }}</a></p>
+      {{ progress_meter(url='/api/jobs/' ~ row.job_id ~ '/progress', show_link=true) }}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <p><a class="button" href="/runs">Сбор и запуски</a></p>
+</section>
+<script type="module" src="{{ url_for('static',path='collection-progress.js') }}" nonce="{{ csp_nonce }}"></script>
+{% elif not parallel_options %}
+<p class="notice">Свободных поставщиков для запуска сейчас нет.</p>
+{% else %}
+<form method="post" action="/suppliers/manual-parallel" class="panel">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Общий лимит одновременных сборов
+    <select name="max_parallel_suppliers">
+      {% for count in parallel_options %}
+      <option value="{{ count }}"{% if count == parallel_options|length %} selected{% endif %}>{{ count }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Лимит времени на поставщика, часов
+    <input type="number" name="duration_hours" min="1" max="24" placeholder="По настройкам источника">
+  </label>
+  <p>Лимит учитывает уже запущенные задания. Пауза берётся из настроек поставщика. Сайты с одним доменом собираются по очереди.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Поставщик</th><th>Пауза, сек.</th><th>Карточек</th></tr></thead>
+      <tbody>
+      {% for row in sources %}
+      <tr>
+        <td>
+          {% if row.limit and not row.busy %}
+          <label><input type="checkbox" name="include_{{ row.id }}" value="yes" checked> {{ row.name }}</label>
+          <input type="hidden" name="revision_{{ row.id }}" value="{{ row.settings.revision }}">
+          {% else %}
+          {{ row.name }} · {{ 'Уже в работе' if row.busy else 'Нет сохранённых адресов' }}
+          {% endif %}
+        </td>
+        <td>{{ row.settings.delay_min_seconds|number }}–{{ row.settings.delay_max_seconds|number }}</td>
+        <td>
+          {% if row.limit and not row.busy %}
+          <input type="number" name="limit_{{ row.id }}" value="{{ row.limit }}" min="1" max="100000"
+                 aria-label="Количество карточек · {{ row.name }}">
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p>Запуск включает выбранные источники. Прогресс каждого сбора виден в разделе «Сбор и запуски».</p>
+  <button>Начать выбранные сборы</button>
+</form>
+{% endif %}
+{% endblock %}

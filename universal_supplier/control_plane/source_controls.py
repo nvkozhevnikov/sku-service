@@ -81,7 +81,10 @@ def verify_resume(code,owner,sha,original,config,*,manual_isolation=None,require
     from .source_backend import SourceBackend
     backend=SourceBackend(config,code)
     try:
-        def probe(entry,r):return 'NOT_FOUND' if r and r['state']=='NOT_REQUESTED' else backend.probe(entry,r)
+        def probe(entry,r):
+            if r and r['state']=='NOT_REQUESTED' and not r.get('wire_evidence'):
+                return 'NOT_FOUND'
+            return backend.probe(entry,r)
         rows=classify(entries,receipts,probe,source=code,parent_job_id=owner,manifest_sha256=sha)
         from . import automation_execution
         reauthorized=automation_execution.reauthorized_uncertain(code,owner,sha)

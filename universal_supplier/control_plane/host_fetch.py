@@ -12,7 +12,7 @@ import hashlib,json,math,os,threading
 from .rate_control import (DomainRatePolicy,DomainRateLimiter,RequestMetrics,
     CircuitBreaker,CircuitOpen,SystemClock,RequestAborted,request_with_resilience,retry_after_seconds)
 from universal_supplier.http_capture import UnfollowedProductRedirect, has_blocking_interstitial
-from .transport_diagnostics import MANUAL_DISCONNECT, manual_transport_category
+from .transport_diagnostics import MANUAL_DISCONNECT, MANUAL_TLS_EOF, manual_transport_category
 
 # Request-local approval from an authenticated, audited manual launch. Never
 # mutate the serving process's environment or leak trust to another request.
@@ -223,7 +223,8 @@ class BoundedHostFetcher:
                         self.stop('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
                         raise RequestAborted('AUTOMATION_UNKNOWN_HTTP_OUTCOME') from error
                     manual_request=self.manual_product_attempts and request_scope!='robots'
-                    category=manual_transport_category(diagnostics['original_exception']) if manual_request else None
+                    category=manual_transport_category(diagnostics['original_exception'],
+                        allow_tls_eof=self.source=='kami' and request_scope=='product') if manual_request else None
                     legacy_timeout=self.isolate_timeouts and isinstance(error,TimeoutError)
                     if category is None and not legacy_timeout:raise
                     # Keep the real network failure and native breaker. The typed
@@ -241,6 +242,7 @@ class BoundedHostFetcher:
                                 self.network_pause.set()
                     if tripped and not self.network_pause.is_set():self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
                     if category==MANUAL_DISCONNECT:raise RemoteDisconnectRefusal('REMOTE_DISCONNECTED_UNKNOWN') from error
+                    if category==MANUAL_TLS_EOF:raise RemoteDisconnectRefusal('TLS_EOF_UNKNOWN') from error
                     raise ReadTimeoutRefusal(url) from error
                 self._validate(response.final_url)
                 for target in response.redirects:self._validate(target)

@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from universal_supplier.postgres import PostgresConfig
 from universal_supplier.stage6e import (
@@ -564,6 +565,113 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         rows=store.suppliers();automation={}
         if callable(getattr(type(store),'automation_overview',None)):automation=store.automation_overview(rows)
         return templates.TemplateResponse(request, "suppliers.html", context(request, suppliers=rows,automation=automation,active="suppliers"))
+
+    def parallel_collection_guard(request):
+        from .manual_collection import enabled as manual_enabled
+        from .source_runtime import runtime_enabled
+        from universal_supplier.partner_pilot import enabled as pilot_enabled
+
+        user = guard(request, {'ADMIN'})
+        if getattr(type(store), 'read_only', False) or not manual_enabled() or not runtime_enabled() or pilot_enabled():
+            raise HTTPException(403, 'Параллельный сбор здесь недоступен')
+        return user
+
+    def parallel_collection_sources():
+        from .manual_collection import manual_launch_settings
+        from .source_jobs import RUNTIME_SOURCES
+        from .supplier_automation import settings_for
+        from universal_supplier.adapters.ivstankomaster import CODE as discovery_source
+
+        sources = []
+        for row in store.suppliers():
+            if row['code'] not in RUNTIME_SOURCES:
+                continue
+            discovery = row['code'] == discovery_source
+            available = min(100000, row.get('products') or 0)
+            busy = row.get('job_status') in ('queued', 'running') or row.get('has_queued_job') or row.get('has_running_job')
+            sources.append(dict(id=row['id'], name=row.get('name') or row['code'],
+                                mode='DISCOVERY' if discovery else 'REFRESH', busy=bool(busy),
+                                limit=(available or 20) if discovery else available,
+                                settings=manual_launch_settings(row['code'], settings_for(row))))
+        return sources
+
+    @app.get('/suppliers/manual-parallel', response_class=HTMLResponse)
+    def parallel_collection_page(request: Request):
+        parallel_collection_guard(request)
+        sources = parallel_collection_sources()
+        count = len(sources) if any(row['limit'] > 0 and not row['busy'] for row in sources) else 0
+        return templates.TemplateResponse(request, 'manual_parallel.html',
+            context(request, active='suppliers', sources=sources, parallel_options=range(1, count + 1)))
+
+    def launch_parallel_jobs(planned, user_id, key):
+        from .manual_collection import launch
+
+        results = []
+        for row,count,approval in planned:
+            sid = row['id']
+            try:
+                result = queue.enqueue(sid, trigger_type='manual', crawl_type='full', requested_by_user_id=user_id,
+                    source_mode=row['mode'], source_limit=count, manual_request=approval)
+            except (ValueError, PermissionError, KeyError):
+                results.append(dict(row, message='Запуск не подготовлен. Проверьте настройки поставщика.'))
+                continue
+            except Exception:
+                results.append(dict(row, message='Не удалось подтвердить постановку в очередь. Проверьте задания поставщика.'))
+                continue
+            if not result.enqueued:
+                results.append(dict(row, job_id=result.deduplicated_job_id,
+                                    message='У поставщика уже есть активное задание.'))
+                continue
+            try:
+                if manual_launcher is not None:
+                    manual_launcher(result.job_id)
+                else:
+                    launch(result.job_id, key=key)
+            except Exception:
+                message = 'Задание сохранено. Его можно запустить со страницы поставщика.'
+            else:
+                message = 'В очереди.'
+            results.append(dict(row, job_id=result.job_id, message=message))
+        return results
+
+    @app.post('/suppliers/manual-parallel', response_class=HTMLResponse)
+    async def parallel_collection_start(request: Request):
+        from .manual_collection import ManualRequest, parallel_limit
+
+        user = parallel_collection_guard(request)
+        require_trusted_origin(request)
+        raw = await form_values(request)
+        check_csrf(request, raw)
+        sources = {f"include_{row['id']}": row for row in await run_in_threadpool(parallel_collection_sources)}
+        selected = {key for key,value in raw.items() if key.startswith('include_') and value == 'yes'}
+        if not selected or not selected <= sources.keys():
+            return page_error(request, 'Выберите доступных поставщиков')
+        key = signer.secret.decode('utf-8')
+        planned = []
+        try:
+            maximum = parallel_limit(optional_int(raw.get('max_parallel_suppliers'), 'Одновременных сборов'))
+            if maximum > len(sources):
+                raise ValueError('Число одновременных сборов превышает число доступных поставщиков')
+            hours = optional_int(raw.get('duration_hours'), 'Лимит времени')
+            for field,row in sources.items():
+                if field not in selected:
+                    continue
+                sid = row['id']
+                count = optional_int(raw.get(f'limit_{sid}'), 'Количество карточек')
+                cfg = row['settings']
+                revision = optional_int(raw.get(f'revision_{sid}'), 'Версия настроек')
+                if revision != cfg['revision'] or not row['limit']:
+                    raise ValueError('Список или настройки изменились. Откройте форму заново')
+                approval = ManualRequest(user, key, str(cfg['delay_min_seconds']), str(cfg['delay_max_seconds']),
+                    revision, row['mode'], hours, max_parallel_suppliers=maximum)
+                approval.validate(sid, count, 'manual', row['mode'])
+                planned.append((row, count, approval))
+        except (ValueError, PermissionError) as error:
+            return page_error(request, str(error))
+
+        results = await run_in_threadpool(launch_parallel_jobs, planned, user.id, key)
+        return templates.TemplateResponse(request, 'manual_parallel.html',
+            context(request, active='suppliers', results=results))
 
     @app.get('/scheduler/execution',response_class=HTMLResponse)
     def automation_executions(request: Request):

@@ -64,7 +64,8 @@ def no_external(monkeypatch):
 
 @pytest.mark.parametrize('code', sorted(RUNTIME_SOURCES))
 def test_all11_one_click_native_snapshot_is_signed_and_other_settings_preserved(code):
-    db=DB(code);q=db.queue();request=ManualRequest(AuthUser(1,'qa','QA','ADMIN'),KEY,'2','3',0)
+    minimum=20 if code=='intervesp' else 2
+    db=DB(code);q=db.queue();request=ManualRequest(AuthUser(1,'qa','QA','ADMIN'),KEY,str(minimum),str(minimum+1),0)
     result=q.enqueue(1,trigger_type='manual',crawl_type='full',requested_by_user_id=1,
         source_mode='REFRESH',source_limit=5,manual_request=request)
     assert result.enqueued
@@ -72,11 +73,23 @@ def test_all11_one_click_native_snapshot_is_signed_and_other_settings_preserved(
     assert proof['actor_id']==1 and proof['matching_apply'] is False
     assert proof['robots_attempts']==min(2,snap['rate_settings']['max_attempts'])
     assert snap['source_input']['canary']['selected']==5
-    assert snap['rate_settings']['min_request_interval_seconds']==2
+    assert snap['rate_settings']['min_request_interval_seconds']==minimum
     assert snap['rate_settings']['jitter_max_seconds']==1
     assert MANUAL_POLICIES.get() is None
     assert not any('UPDATE suppliers SET rate_settings' in sql for sql,_ in db.sql)
     assert not any('UPDATE source_products' in sql for sql,_ in db.sql)
+
+
+def test_intervesp_safe_pause_is_shown_and_validated_before_enqueue():
+    initial={'delay_min_seconds':3,'delay_max_seconds':6}
+    assert manual_collection.manual_launch_settings('intervesp',initial)=={
+        'delay_min_seconds':20,'delay_max_seconds':20}
+    db=DB('intervesp')
+    approval=ManualRequest(AuthUser(1,'qa','QA','ADMIN'),KEY,'19','20',0)
+    with pytest.raises(PermissionError,match='20 секунд'):
+        db.queue().enqueue(1,trigger_type='manual',crawl_type='full',source_mode='REFRESH',
+                           source_limit=5,manual_request=approval)
+    assert not db.snapshots
 
 
 @pytest.mark.parametrize('field',['rate','scope','signature','target','expired'])
@@ -181,6 +194,161 @@ def test_exact_claim_cannot_touch_foreign_jobs_or_run_with_changed_signature():
     seen.clear();wrong=True
     with pytest.raises(PermissionError):q.claim_next(job_id=44,manual_validator=lambda s:verify(s,KEY))
     assert not any("SET status='running'" in sql for sql,_ in seen)
+
+
+@pytest.mark.parametrize(('running','background','signed_limit','claim'),[
+    (11, 0, 12, True), (12, 0, 12, False), (3, 1, 12, False), (2, 0, None, False),
+    (2, 0, 5, False),
+])
+def test_parallel_manual_claim_respects_capacity_and_signed_limit(running,background,signed_limit,claim):
+    db = DB('uss_stanko')
+    queue = db.queue()
+    request = ManualRequest(AuthUser(1,'qa','QA','ADMIN'),KEY,'2','3',0,
+                            max_parallel_suppliers=signed_limit)
+    queue.enqueue(1,trigger_type='manual',crawl_type='full',source_mode='REFRESH',
+                  source_limit=2,manual_request=request)
+    snapshot = db.snapshots[0]
+    statements = []
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def transaction(self): return nullcontext()
+        def cursor(self): return self
+        def execute(self, sql, args=None):
+            self.sql = sql
+            statements.append(sql)
+        def fetchone(self):
+            if 'count(*) FILTER' in self.sql:
+                return running,background
+            if 'SELECT count(*) FROM crawl_jobs' in self.sql:
+                return running,
+            if 'SELECT j.id' in self.sql:
+                return (44,1,'uss_stanko','uss_stanko','https://uss-stanko.com/','manual','full',
+                        'queued',datetime.now(timezone.utc),snapshot)
+            return None
+
+    queue._connect = Connection
+    options = dict(job_id=44, manual_validator=lambda value:verify(value,KEY),
+                   manual_max_parallel=12 if signed_limit is not None else None)
+    if signed_limit == 5:
+        with pytest.raises(PermissionError, match='Изменился подтверждённый лимит'):
+            queue.claim_next(**options)
+    else:
+        assert (queue.claim_next(**options) is not None) is claim
+    assert any("SET status='running'" in sql for sql in statements) is claim
+    if claim:
+        assert any('running.status=' in sql and 'FOR UPDATE OF j SKIP LOCKED' in sql for sql in statements)
+
+
+def test_parallel_page_signs_a_separate_job_for_every_supported_supplier(tmp_path,monkeypatch):
+    from universal_supplier.control_plane.source_jobs import RUNTIME_SOURCES
+
+    monkeypatch.setenv('STERBRUST_MANUAL_COLLECTION_ENABLED','YES')
+    monkeypatch.setenv('STERBRUST_SOURCE_RUNTIME_ENABLED','YES')
+    c,store=client(tmp_path,monkeypatch)
+    monkeypatch.setattr(store,'suppliers',lambda:[
+        {'id':index,'code':code,'name':code,'products':index+100,'rate_settings':{},'crawl_settings':{}}
+        for index,code in enumerate(RUNTIME_SOURCES,1)
+    ])
+    queue=c.app.state.queue
+    requests=[];launches=[]
+    def enqueue(sid,**kwargs):
+        requests.append((sid,kwargs))
+        return EnqueueResult(300+sid,'queued')
+    monkeypatch.setattr(queue,'enqueue',enqueue)
+    monkeypatch.setattr(manual_collection,'launch',lambda jid,**kwargs:launches.append(jid))
+    endpoint='/suppliers/manual-parallel'
+    page=c.get(endpoint)
+    assert page.status_code==200 and 'Начать выбранные сборы' in page.text
+    assert page.text.count('name="include_')==len(RUNTIME_SOURCES)
+    form={'max_parallel_suppliers':str(len(RUNTIME_SOURCES)),'duration_hours':'4'}
+    for sid in range(1,len(RUNTIME_SOURCES)+1):
+        form.update({f'include_{sid}':'yes',f'limit_{sid}':str(10+sid),f'revision_{sid}':'0'})
+    assert c.post(endpoint,data=form).status_code==403
+    form['csrf_token']=csrf(page)
+    assert c.post(endpoint,data={**form,'include_999':'yes'}).status_code==400
+    assert c.post(endpoint,data={**form,'revision_12':'999'}).status_code==400
+    assert not requests and not launches
+    result=c.post(endpoint,data=form)
+    assert result.status_code==200
+    assert len(requests)==len(launches)==len(RUNTIME_SOURCES)
+    assert requests[-1][1]['source_mode']=='DISCOVERY'
+    for sid,options in requests:
+        assert options['source_limit']==10+sid
+        assert options['manual_request'].max_parallel_suppliers==len(RUNTIME_SOURCES)
+        assert options['manual_request'].duration_hours==4
+        assert f'/runs?job_id={300+sid}' in result.text
+        assert result.text.count(f'data-collection-progress="/api/jobs/{300+sid}/progress"')==1
+
+
+def test_parallel_form_requires_administrator(tmp_path,monkeypatch):
+    monkeypatch.setenv('STERBRUST_MANUAL_COLLECTION_ENABLED','YES')
+    monkeypatch.setenv('STERBRUST_SOURCE_RUNTIME_ENABLED','YES')
+    c,_=client(tmp_path,monkeypatch,role='OPERATOR')
+    assert c.get('/suppliers/manual-parallel').status_code==403
+
+
+def test_worker_waits_for_exact_job_past_old_thirty_second_limit(monkeypatch):
+    from types import SimpleNamespace
+    from universal_supplier.control_plane import manual_worker, admin_store, orchestrator
+
+    initial = datetime.now(timezone.utc)
+    elapsed = 0
+    proof = dict(actor_id=1, actor_role='ADMIN', actor_sv=1, nonce='qa', mappings=[],
+                 policies={}, max_parallel_suppliers=12,
+                 expires_at=(initial+timedelta(seconds=60)).isoformat())
+    actor = AuthUser(1,'qa','QA','ADMIN',session_version=1)
+    snapshot = {'synthetic':True}
+    queue_calls = []
+    executed = []
+
+    class Clock:
+        fromisoformat = staticmethod(datetime.fromisoformat)
+        @staticmethod
+        def now(tz):
+            return initial + timedelta(seconds=elapsed)
+
+    def sleep(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def execute(self,sql,args):
+            self.sql = sql
+            return self
+        def fetchone(self):
+            if 'settings_snapshot,status' in self.sql:return snapshot,'queued'
+            if 'count(*)' in self.sql:return 1,
+            assert self.sql == 'SELECT status FROM crawl_jobs WHERE id=%s'
+            return 'queued',
+        def fetchall(self): return []
+
+    def claim_next(**options):
+        queue_calls.append(options)
+        if elapsed >= 36:
+            options['manual_validator'](snapshot)
+            return SimpleNamespace(id=44,settings_snapshot=snapshot)
+        return None
+
+    worker = SimpleNamespace(_run_job=lambda job:executed.append(job.id),
+                             pool=SimpleNamespace(shutdown=lambda **kwargs:None))
+    monkeypatch.setenv('SESSION_SIGNING_SECRET',KEY)
+    monkeypatch.setattr(manual_worker,'os',SimpleNamespace(environ={'SESSION_SIGNING_SECRET':KEY}))
+    monkeypatch.setattr(manual_worker,'time',SimpleNamespace(sleep=sleep))
+    monkeypatch.setattr(manual_worker,'datetime',Clock)
+    monkeypatch.setattr(manual_worker,'verify',lambda snap,key:proof)
+    monkeypatch.setattr(manual_worker,'runtime_config',lambda:None)
+    monkeypatch.setattr(manual_worker,'guarded_connect',lambda *args,**kwargs:Connection())
+    monkeypatch.setattr(manual_worker,'PostgresJobQueue',lambda *args,**kwargs:SimpleNamespace(claim_next=claim_next))
+    monkeypatch.setattr(admin_store,'PostgresAdminStore',
+                        lambda *args,**kwargs:SimpleNamespace(user_by_id=lambda actor_id:actor))
+    monkeypatch.setattr(orchestrator,'Orchestrator',lambda *args,**kwargs:worker)
+    manual_worker.run(44)
+    assert elapsed==36 and executed==[44]
+    assert all(c['job_id']==44 and c['manual_max_parallel']==12 for c in queue_calls)
 
 
 def test_operator_cannot_change_admin_speed_and_disabled_source_requires_admin():

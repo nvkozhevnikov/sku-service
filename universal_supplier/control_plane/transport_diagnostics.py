@@ -7,9 +7,10 @@ from urllib.parse import urlsplit,urlunsplit
 
 MANUAL_TIMEOUT = 'manual_read_timeout'
 MANUAL_DISCONNECT = 'manual_remote_disconnect'
+MANUAL_TLS_EOF = 'manual_tls_eof'
 
 
-def manual_transport_category(exception):
+def manual_transport_category(exception, *, allow_tls_eof=False):
     """Recognize typed socket interruptions from live or archived evidence."""
     if not isinstance(exception,dict):
         return None
@@ -24,6 +25,10 @@ def manual_transport_category(exception):
     if (module=='http.client' and kind in {'RemoteDisconnected','IncompleteRead'}
             or module=='builtins' and kind in {'ConnectionResetError','ConnectionAbortedError','BrokenPipeError'}):
         return MANUAL_DISCONNECT
+    if allow_tls_eof and (module,kind)==('ssl','SSLEOFError') and 'verify_code' not in exception:
+        reason=exception.get('reason')
+        if isinstance(reason,dict) and reason.get('message')=='UNEXPECTED_EOF_WHILE_READING':
+            return MANUAL_TLS_EOF
     return None
 
 

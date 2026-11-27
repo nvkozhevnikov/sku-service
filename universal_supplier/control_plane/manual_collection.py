@@ -20,6 +20,22 @@ KIND = 'authenticated-manual-collection/v1'
 ROOT = Path(__file__).resolve().parents[2]
 MANUAL_EXECUTION = ContextVar('manual_collection_execution', default=None)
 TERMINAL = ('partial','failed','cancelled','stale_failed')
+INTERVESP_MIN_PAUSE = 20
+
+
+def manual_launch_settings(code, settings):
+    if code != 'intervesp':
+        return settings
+    return {**settings, 'delay_min_seconds':max(INTERVESP_MIN_PAUSE, settings['delay_min_seconds']),
+            'delay_max_seconds':max(INTERVESP_MIN_PAUSE, settings['delay_max_seconds'])}
+
+
+def parallel_limit(value):
+    from .source_jobs import RUNTIME_SOURCES
+
+    if type(value) is not int or not 1 <= value <= len(RUNTIME_SOURCES):
+        raise ValueError(f'Укажите число одновременных сборов от 1 до {len(RUNTIME_SOURCES)}')
+    return value
 
 
 def enabled():return os.environ.get('STERBRUST_MANUAL_COLLECTION_ENABLED') == 'YES'
@@ -61,6 +77,7 @@ class ManualRequest:
     mode: str = 'REFRESH'
     duration_hours: int | None = None
     retry_network: bool = False
+    max_parallel_suppliers: int | None = None
 
     def validate(self, supplier_id, limit, trigger, mode):
         from .source_canary import limit_value
@@ -71,6 +88,10 @@ class ManualRequest:
         require(type(supplier_id) is int and supplier_id>0 and trigger=='manual'
                 and mode==self.mode and mode in ('REFRESH','DISCOVERY','RESUME'), 'Недопустимый режим ручного сбора')
         require(not self.retry_network or mode=='RESUME', 'Повтор сетевых ошибок доступен из итогов завершённого сбора')
+        if self.max_parallel_suppliers is not None:
+            require(self.actor.role == 'ADMIN' and mode in ('REFRESH', 'DISCOVERY'),
+                    'Настроить параллельный сбор может только администратор при новом запуске')
+            parallel_limit(self.max_parallel_suppliers)
         if mode!='RESUME':
             limit_value(limit)
         elif limit is not None or self.duration_hours is not None:
@@ -94,6 +115,9 @@ class ManualRequest:
             saved=(crawl or {}).get('host_policy_approval') or {}
             require(saved.get('approved_rate_sha256')==digest(rate_for(cfg,old_rate)), 'Скорость должен сначала подтвердить администратор')
         rate=rate_for(changed,old_rate)
+        if code=='intervesp':
+            require(rate['min_request_interval_seconds']>=INTERVESP_MIN_PAUSE,
+                    'Для Intervesp нужна минимальная пауза 20 секунд по правилам сайта')
         if code==IVSTANKOMASTER:
             require(rate['min_request_interval_seconds']>=2 and rate['max_concurrency']==1,
                     'Для Ивстанкомастер нужна пауза от двух секунд и один поток')
@@ -112,9 +136,11 @@ class ManualRequest:
         finally:MANUAL_POLICIES.reset(token)
 
     def resume(self, config, sid, supplier, parent_id, previous):
+        from .manual_saved_recovery import (ARCHIVE_ERROR, LTT_SOURCES, WIRE_ERROR, make_wire_receipt,
+                                            optimum_archive_receipt)
         from .source_controls import verify_resume
         from .source_runtime import job_dir, read_input
-        from .source_resume import (FROZEN_BATCH_REFUSAL, STOPPED_REQUEST, manual_redirect_receipt,
+        from .source_resume import (FROZEN_BATCH_REFUSAL, STOPPED_REQUEST, digest as source_input_digest, manual_redirect_receipt,
                                     manual_stop_receipt, manual_transport_receipt, retryable_network_urls)
         status, prior, metadata=previous
         require(status in TERMINAL, 'Дождитесь завершения исходного задания')
@@ -124,7 +150,7 @@ class ManualRequest:
         original=prior['source_input']; scope=original['canary']
         owner=result.get('owner_job_id'); sha=result.get('input_sha256')
         require(prior['supplier_code']==code and scope['supplier_id']==sid and
-                type(owner) is int and 0<owner<=parent_id and sha==digest(original),
+                type(owner) is int and 0<owner<=parent_id and sha==source_input_digest(original),
                 'Сохранённое задание относится к другой партии')
         anchor=prior.get('manual_resume')
         require((anchor and owner==anchor['owner_job_id']) or (not anchor and owner==parent_id),
@@ -141,6 +167,7 @@ class ManualRequest:
             receipt=None
             legacy_redirect=None
             legacy_stop=None
+            recovered=None
             # Use only the last signed job's evidence. The checkpoint can
             # belong to the original job even if the failed request was in a child.
             reason=result.get('termination_reason')
@@ -151,7 +178,9 @@ class ManualRequest:
                     if item.get('reason'):
                         for path in (job_dir(code,parent_id)/'transport-errors').glob('*.json'):
                             try:
-                                if reason==FROZEN_BATCH_REFUSAL:
+                                if code in LTT_SOURCES and reason=='SOURCE_CARD_HTTP_FAILED' and item['reason']==WIRE_ERROR:
+                                    recovered=make_wire_receipt(item,parent_id,path)
+                                elif reason==FROZEN_BATCH_REFUSAL:
                                     if item['reason']!='ValueError:'+FROZEN_BATCH_REFUSAL:break
                                     legacy_redirect=manual_redirect_receipt(item['origin'],item['url'],parent_id,path,legacy=True)
                                 elif reason=='OPERATOR_STOP':
@@ -162,13 +191,22 @@ class ManualRequest:
                                                                      expected_error=item['reason'])
                             except (OSError,ValueError,KeyError,TypeError):continue
                             break
+            if code=='optimum' and original['mode']=='REFRESH' and reason=='CAPTURE_ARCHIVE_FAILED':
+                failed=[r['receipt'] for r in state['terminal'].values() if r['state']=='FAILED']
+                if len(failed)==1 and failed[0].get('reason')==ARCHIVE_ERROR:
+                    for path in (folder/'responses').glob('*.json'):
+                        try:
+                            recovered=optimum_archive_receipt(failed[0],path)
+                        except (OSError,ValueError,KeyError,TypeError):
+                            continue
+                        break
             retries=[]
             if self.retry_network:
                 require(not reason and not state['frontier'] and not state['inflight'],
                         'Сначала завершите оставшуюся очередь')
                 retries=retryable_network_urls(state)
                 require(bool(retries), 'В этом запуске нет сетевых ошибок для повторного сбора')
-            plan=verify_resume(code,owner,sha,original,config,manual_isolation=legacy_redirect or legacy_stop or receipt,
+            plan=verify_resume(code,owner,sha,original,config,manual_isolation=legacy_redirect or legacy_stop or receipt or recovered,
                                require_pending=not self.retry_network)
             if self.retry_network:
                 require(plan is not None and not plan['offline_pending'],'Сначала завершите оставшуюся очередь')
@@ -182,6 +220,7 @@ class ManualRequest:
                                    'checkpoint_sha256':state['checksum'],'legacy_timeout':receipt}
         if legacy_redirect:snapshot['manual_resume']['legacy_redirect']=legacy_redirect
         if legacy_stop:snapshot['manual_resume']['legacy_stop']=legacy_stop
+        if recovered:snapshot['manual_resume']['recovered_receipt']=recovered
         if retries:snapshot['manual_resume']['retry_network_urls']=retries
         return snapshot
 
@@ -199,6 +238,8 @@ class ManualRequest:
             'engine':engine_fingerprint(),'snapshot_sha256':digest(snapshot),'policies':self.policy,
             'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=snapshot['crawl_settings']['max_run_duration_seconds']+300)).isoformat(),
             'matching_apply':False,'mappings':mappings,'robots_attempts':robots_attempts}
+        if self.max_parallel_suppliers is not None:
+            value['max_parallel_suppliers'] = parallel_limit(self.max_parallel_suppliers)
         return {**value,'signature':signature(value,self.key)}
 
 
@@ -217,6 +258,7 @@ def verify(snapshot, key, *, now=None):
     from .source_canary import validate_input
     from .source_runtime import engine_fingerprint
     from .source_jobs import RUNTIME_SOURCES
+    from .source_resume import digest as source_input_digest
     from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
     marker=authenticated_marker(snapshot,key)
     require(marker.get('engine')==engine_fingerprint() and marker.get('head')==release_revision(),'Код изменился. Создайте новый запуск')
@@ -229,15 +271,18 @@ def verify(snapshot, key, *, now=None):
     if settings.get('collection_mode')=='RESUME':
         require(resume and resume['owner_job_id']==settings['resume_owner_job_id']
                 and resume['previous_engine']==snapshot['source_input']['engine_sha256']
-                and settings['resume_input_sha256']==digest(snapshot['source_input']), 'Изменилась область продолжения')
+                and settings['resume_input_sha256']==source_input_digest(snapshot['source_input']), 'Изменилась область продолжения')
         retries=resume.get('retry_network_urls')
         if retries is not None:
             require(isinstance(retries,list) and 0<len(retries)<=canary['max_products']
                     and all(isinstance(url,str) for url in retries) and len(set(retries))==len(retries)
-                    and not any(resume.get(a) for a in ('legacy_redirect','legacy_timeout','legacy_stop')),
+                    and not any(resume.get(a) for a in ('legacy_redirect','legacy_timeout','legacy_stop','recovered_receipt')),
                     'Изменился список повторных запросов')
     else:
         require(not resume and snapshot['source_input']['engine_sha256']==marker['engine'], 'Изменился исходный запуск')
+    if 'max_parallel_suppliers' in marker:
+        require(marker.get('actor_role') == 'ADMIN' and not resume, 'Параллельный сбор не подтверждён')
+        parallel_limit(marker['max_parallel_suppliers'])
     require(code in RUNTIME_SOURCES and (mode=='REFRESH' or (code==IVSTANKOMASTER and mode=='DISCOVERY'))
             and snapshot['source_input']['supplier_code']==code and snapshot['adapter_name']==code
             and type(canary['max_products']) is int and 1<=canary['max_products']<=100000,'Область запуска изменилась')

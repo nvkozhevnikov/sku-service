@@ -1,5 +1,6 @@
 """Run exactly one authenticated UI job through the existing Orchestrator."""
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 import time
@@ -38,16 +39,18 @@ def run(job_id):
         STERBRUST_RC_MATCHING_APPLY_APPROVED='NO',SCHEDULER_ENABLED='NO',
         STERBRUST_APPROVED_HOST_POLICIES=json.dumps(proof['policies']))
     job=None
-    for _ in range(30):
-        job=queue.claim_next(job_id=job_id,manual_validator=validate)
+    deadline = datetime.fromisoformat(proof['expires_at'])
+    while datetime.now(timezone.utc) < deadline:
+        job=queue.claim_next(job_id=job_id,manual_validator=validate,
+                             manual_max_parallel=proof.get('max_parallel_suppliers'))
         if job:break
         with guarded_connect(cfg,autocommit=True) as c:
             status = c.execute('SELECT status FROM crawl_jobs WHERE id=%s', (job_id,)).fetchone()
         if status != ('queued',):
             return
-        time.sleep(1)
+        time.sleep(3)
     if not job:
-        queue.fail_waiting_manual_job(job_id, 'MANUAL_WORKER_BUSY')
+        queue.fail_waiting_manual_job(job_id, 'MANUAL_WAITING_EXPIRED')
         return
     worker=Orchestrator(cfg,queue=queue,max_parallel_supplier_jobs=1)
     token=MANUAL_EXECUTION.set(job.id)

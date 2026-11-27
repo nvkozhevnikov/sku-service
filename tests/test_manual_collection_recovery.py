@@ -6,8 +6,10 @@ from http.client import IncompleteRead, RemoteDisconnected
 import json
 from pathlib import Path
 import socket
+import ssl
 from types import SimpleNamespace
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request
 
 import pytest
@@ -332,12 +334,140 @@ def test_old_transport_receipt_must_match_terminal_error():
                                  expected_error='TimeoutError:no response')
 
 
+@pytest.mark.parametrize('wrong_evidence',[None,'certificate','scope','http','wrong_job'])
+def test_kami_tls_eof_requires_an_exact_no_response_archive_and_sql_probe(wrong_evidence):
+    from universal_supplier.control_plane.source_resume import classify, retryable_network_urls
+    from universal_supplier.control_plane.source_runtime import job_dir
+    from universal_supplier.control_plane.transport_diagnostics import exception_evidence, safe_message
+
+    source,owner,job_id='kami',17,19
+    url='https://www.stanki.ru/catalog/test-1/'
+    origin={'source':source,'job_id':owner,'manifest_sha256':'a'*64}
+    error=ssl.SSLEOFError(8,'connection closed while reading')
+    error.reason='UNEXPECTED_EOF_WHILE_READING'
+    if wrong_evidence=='certificate':
+        error=ssl.SSLCertVerificationError(1,'certificate verify failed')
+    outer=URLError(error)
+    evidence=job_dir(source,job_id)/'transport-errors'/('b'*64+'.json')
+    evidence.parent.mkdir(parents=True)
+    record={'url':url,'job_id':18 if wrong_evidence=='wrong_job' else job_id,'owner_job_id':owner,
+            'input_sha256':origin['manifest_sha256'],'transport_started':True,
+            'http_status':200 if wrong_evidence=='http' else None,
+            'diagnostics':{**exception_evidence(outer),'source':source,
+            'request_scope':'robots' if wrong_evidence=='scope' else 'product',
+            'response_available':False,'wire_outcome':'UNKNOWN'}}
+    evidence.write_text(json.dumps(record),encoding='utf-8')
+    if wrong_evidence:
+        with pytest.raises(ValueError):
+            manual_transport_receipt(origin,url,job_id,evidence,expected_error='URLError:'+safe_message(outer))
+        return
+    receipt=manual_transport_receipt(origin,url,job_id,evidence,expected_error='URLError:'+safe_message(outer))
+    assert receipt['isolation']['category']=='manual_tls_eof'
+    def classified(probe):
+        return classify([{'url':url}],[receipt],lambda *args:probe,source=source,parent_job_id=owner,
+                        manifest_sha256=origin['manifest_sha256'])[0]['state']
+    assert classified('NOT_FOUND')=='QUARANTINED'
+    assert classified('COMMITTED')==classified('UNKNOWN')=='UNCERTAIN'
+    assert not retryable_network_urls({'terminal':{url:{'state':'QUARANTINED','receipt':receipt}}})
+
+
+def test_kami_fetcher_classifies_tls_eof_without_retry():
+    from universal_supplier.control_plane.host_fetch import BoundedHostFetcher
+    source='kami';base='https://www.stanki.ru'
+    rate=approved_policy(source,base,{'max_attempts':3,'max_concurrency':1})
+    calls=[]
+    class Client:
+        def get_validated(self,url,**kwargs):
+            self.before_request(url)
+            calls.append(url)
+            error=ssl.SSLEOFError(8,'connection closed while reading')
+            error.reason='UNEXPECTED_EOF_WHILE_READING'
+            raise URLError(error)
+    runner=BoundedHostFetcher('www.stanki.ru',rate,Client,validator=lambda _:None,robots_allowed=lambda _:True,
+                            robots_delay_seconds=0,lease_acquired=True,clock=Clock(),source=source,
+                            approval=approval_for(base),manual_product_attempts=True)
+    url=base+'/catalog/test-1/'
+    outcome,=runner.fetch([url],limit=1,seconds=60)
+    assert calls==[url] and outcome.disconnect_refusal and outcome.response is None
+    assert outcome.error=='RemoteDisconnectRefusal:TLS_EOF_UNKNOWN'
+    assert runner.metrics.network_errors==1 and runner.metrics.retry_count==0 and not runner.stop_reason
+
+
 def test_other_urlerror_keeps_unknown_result_blocked():
     run,job,backend,calls=native_manual(product_error=URLError)
     result=run(job)
     assert calls==[1] and not backend.writes
     assert result['termination_reason']=='SOURCE_CARD_HTTP_FAILED'
     assert result['deferred']==0 and not result['resume_available']
+
+
+@pytest.mark.parametrize('code',('ltt_msk','ltt_sib'))
+def test_ltt_unicode_wire_form_stays_inside_approved_manual_batch(code):
+    from test_source_jobs import saved_case
+    from universal_supplier.control_plane.source_jobs import parse_existing
+    from universal_supplier.http_capture import public_transport_url
+
+    body,url,charset,_=saved_case(code)
+    url=url.rstrip('/')+'-проверка/'
+    wire=public_transport_url(url)
+    assert wire != url
+    base='https://'+urlsplit(url).hostname
+    rate=approved_policy(code,base,{'max_concurrency':1})
+    ext=parse_existing(code,body.decode(charset),url).site_internal_id
+    supplier=(code,code,base+'/',True,{'host_policy_approval':approval_for(base)},rate.snapshot())
+    snapshot=build_preview(1,supplier,[(1,ext,url,1)],CFG,1)['snapshot']
+    snapshot['manual_collection']={'robots_attempts':1}
+    job=CrawlJob(1,1,code,code,base+'/','manual','full','running',datetime.now(timezone.utc),snapshot)
+    calls=[];backend=Backend()
+    class Client:
+        def get_validated(self,target,*,validator,timeout_seconds):
+            validator(target)
+            validator(public_transport_url(target))
+            self.before_request(target)
+            calls.append(target)
+            if target.endswith('/robots.txt'):
+                return HttpResponse(target,200,'text/plain',b'User-agent: *\nAllow: /\n')
+            return HttpResponse(wire,200,'text/html; charset='+charset,body)
+    lease=LEASED_HOST.set(job.domain);manual=MANUAL_EXECUTION.set(job.id)
+    try:
+        result=run_source(job,CFG,backend_factory=lambda *args:backend,client_factory=Client,clock=Clock())
+    finally:
+        MANUAL_EXECUTION.reset(manual);LEASED_HOST.reset(lease)
+    assert calls==[base+'/robots.txt',url]
+    assert result['sql_committed']==1 and result['canary']['product_requests']==[url]
+
+
+def test_optimum_public_license_replays_only_verified_saved_capture():
+    import hashlib
+    from universal_supplier.commercial_persistence import OPTIMUM_PUBLIC_LICENSE_URL, _safe_url
+    from universal_supplier.control_plane.manual_saved_recovery import optimum_archive_receipt
+    from universal_supplier.control_plane.source_runtime import job_dir
+
+    url=OPTIMUM_PUBLIC_LICENSE_URL
+    assert _safe_url(url)==url
+    for unsafe in (url+'?token=example',url+'#token',url.replace('optimum.su','example.invalid'),
+                   url.replace('https://','https://anyone@')):
+        with pytest.raises(ValueError):
+            _safe_url(unsafe)
+    origin={'source':'optimum','job_id':17,'manifest_sha256':'a'*64}
+    payload=b'<h1>Public licence</h1>'
+    evidence_sha=hashlib.sha256(payload).hexdigest()
+    folder=job_dir('optimum',17)
+    body=folder/'captures'/(evidence_sha+'.html')
+    record_path=folder/'responses'/('b'*64+'.json')
+    body.parent.mkdir(parents=True)
+    record_path.parent.mkdir()
+    body.write_bytes(payload)
+    record_path.write_text(json.dumps(dict(origin_job_id=17,input_sha256=origin['manifest_sha256'],
+        url=url,final_url=url,http_status=200,error=None,redirects=[],response_sha256=evidence_sha,
+        evidence_sha256=evidence_sha,file=str(body),content_type='text/html',
+        observed_at='2026-11-26T00:00:00+00:00')),encoding='utf-8')
+    receipt=optimum_archive_receipt(dict(origin=origin,url=url),record_path)
+    assert receipt['state']=='HTTP_CAPTURED_NOT_COMMITTED'
+    assert receipt['original_capture_metadata']['observed_at']=='2026-11-26T00:00:00+00:00'
+    body.write_bytes(b'tampered')
+    with pytest.raises(ValueError,match='MANUAL_SAVED_CAPTURE_NOT_PROVEN'):
+        optimum_archive_receipt(dict(origin=origin,url=url),record_path)
 
 
 def test_bounded_manual_disconnect_goes_to_tail_before_retry():

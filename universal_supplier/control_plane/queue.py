@@ -453,18 +453,31 @@ class PostgresJobQueue:
             )
             return EnqueueResult(cursor.fetchone()[0], "queued")
 
-    def claim_next(self, *, job_id=None, manual_validator=None) -> CrawlJob | None:
+    def claim_next(self, *, job_id=None, manual_validator=None, manual_max_parallel=None) -> CrawlJob | None:
+        from .manual_collection import parallel_limit
+        from .scheduler_main import read_max_parallel_supplier_jobs
+
         if job_id is not None and (type(job_id) is not int or job_id<1 or not callable(manual_validator)):
             raise PermissionError('Нужен точный подтверждённый номер ручного задания')
+        ordinary_maximum = read_max_parallel_supplier_jobs()
+        maximum = ordinary_maximum
+        if manual_max_parallel is not None:
+            if job_id is None:
+                raise PermissionError('Параметр параллельного сбора действует только для ручного задания')
+            maximum = parallel_limit(manual_max_parallel)
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
             # Serialize claims across worker processes, not only each thread pool.
             # Existing host session lease remains the final network guard.
             cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
-            cursor.execute("SELECT count(*) FROM crawl_jobs WHERE status='running'")
-            # Global cap across worker processes: the same setting the
-            # orchestrator uses (default 2), not a hard-coded 2 (review K5).
-            from .scheduler_main import read_max_parallel_supplier_jobs
-            if cursor.fetchone()[0] >= read_max_parallel_supplier_jobs():
+            capacity_sql = "SELECT count(*) FROM crawl_jobs WHERE status='running'"
+            if maximum > ordinary_maximum:
+                capacity_sql = """SELECT count(*), count(*) FILTER (WHERE NOT (settings_snapshot ? 'manual_collection'))
+                    FROM crawl_jobs WHERE status='running'"""
+            cursor.execute(capacity_sql)
+            capacity = cursor.fetchone()
+            # Separately authorized background jobs retain the ordinary global limit.
+            effective_maximum = ordinary_maximum if len(capacity) > 1 and capacity[1] else maximum
+            if capacity[0] >= effective_maximum:
                 return None
             # Frozen deadlines remain evidence. An exact approved extension must
             # also govern queue expiry, before per-snapshot dispatch validation.
@@ -514,7 +527,11 @@ class PostgresJobQueue:
                 if row[0]!=job_id or not row[9].get('manual_collection'):raise PermissionError('Чужое задание не запускается')
                 if normalized_domain(row[4]) != row[9].get('domain'):
                     raise PermissionError('Домен источника изменился')
-                manual_validator(row[9])
+                approval = manual_validator(row[9])
+                if manual_max_parallel is not None and (
+                    not isinstance(approval, dict) or approval.get('max_parallel_suppliers') != maximum
+                ):
+                    raise PermissionError('Изменился подтверждённый лимит параллельного сбора')
             from . import automation_execution
             if automation_execution.ACTIVE is not None and not row[9].get('automation'):
                 # Deliberate hard stop: a session starts only with no foreign queued
