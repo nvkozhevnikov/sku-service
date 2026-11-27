@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from universal_supplier.control_plane import scheduler_main
 from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.store import SnapshotControlPlaneStore
-from conftest import control_plane_snapshot_dir
+from _support import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 
 

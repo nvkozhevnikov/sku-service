@@ -14,76 +14,33 @@ Production ``CONTROL_PLANE_DEMO_SNAPSHOT`` still reads ``reports/`` only.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-
-LOCAL_EVIDENCE_DIRS = frozenset({"reports", "RC_LOCAL"})
-LOCAL_EVIDENCE_FILES = frozenset({
-    "SUMMARY.txt",
-    "docker-compose.qa.yml",
-})
+from _support import (  # noqa: F401  re-exported for older imports
+    CONTROL_PLANE_SNAPSHOT_FILES, CONTROL_PLANE_SNAPSHOT_FIXTURE, LOCAL_EVIDENCE_DIRS, LOCAL_EVIDENCE_FILES,
+    ROOT, _display, _skip_for_missing_evidence, control_plane_snapshot_dir, is_local_evidence, require_evidence,
+)
 
 
-CONTROL_PLANE_SNAPSHOT_FILES = ("OPTIMUM_IDENTITY_AUDIT.csv", "PARTNER_ST_IDENTITY_REGRESSION.csv")
-CONTROL_PLANE_SNAPSHOT_FIXTURE = ROOT / "tests" / "fixtures" / "control_plane_snapshot"
+_MISSING_FILE = re.compile(r"FileNotFoundError: \[Errno 2\] No such file or directory: '([^']+)'")
 
 
-def control_plane_snapshot_dir() -> Path:
-    """Directory for SnapshotControlPlaneStore in UI tests.
-
-    ``CONTROL_PLANE_TEST_SNAPSHOT=fixture`` forces the synthetic fixture,
-    ``=reports`` forces the real evidence (skipping when absent); by default the
-    real ``reports/`` is used when both CSVs exist, else the synthetic fixture.
-    """
-    reports = ROOT / "reports"
-    mode = os.environ.get("CONTROL_PLANE_TEST_SNAPSHOT", "").strip().lower()
-    if mode == "fixture":
-        return CONTROL_PLANE_SNAPSHOT_FIXTURE
-    if mode == "reports" or all((reports / name).exists() for name in CONTROL_PLANE_SNAPSHOT_FILES):
-        return reports
-    return CONTROL_PLANE_SNAPSHOT_FIXTURE
-
-
-def is_local_evidence(path: str | Path) -> bool:
-    """True for paths inside the project that belong to uncommitted local evidence."""
-    candidate = Path(path)
-    if not candidate.is_absolute():
-        candidate = ROOT / candidate
-    try:
-        relative = candidate.resolve().relative_to(ROOT)
-    except ValueError:
-        return False
-    parts = relative.parts
-    if not parts:
-        return False
-    return bool(LOCAL_EVIDENCE_DIRS.intersection(parts)) or relative.as_posix() in LOCAL_EVIDENCE_FILES
-
-
-def require_evidence(*paths: str | Path) -> None:
-    """Skip the current test when any of the given local evidence paths is absent."""
-    for path in paths:
-        candidate = Path(path) if Path(path).is_absolute() else ROOT / path
-        if not candidate.exists():
-            pytest.skip(f"local evidence not in this checkout (git-ignored/uncommitted): {_display(candidate)}")
-
-
-def _display(path: Path) -> str:
-    try:
-        return path.resolve().relative_to(ROOT).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _skip_for_missing_evidence(error: FileNotFoundError) -> None:
-    filename = error.filename
-    if filename and is_local_evidence(filename) and not Path(filename).exists():
-        raise pytest.skip.Exception(
-            f"local evidence not in this checkout (git-ignored/uncommitted): {_display(Path(filename))}",
-            _use_item_location=True,
-        ) from None
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    """A test module that reads local evidence at import time skips like a test does."""
+    report = yield
+    if report.failed and isinstance(collector, pytest.Module):
+        text = str(report.longrepr)
+        missing = _MISSING_FILE.findall(text)
+        if missing and text.rstrip().splitlines()[-1].startswith("E   FileNotFoundError") \
+                and is_local_evidence(missing[-1]) and not Path(missing[-1]).exists():
+            report.outcome = "skipped"
+            report.longrepr = (str(collector.path), 0, "Skipped: local evidence not in this checkout "
+                               f"(git-ignored/uncommitted): {_display(Path(missing[-1]))}")
+    return report
 
 
 @pytest.hookimpl(wrapper=True)

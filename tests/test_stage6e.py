@@ -13,7 +13,7 @@ from universal_supplier.control_plane.admin_store import InMemoryAdminStore
 from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.security import SessionSigner, hash_password
 from universal_supplier.control_plane.store import ProductFilters, SnapshotControlPlaneStore, product_where
-from conftest import control_plane_snapshot_dir
+from _support import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 from universal_supplier.stage6e import (
     AnomalyThresholds, InMemoryStage6EService, MissingState, QualityProfile,

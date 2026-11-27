@@ -62,7 +62,7 @@ def vekprom_final_state(requested: str, final: str) -> str:
 from universal_supplier.postgres import PostgresConfig, PostgresRepository  # noqa: E402
 
 REPORTS = ROOT / 'reports/VEKPROM_INTERVESP_INTEGRATION_2026-10-08'
-PRIVATE = Path(os.environ['LOCALAPPDATA']) / 'UniversalSupplier/vekprom-intervesp-20261008'
+PRIVATE = Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset') / 'UniversalSupplier/vekprom-intervesp-20261008'
 DB_IDENTITY = ('universal_supplier_vekprom_intervesp', '127.0.0.1', 55452, '17.11',
                'vekprom_intervesp_app', False, '7694223408076967768')
 PARSERS = {'vekprom': parse_vekprom_detail, 'intervesp': parse_intervesp_detail}

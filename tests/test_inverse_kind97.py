@@ -9,6 +9,9 @@ BASE=ROOT/'reports/LTT_USS_INTEGRATION_2026-10-13'
 AUDIT=BASE/'INVERSE_KIND_IMPACT_SWEEP_2026-10-16'
 B=BASE/'INVERSE_KIND_97_BATCH_2026-10-16'
 def load(p):return json.loads(p.read_text('utf8'))
+if not (AUDIT/'INVERSE_KIND_SEMANTIC_DECISIONS.json').exists():
+    pytest.skip('local evidence not in this checkout (git-ignored/uncommitted): reports/LTT_USS_INTEGRATION_2026-10-13',
+                allow_module_level=True)
 ROWS=load(AUDIT/'INVERSE_KIND_SEMANTIC_DECISIONS.json')['rows']
 TERMINAL=load(B/'AUTHORIZED_TERMINAL4.json')['rows']
 PREVIOUS=load(BASE/'PRODUCT_KIND_29_RESUME_2026-10-16/PRODUCT_KIND_29_MANIFEST.json')['rows']

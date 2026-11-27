@@ -310,3 +310,14 @@ def test_semantic_hold_matches_external_id_not_another_databases_surrogate():
     assert held and held["reason"] == "voltage_380_vs_220"
     # A trace that carries only the surrogate id keeps the production mapping (fail closed).
     assert semantic_export_hold({"supplier_code": "partner_st", "source_product_id": 15})
+
+
+# --- CI: known pending owner decision ------------------------------------------------------------
+
+@pytest.mark.xfail(strict=True, reason=(
+    "config/live11_approval_matrix.csv changed on 2026-11-05 (765ac15) but source_batch.MATRIX_SHA "
+    "still pins the 2026-10-22 approval; LIVE11 batch and cabinet source pages refuse until the "
+    "owner re-approves the matrix. Remove this marker when MATRIX_SHA is updated."))
+def test_live11_matrix_is_approved():
+    from universal_supplier.control_plane import source_batch
+    assert len(source_batch.matrix_rows()) == 11
