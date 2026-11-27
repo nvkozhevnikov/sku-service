@@ -27,7 +27,11 @@ from competitor_intel.transport import Capture
 @pytest.fixture(scope='module')
 def isolated_store(tmp_path_factory):
     binary = os.environ.get('COMPETITOR_TEST_PG_BIN')
-    pg_ctl = Path(binary) / 'pg_ctl' if binary else Path(shutil.which('pg_ctl') or '')
+    found = shutil.which('pg_ctl')
+    if not binary and not found:
+        # Not configured on this machine (e.g. CI): an explicit setting that is wrong still fails below.
+        pytest.skip('isolated PostgreSQL runtime not configured (COMPETITOR_TEST_PG_BIN / pg_ctl on PATH)')
+    pg_ctl = Path(binary) / 'pg_ctl' if binary else Path(found)
     suffix = '.exe' if os.name == 'nt' else ''
     pg_ctl = pg_ctl.with_suffix(suffix)
     if not pg_ctl.is_file():

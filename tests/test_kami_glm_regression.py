@@ -116,7 +116,9 @@ class KamiIdentityGuards(unittest.TestCase):
         self.assertEqual(card.currency, '')
         self.assertEqual(card.raw_data['price_state'], 'missing')
         self.assertEqual(card.raw_data['old_price_raw'], '9 190 015 ₽')
-        self.assertEqual(card.old_price, Decimal('9190015'))
+        # Since eac6092 (2026-10-27) an old price is an offer field only next to a
+        # public current price; alone it stays raw evidence (old_price_raw above).
+        self.assertIsNone(card.old_price)
         self.assertEqual(card.raw_data['price_basis'], 'exact_price')
 
 

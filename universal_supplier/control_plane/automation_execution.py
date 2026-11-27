@@ -20,8 +20,8 @@ def load(path,sha,confirm=None,*,for_execution=False):
     require(hashlib.sha256(Path(path).read_bytes()).hexdigest()==sha,'AUTOMATION_APPROVAL_SHA_CHANGED')
     value=json.loads(Path(path).read_text(encoding='utf-8'))
     require(value.get('format')=='supplier-schedule-grant/v1','AUTOMATION_APPROVAL_FORMAT')
-    from .source_canary import TARGET
-    require(value.get('target')==TARGET,'AUTOMATION_TARGET_CHANGED')
+    from .source_canary import TARGET, same_database
+    require(same_database(value.get('target')),'AUTOMATION_TARGET_CHANGED')
     head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     require(head==value['head'],'AUTOMATION_HEAD_CHANGED')
     from .source_runtime import engine_fingerprint
@@ -255,7 +255,7 @@ class Session:
             require(hashlib.sha256(self.approval_path.read_bytes()).hexdigest()==self.sha,'AUTOMATION_APPROVAL_SHA_CHANGED')
             self.last_engine_check=time.monotonic()
         if shutil.disk_usage(self.folder).free<5*1024**3:raise PermissionError('AUTOMATION_DISK_LOW')
-        from .source_canary import TARGET
+        from .source_canary import TARGET, same_database
         if shutil.disk_usage(Path(TARGET['pgdata'])).free<5*1024**3:raise PermissionError('AUTOMATION_DISK_LOW')
         if self.lock is not None:
             try:self.lock.execute('SELECT 1')

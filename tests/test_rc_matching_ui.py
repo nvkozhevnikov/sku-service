@@ -12,6 +12,8 @@ def test_rc_matching_page_shows_status_filters_both_sides_and_evidence():
     env = Environment(loader=FileSystemLoader(template_root), autoescape=select_autoescape(["html"]))
     from universal_supplier.control_plane.web import safe_http_url
     env.filters["safe_http_url"] = safe_http_url
+    from universal_supplier.control_plane.presentation import display_timestamp
+    env.filters["msk"] = display_timestamp
     body = env.get_template("commercial_proposals.html").render(
         url_for=lambda *_args, **_kwargs: "/static/file.css", current_user=None,
         safety_banner="import disabled", unavailable="", active="commercial_qa",
@@ -49,9 +51,11 @@ def test_rc_dashboard_labels_snapshot_and_passive_sources_truthfully():
     with patch.object(PostgresControlPlaneStore, "dashboard", return_value=[{"code": "partner_st"}]):
         detail = object.__new__(LocalRcReadOnlyStore).suppliers()[0]
     assert "исторический снимок" in detail["source_reason"]
-    template = (Path(__file__).resolve().parents[1] / "universal_supplier" / "control_plane"
-                / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    # Dashboard since d5fe127: workspace grid + _supplier_cards partial; the proposals
+    # link lives in the shared navigation (base.html). The former "не включают
+    # отдельные диагностические предложения" note was removed from the UI there.
+    root = Path(__file__).resolve().parents[1] / "universal_supplier" / "control_plane" / "templates"
+    template = "".join((root / name).read_text(encoding="utf-8") for name in ("dashboard.html", "_supplier_cards.html"))
     assert "товаров источника" in template
     assert "активных товаров" not in template
-    assert "не включают отдельные диагностические предложения" in template
-    assert 'href="/commercial-qa/proposals"' in template
+    assert 'href="/commercial-qa/proposals"' in (root / "base.html").read_text(encoding="utf-8")

@@ -17,6 +17,16 @@ FORMAT='source-bounded-job/v2'
 TARGET={'host':DATABASE[0],'port':DATABASE[1],'dbname':DATABASE[2],
         'system_identifier':SYSTEM,'pgdata':str(PGDATA)}
 
+def same_database(saved):
+    """Database identity equality; pgdata compared OS-neutrally.
+
+    str(Path('C:/...')) renders with backslashes on Windows and slashes elsewhere,
+    so a snapshot saved on the operator's Windows host must still match on Linux.
+    """
+    if not isinstance(saved,dict) or set(saved)!=set(TARGET):return False
+    norm=lambda d:{**d,'pgdata':str(d.get('pgdata') or '').replace('\\','/')}
+    return norm(saved)==norm(TARGET)
+
 def limit_value(value):
     if type(value) is not int or not 1<=value<=100000:raise ValueError('Общий лимит должен быть целым от 1 до 100000')
     return value
@@ -73,7 +83,7 @@ def validate_input(value,settings=None,config=None):
     if legacy and c['max_products']>50:raise ValueError('LEGACY_CANARY_SCOPE_CHANGED')
     mode=value.get('mode');expected_mode='REFRESH' if legacy else c.get('mode')
     if (code not in SOURCES or c.get('format') not in (FORMAT,'source-canary/v1') or mode!=expected_mode or mode not in ('REFRESH','DISCOVERY')
-            or (mode=='REFRESH' and value.get('seeds')) or (mode=='DISCOVERY' and (entries or not value.get('seeds'))) or c.get('database')!=TARGET
+            or (mode=='REFRESH' and value.get('seeds')) or (mode=='DISCOVERY' and (entries or not value.get('seeds'))) or not same_database(c.get('database'))
             or type(c.get('supplier_enabled')) is not bool
             or type(c.get('supplier_id')) is not int or c['supplier_id']<1
             or not (1 if mode=='REFRESH' else 0)<=len(entries)<=c['max_products'] or c.get('selected')!=len(entries)

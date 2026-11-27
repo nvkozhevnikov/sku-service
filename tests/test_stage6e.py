@@ -158,7 +158,8 @@ def test_change_export_between_runs_requires_two_run_ids():
 @pytest.mark.parametrize("path",["/data-quality","/properties","/rules","/sterbrust-preview","/parser-inspector"])
 def test_stage6e_operator_pages_are_russian_and_available(path):
     client,_=make_client(); response=client.get(path)
-    assert response.status_code==200 and "Универсальный поставщик" in response.text
+    # Panel brand since d5fe127 (2026-11-17): "Рабочая панель".
+    assert response.status_code==200 and "Рабочая панель" in response.text
 
 
 def test_product_exports_are_authenticated_and_filter_preserving():

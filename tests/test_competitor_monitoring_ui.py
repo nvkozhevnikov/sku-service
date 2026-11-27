@@ -36,7 +36,8 @@ def service(data=None,fail=False):return MonitoringService(Repo(data,fail),clock
 
 def test_native_tab_navigation_and_no_iframe():
     with client(service()) as c:
-        assert 'Мониторинг конкурентов' in c.get('/').text
+        # Home is a workspace grid since d5fe127: the monitoring tile links natively.
+        assert 'href="/competitor-monitoring"' in c.get('/').text
         text=c.get('/competitor-monitoring').text
         assert '<iframe' not in text and 'AUTO FIXTURE' in text and 'Цена снизилась' in text
         for tab in ('overview','changes','prices','promotions','assortment','sources'):assert c.get('/competitor-monitoring/'+tab).status_code==200

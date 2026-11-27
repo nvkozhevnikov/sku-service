@@ -73,6 +73,8 @@ def test_pending_start_reservation_blocks_cli_and_second_UI(tmp_path):
     assert s.run('CLI_MANUAL')['status']=='SKIP_ALREADY_RUNNING'
     assert not (tmp_path/'fixture-runs.json').exists()
 
+@pytest.mark.skipif(os.name != 'nt' and not Path('/proc/self/stat').exists(),
+                    reason='worker_dispatch.process_identity reads Win32 or Linux /proc (not macOS)')
 def test_actual_worker_disappearance_is_orphan_not_UI_failure(tmp_path):
     s=fixture_service(tmp_path);s.submit('OPERATOR_UI',['metalmaster'],1)
     wait_for(lambda:load(tmp_path/'fixture-entered.json'));active=s.view()['active'];identity=active['worker_identity']
@@ -84,10 +86,11 @@ def test_actual_worker_disappearance_is_orphan_not_UI_failure(tmp_path):
     assert s.submit('OPERATOR_UI')['status']=='START_BLOCKED_ORPHAN'
     assert len(json.loads((tmp_path/'fixture-runs.json').read_text()))==1
 
+@pytest.mark.skipif(os.name != 'nt', reason='real Windows UI/browser/worker process contract')
 def test_real_windows_ui_restart_browser_close_and_duplicate_contract(tmp_path):
     """Actual UI, browser and worker OS processes; production DB/network untouched."""
     import urllib.request,urllib.error
-    from playwright.sync_api import sync_playwright
+    sync_playwright = pytest.importorskip('playwright.sync_api').sync_playwright
     s=fixture_service(tmp_path)
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     base=f'http://127.0.0.1:{port}'

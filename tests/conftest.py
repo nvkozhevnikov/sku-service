@@ -43,6 +43,22 @@ def pytest_make_collect_report(collector):
     return report
 
 
+LIVE11_APPROVED_MATRIX = ROOT / "tests" / "fixtures" / "live11_approval_matrix_20261022.csv"
+
+
+@pytest.fixture(autouse=True)
+def _live11_approved_matrix(monkeypatch):
+    """LIVE11 batch tests run on the approved matrix bytes that MATRIX_SHA pins.
+
+    config/live11_approval_matrix.csv was re-signed on 2026-11-05 for the
+    commercial continuation; the frozen LIVE11 batch keeps the 2026-10-22
+    approval. Whether production LIVE11 should follow is the owner's call
+    (see test_review_fixes_20261126.test_live11_matrix_is_approved).
+    """
+    from universal_supplier.control_plane import source_batch
+    monkeypatch.setattr(source_batch, "MATRIX", LIVE11_APPROVED_MATRIX)
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_setup(item):
     try:
@@ -52,12 +68,27 @@ def pytest_runtest_setup(item):
         raise
 
 
+# Seal/provenance gates of the LTT/USS checkpoints assert "<NAME>_MISSING" when
+# their pinned evidence is absent. Only when that whole local evidence root is
+# missing (clean clone, CI) is this a skip; with the evidence present the gate
+# runs and fails as written.
+LTT_USS_EVIDENCE = ROOT / "reports" / "LTT_USS_INTEGRATION_2026-10-13"
+_MISSING_GATE = re.compile(r"[A-Z0-9_]+_MISSING")
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item):
     try:
         return (yield)
     except FileNotFoundError as error:
         _skip_for_missing_evidence(error)
+        raise
+    except AssertionError as error:
+        text = str(error)
+        gate = _MISSING_GATE.fullmatch(text) or re.search(r"Actual message: '([A-Z0-9_]+_MISSING)'", text)
+        if gate and not LTT_USS_EVIDENCE.exists():
+            raise pytest.skip.Exception(f"local evidence not in this checkout (git-ignored/uncommitted): "
+                                        f"{_display(LTT_USS_EVIDENCE)} ({error})", _use_item_location=True) from None
         raise
 
 

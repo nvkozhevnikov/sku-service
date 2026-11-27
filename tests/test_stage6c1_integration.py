@@ -152,7 +152,8 @@ def test_partner_job_persists_actual_policy_and_suppresses_deactivation_on_deadl
     def fake_crawl(*, baseline, rate_policy):
         captured["policy"] = rate_policy
         return SimpleNamespace(
-            cards=(), finished_at="2026-09-15T00:00:00+00:00",
+            # started_at/rows: fields CrawlResult gained for the per-phase timings.
+            cards=(), captures=(), started_at="2026-09-15T00:00:00+00:00", rows=(), finished_at="2026-09-15T00:00:00+00:00",
             discovered_urls=("https://partner.invalid/1",),
             errors=(SimpleNamespace(
                 url="https://partner.invalid/", error_type="MAX_RUN_DURATION_EXCEEDED",

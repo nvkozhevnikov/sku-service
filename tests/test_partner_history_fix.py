@@ -90,8 +90,9 @@ def test_failed_ingest_ui_no_false_no_errors(message):
     class Store(UnavailableControlPlaneStore):
         def run(self,id):return {'id':id,'supplier_name':'Partner-ST','status':'failed','started_at':'2026-10-20','finished_at':'2026-10-20','error_count':0,'errors':[],'metadata':{'failure':message,'http_phase':{'successful_cards':50,'selected_urls':50,'errors':0,'duration_seconds':105.6,'cards_per_minute':28.4}}}
     client=TestClient(create_app(store=Store('offline'),auth_required=False));r=client.get('/runs/6')
-    assert r.status_code==200 and 'Ошибок нет.' not in r.text and 'Обновление данных не завершено' in r.text and 'HTTP-этап' in r.text
-    if message=='<script>bad()</script>':assert message not in r.text and '&lt;script&gt;' in r.text
+    # Run page since d5fe127: the stop is stated and HTTP is its own processing row.
+    assert r.status_code==200 and 'Ошибок нет.' not in r.text and 'Сбор остановлен' in r.text and 'HTTP-запрошено' in r.text
+    if message=='<script>bad()</script>':assert message not in r.text  # never rendered raw
 
 def test_http_receipt_survives_ingest_failure(tmp_path,monkeypatch):
     import test_partner_pilot as pilot

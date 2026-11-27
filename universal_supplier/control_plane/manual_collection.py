@@ -186,7 +186,7 @@ class ManualRequest:
         return snapshot
 
     def seal(self, snapshot, cursor):
-        from .source_canary import TARGET
+        from .source_canary import TARGET, same_database
         from .source_runtime import engine_fingerprint
         revision = release_revision()
         cursor.execute('SELECT id,catalog_product_id FROM source_products WHERE catalog_product_id IS NOT NULL ORDER BY id')
@@ -203,11 +203,11 @@ class ManualRequest:
 
 
 def authenticated_marker(snapshot,key):
-    from .source_canary import TARGET
+    from .source_canary import TARGET, same_database
     marker=deepcopy(snapshot.get('manual_collection') or {})
     signed=marker.pop('signature', '')
     require(marker.get('format')==KIND and hmac.compare_digest(signed,signature(marker,key)), 'Подтверждение запуска повреждено')
-    require(marker.get('target')==TARGET and marker.get('matching_apply') is False,'Неверная база или режим сопоставления')
+    require(same_database(marker.get('target')) and marker.get('matching_apply') is False,'Неверная база или режим сопоставления')
     plain={k:v for k,v in snapshot.items() if k!='manual_collection'}
     require(digest(plain)==marker.get('snapshot_sha256'),'Параметры запуска изменились')
     return marker
