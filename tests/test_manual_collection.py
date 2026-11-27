@@ -41,6 +41,7 @@ class DB:
                 return (44,)
             def fetchall(self):
                 if 'catalog_product_id IS NOT NULL' in self.sql:return [(900,800)]
+                if 'SELECT DISTINCT address.url' in self.sql:return []
                 if 'WITH known AS' in self.sql:
                     path={'beka_mak':'/product/test-{i}/','beka_mak_tr':'/urun/model-{i}/en',
                           'vekprom':'/catalog/test/model-{i}/','ivstankomaster':'/item/test-{i}/'}.get(db.code,'/catalog/test-{i}/')
@@ -280,6 +281,10 @@ def test_parallel_page_signs_a_separate_job_for_every_supported_supplier(tmp_pat
         assert options['manual_request'].duration_hours==4
         assert f'/runs?job_id={300+sid}' in result.text
         assert result.text.count(f'data-collection-progress="/api/jobs/{300+sid}/progress"')==1
+    requests.clear();launches.clear()
+    search=c.post(endpoint,data={**form,'collection_mode':'DISCOVERY'})
+    assert search.status_code==200 and len(launches)==len(RUNTIME_SOURCES)
+    assert all(options['source_mode']=='DISCOVERY' for _,options in requests)
 
 
 def test_parallel_form_requires_administrator(tmp_path,monkeypatch):
@@ -487,5 +492,25 @@ def test_ivstankomaster_one_click_freezes_full_catalog_mode():
     assert snapshot['source_input']['mode']=='DISCOVERY'
     assert snapshot['source_input']['seeds']==['https://ivstankomaster.ru/category']
     assert snapshot['source_input']['entries']==[]
+    assert snapshot['source_input']['discovery_known_urls']==[]
     assert snapshot['source_input']['canary']['max_products']==50
     assert verify(snapshot,KEY)['matching_apply'] is False
+
+
+@pytest.mark.parametrize('code', RUNTIME_SOURCES)
+def test_manual_new_search_signs_source_specific_catalog_scope(code):
+    from universal_supplier.control_plane.source_discovery import root_urls
+    db=DB(code)
+    minimum=20 if code=='intervesp' else 2
+    request=ManualRequest(AuthUser(1,'qa','QA','ADMIN'),KEY,str(minimum),str(minimum+1),0,'DISCOVERY')
+    result=db.queue().enqueue(1,trigger_type='manual',crawl_type='full',source_mode='DISCOVERY',
+                              source_limit=2,manual_request=request)
+    assert result.enqueued
+    snapshot=db.snapshots[0]
+    value=snapshot['source_input']
+    assert value['seeds']==root_urls(code) and value['discovery_known_urls']==[]
+    assert value['entries']==[] and value['canary']['max_products']==2
+    assert verify(snapshot,KEY)['matching_apply'] is False
+    value['discovery_known_urls'].append('https://invalid.test/item/')
+    with pytest.raises(PermissionError):
+        verify(snapshot,KEY)

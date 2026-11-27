@@ -21,6 +21,9 @@
 <section class="panel"{% if item.status=='running' and not item.manual_job_expired %} data-rendered-running{% endif %}>
   <h3>Ход сбора</h3>
   {{ progress_meter(progress, '/api/runs/' ~ item.id ~ '/progress', durable='source_runtime' in meta) }}
+  {% if rt.get('new_product_search') and rt.get('discovery_complete') and item.status=='succeeded' and rt.get('found')==0 %}
+    <p>В проверенных страницах каталога новых адресов карточек не найдено.</p>
+  {% endif %}
   {% if stop_reason or item.status=='failed' %}
     <p>{{ job_message(stop_reason or meta.get('failure')) or 'Сбор остановлен. Подробности доступны администратору.' }}</p>
   {% elif item.status=='partial' and rt.get('remaining')==0 and rt.get('discovery_remaining',0)==0 %}

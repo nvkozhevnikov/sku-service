@@ -119,7 +119,7 @@ class PostgresJobQueue:
                 WHERE status='queued' AND settings_snapshot->'automation'->>'approval_sha256'=%s""",(sha,))
         for supplier_id,job_id in running:self.stop_source(supplier_id,job_id)
 
-    def _canary_preview(self,connection,cursor,supplier_id,supplier,limit,mode='REFRESH'):
+    def _canary_preview(self,connection,cursor,supplier_id,supplier,limit,mode='REFRESH',*,discovery_new_only=False):
         from .source_canary import limit_value,validate_config,validate_connection,build_preview
         limit_value(limit);validate_config(self.config);validate_connection(connection)
         from .automation_execution import ACTIVE
@@ -128,6 +128,25 @@ class PostgresJobQueue:
             if mode!='REFRESH' or limit!=ACTIVE.value['suppliers'][supplier[0]]['limits']['REFRESH']:
                 raise PermissionError('COMMERCIAL_REFRESH_LIMIT_CHANGED')
             return preview(self.config,supplier_id,supplier)
+        if discovery_new_only:
+            from .source_jobs import validate_url
+            cursor.execute("""SELECT DISTINCT address.url COLLATE "C"
+                FROM source_products p
+                CROSS JOIN LATERAL (VALUES (p.source_url), (p.canonical_url)) AS address(url)
+                WHERE p.supplier_id=%s AND p.active AND p.external_id_is_stable AND address.url IS NOT NULL
+                ORDER BY 1 LIMIT 200001""", (supplier_id,))
+            known_rows=cursor.fetchall()
+            if len(known_rows)>200000:
+                raise ValueError('Слишком много сохранённых адресов для одного поиска')
+            known_urls=[]
+            for url, in known_rows:
+                try:
+                    validate_url(supplier[0],url)
+                except ValueError:
+                    continue
+                known_urls.append(url)
+            return build_preview(supplier_id,supplier,[],self.config,limit,mode,
+                                 discovery_known_urls=known_urls)
         cursor.execute('''WITH known AS (
             SELECT DISTINCT ON (coalesce(canonical_url,source_url)) id,external_id,coalesce(canonical_url,source_url) AS url
             FROM source_products WHERE supplier_id=%s AND active AND external_id_is_stable

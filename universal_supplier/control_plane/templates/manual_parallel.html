@@ -61,6 +61,12 @@
 <form method="post" action="/suppliers/manual-parallel" class="panel">
   <h3>Запустить новые сборы</h3>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Режим сбора
+    <select name="collection_mode">
+      <option value="">Обычный сбор</option>
+      <option value="DISCOVERY">Найти новые товары у выбранных поставщиков</option>
+    </select>
+  </label>
   <label>Общий лимит одновременных сборов
     <select name="max_parallel_suppliers">
       {% for count in parallel_options %}

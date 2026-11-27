@@ -106,7 +106,6 @@ class ManualRequest:
         from .source_jobs import RUNTIME_SOURCES
         from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
         require(code in RUNTIME_SOURCES and code == adapter, 'Сбор для этого источника не поддерживается')
-        require(self.mode=='REFRESH' or code==IVSTANKOMASTER, 'Поиск по всему каталогу доступен только для Ивстанкомастер')
         cfg=settings_for({'rate_settings':old_rate,'crawl_settings':crawl})
         require(cfg['revision']==self.revision, 'Настройки изменились. Обновите страницу')
         changed=validate_settings({'delay_min_seconds':self.minimum,'delay_max_seconds':self.maximum},cfg)
@@ -132,7 +131,8 @@ class ManualRequest:
         self.policy={host_key(base):{code:policy_digest(code,host_key(base),DomainRatePolicy.from_mapping(rate),modified['host_policy_approval']['reference'])}}
         token=MANUAL_POLICIES.set(self.policy)
         try:
-            return queue._canary_preview(connection,cursor,sid,(code,adapter,base,is_enabled,modified,rate),limit,self.mode)
+            return queue._canary_preview(connection,cursor,sid,(code,adapter,base,is_enabled,modified,rate),
+                                         limit,self.mode,discovery_new_only=self.mode=='DISCOVERY')
         finally:MANUAL_POLICIES.reset(token)
 
     def resume(self, config, sid, supplier, parent_id, previous):
@@ -259,7 +259,6 @@ def verify(snapshot, key, *, now=None):
     from .source_runtime import engine_fingerprint
     from .source_jobs import RUNTIME_SOURCES
     from .source_resume import digest as source_input_digest
-    from universal_supplier.adapters.ivstankomaster import CODE as IVSTANKOMASTER
     marker=authenticated_marker(snapshot,key)
     require(marker.get('engine')==engine_fingerprint() and marker.get('head')==release_revision(),'Код изменился. Создайте новый запуск')
     clock=now or datetime.now(timezone.utc)
@@ -284,7 +283,7 @@ def verify(snapshot, key, *, now=None):
         require(marker.get('actor_role') == 'ADMIN' and not (resume or {}).get('retry_network_urls'),
                 'Параллельный сбор не подтверждён')
         parallel_limit(marker['max_parallel_suppliers'])
-    require(code in RUNTIME_SOURCES and (mode=='REFRESH' or (code==IVSTANKOMASTER and mode=='DISCOVERY'))
+    require(code in RUNTIME_SOURCES and mode in ('REFRESH','DISCOVERY')
             and snapshot['source_input']['supplier_code']==code and snapshot['adapter_name']==code
             and type(canary['max_products']) is int and 1<=canary['max_products']<=100000,'Область запуска изменилась')
     host=snapshot['domain'];rate=DomainRatePolicy.from_mapping(snapshot['rate_settings'])

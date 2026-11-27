@@ -59,9 +59,12 @@ def verify_resume(code,owner,sha,original,config,*,manual_isolation=None,require
         from .source_discovery import validate_node
         for url in discovery['frontier']+discovery['visited']:
             validate_node(code,url)
-        if discovery['frontier']:return
+        new_search='discovery_known_urls' in original
+        if discovery['frontier'] and not (new_search and (folder/'manifest.json').is_file()):return
         entries=[p for rec in discovery['discovery_receipts'].values() for p in rec.get('products',[])]
         entries=list({e['url']:e for e in entries}.values())
+        if new_search:
+            entries=sorted(entries,key=lambda entry:entry['url'])[:original['canary']['max_products']]
     else:entries=original['entries']
     receipts=[]
     approved_receipts={}

@@ -586,12 +586,11 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         for row in store.suppliers():
             if row['code'] not in RUNTIME_SOURCES:
                 continue
-            discovery = row['code'] == discovery_source
             available = min(100000, row.get('products') or 0)
             busy = row.get('job_status') in ('queued', 'running') or row.get('has_queued_job') or row.get('has_running_job')
             sources.append(dict(id=row['id'], name=row.get('name') or row['code'],
-                                mode='DISCOVERY' if discovery else 'REFRESH', busy=bool(busy),
-                                limit=(available or 20) if discovery else available,
+                                mode='DISCOVERY' if row['code']==discovery_source or not available else 'REFRESH',
+                                busy=bool(busy),limit=available or 20,
                                 settings=manual_launch_settings(row['code'], settings_for(row))))
         return sources
 
@@ -662,6 +661,9 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
             if maximum > len(sources):
                 raise ValueError('Число одновременных сборов превышает число доступных поставщиков')
             hours = optional_int(raw.get('duration_hours'), 'Лимит времени')
+            group_mode=raw.get('collection_mode','')
+            if group_mode not in ('','DISCOVERY'):
+                raise ValueError('Выберите режим сбора')
             for field,row in sources.items():
                 if field not in selected:
                     continue
@@ -671,9 +673,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 revision = optional_int(raw.get(f'revision_{sid}'), 'Версия настроек')
                 if revision != cfg['revision'] or not row['limit']:
                     raise ValueError('Список или настройки изменились. Откройте форму заново')
+                mode=group_mode or row['mode']
                 approval = ManualRequest(user, key, str(cfg['delay_min_seconds']), str(cfg['delay_max_seconds']),
-                    revision, row['mode'], hours, max_parallel_suppliers=maximum)
-                approval.validate(sid, count, 'manual', row['mode'])
+                    revision, mode, hours, max_parallel_suppliers=maximum)
+                approval.validate(sid, count, 'manual', mode)
                 planned.append((row, count, approval))
         except (ValueError, PermissionError) as error:
             return page_error(request, str(error))

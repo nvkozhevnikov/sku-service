@@ -125,6 +125,12 @@ def checked_input(value,code,*,previous_engine=None):
     if value['mode']=='REFRESH' and not entries:raise ValueError('REFRESH_HAS_NO_KNOWN_URLS')
     for u in value.get('seeds',[]):validate_node(code,u)
     if value['mode']=='DISCOVERY' and not value.get('seeds'):raise ValueError('DISCOVERY_SEEDS_REQUIRED')
+    if 'discovery_known_urls' in value:
+        known=value['discovery_known_urls']
+        if (value['mode']!='DISCOVERY' or not isinstance(known,list) or len(known)>200000
+                or any(type(url) is not str or not url or len(url)>4096 for url in known)
+                or known!=sorted(set(known))):
+            raise ValueError('DISCOVERY_KNOWN_URLS_INVALID')
     if 'canary' in value:
         from .source_canary import validate_input
         validate_input(value)
@@ -192,6 +198,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         original=checked_input(original,code)
         if original['rate_policy']!=rate.snapshot():raise ValueError('SOURCE_POLICY_SNAPSHOT_CHANGED')
     canary=original.get('canary')
+    new_discovery='discovery_known_urls' in original
+    if new_discovery and not (manual and canary):
+        raise PermissionError('MANUAL_DISCOVERY_AUTHORIZATION_REQUIRED')
     if original['mode']=='REFRESH' and len(original['entries'])>limit:raise ValueError('SNAPSHOT_EXCEEDS_APPROVED_TOTAL_CAP')
     gate_size=(canary or {}).get('safety_gate_size',settings.get('safety_gate_size',5))
     if type(gate_size) is not int or not 1<=gate_size<=20:raise ValueError('SAFETY_GATE_SIZE')
@@ -298,7 +307,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             return robot is not None and robot.can_fetch(AGENT,url)
         robots_url='https://'+HOSTS[code]+'/robots.txt'
         dispatch_budget=None
-        if canary and original['mode']=='REFRESH':
+        if canary and (original['mode']=='REFRESH' or new_discovery):
             from .source_canary import DispatchBudget
             isolate_repeats=False
             if approved and approved.get('continuation',{}).get('operator_extension'):
@@ -309,6 +318,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if retry_network is not None:dispatch_budget.attempts=1
         frozen_urls={entry['url'] for entry in original['entries']}
         wire_scope = {}
+        discovery_products_selected=False
         if manual and canary and code in ('ltt_msk', 'ltt_sib', 'ltt_yug') and original['mode']=='REFRESH':
             for logical in frozen_urls:
                 wire = public_transport_url(logical)
@@ -322,8 +332,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 raise ValueError('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
             outside_retry=retry_network is not None and url not in (robots_url,retry_target)
             outside_refresh=(canary or scope_policy_active) and original['mode']=='REFRESH' and url!=robots_url and url not in frozen_urls
+            outside_discovery=(new_discovery and discovery_products_selected
+                               and url!=robots_url and url not in frozen_urls)
             already_saved=manual and cp.state['terminal'].get(url,{}).get('state')=='COMMITTED'
-            if outside_retry or outside_refresh or already_saved:
+            if outside_retry or outside_refresh or outside_discovery or already_saved:
                 if manual:
                     from universal_supplier.url_safety import validate_public_http_url
                     p=urlsplit(url)
@@ -344,8 +356,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     else:raise FrozenScopeRefusal(url)
                 if fetcher is not None:fetcher.stop('CANARY_URL_OUTSIDE_FROZEN_BATCH')
                 raise ValueError('CANARY_URL_OUTSIDE_FROZEN_BATCH')
-            p=urlsplit(url)
             if url==robots_url:return url
+            if new_discovery and not discovery_products_selected:return validate_node(code,url)
             try:return validate_url(code,url)
             except ValueError:return validate_node(code,url)
         isolate_timeouts=False
@@ -359,7 +371,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             manual_product_attempts=manual,manual_robots_attempts=manual_robots_attempts)
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
         if dispatch_budget:
-            fetcher.request_start_guard=lambda url:dispatch_budget(wire_scope.get(url,url))
+            def guard_dispatch(url):
+                if not new_discovery or url==robots_url or discovery_products_selected:
+                    dispatch_budget(wire_scope.get(url,url))
+            fetcher.request_start_guard=guard_dispatch
         capture_archive_lock = threading.Lock()
         def archive(outcome):
             if outcome.response is None:return
@@ -517,6 +532,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if mode!='RESUME':discovery.add_urls(original['seeds'])
             if discovery.state['inflight']:raise ValueError('UNCERTAIN_DISCOVERY_REQUIRES_RECONCILIATION')
             discovered=lambda:{p['url']:p for r in discovery.state['discovery_receipts'].values() for p in r.get('products',[])}
+            excluded_urls=set()
+            if new_discovery:
+                excluded_urls.update(public_transport_url(url) for url in original['discovery_known_urls'])
+                excluded_urls.update(public_transport_url(url) for url in discovered())
             if discovery.state['frontier'] and len(discovered())<limit:
                 robots();nodes=0
                 while discovery.state['frontier'] and nodes<pages and len(discovered())<limit and not fetcher.aborted():
@@ -535,6 +554,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     network_backoff=0
                     rec=records[node];body=read_body(rec)
                     children,products=decode_node(code,node,body)
+                    if new_discovery:
+                        candidates=[]
+                        for candidate in products:
+                            wire=public_transport_url(candidate['url'])
+                            if wire not in excluded_urls:
+                                excluded_urls.add(wire)
+                                candidates.append(candidate)
+                        products=candidates
                     # Source parser validates every detail candidate before SQL.
                     discovery.complete_discovery_node(node,children,evidence_sha256=rec['evidence_sha256'],products=products)
                     consecutive_card_errors=0
@@ -547,6 +574,11 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 candidates={p['url']:p for r in discovery.state['discovery_receipts'].values() for p in r.get('products',[])}
                 entries=[candidates[u] for u in sorted(candidates)[:limit]]
                 frozen_json(folder/'manifest.json',{'format':'source-discovered-manifest/v1','supplier_code':code,'input_sha256':sha,'entries':entries,'traversal_finished':not bool(discovery.state['frontier']),'external_catalog_completeness':'NOT_PROVEN'})
+                if new_discovery:
+                    frozen_urls={entry['url'] for entry in entries}
+                    wire_scope={public_transport_url(url):url for url in frozen_urls}
+                    dispatch_budget.select_discovered_products(frozen_urls)
+                    discovery_products_selected=True
         elif mode!='RESUME':
             frozen_json(folder/'manifest.json',{'format':'source-refresh-manifest/v1','supplier_code':code,'input_sha256':sha,'entries':entries})
         # Persist the entire frontier once. Large manifests are consumed in
@@ -846,6 +878,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         from .automation_execution import stop_reason as global_stop_reason
         result['stop_scope']=failure_scope(termination,{'resume_uncertain':result['resume_uncertain'],'resume_available':result['resume_available']}) if termination else None
         result['global_stop_reason']=global_stop_reason()
+        if new_discovery:result['new_product_search']=True
         if result['global_stop_reason']:result['stop_scope']='system'
         if canary:result['canary']={**canary,'product_requests':list(dispatch_budget.products) if dispatch_budget else [],'robots_requests':dispatch_budget.robots if dispatch_budget else 0}
         write_checkpoint(run_folder/'result.json',result,durable=True)
