@@ -25,10 +25,12 @@ def money_display(value,currency=None):
     return number+' '+{'RUB':'₽','USD':'$','EUR':'€','CNY':'¥'}.get(currency,currency if currency and currency!='UNKNOWN' else '(валюта не указана)')
 
 class MonitoringRepository:
-    def __init__(self,config):self.config=Path(config)
+    def __init__(self,config=None,*,dsn=None):
+        if (config is None)==(dsn is None):raise ValueError('Pass a config file or a DSN')
+        self.config=Path(config) if config is not None else None;self.dsn=dsn
     def load(self):
         try:
-            store=Store(json.loads(self.config.read_text(encoding='utf-8'))['dsn']);store.conn.read_only=True
+            store=Store(self.dsn or json.loads(self.config.read_text(encoding='utf-8'))['dsn']);store.conn.read_only=True
             try:
                 with store.conn.transaction(),store.conn.cursor() as c:
                     c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')

@@ -59,6 +59,10 @@ services:
       # Docker gateway the published port arrives on (e.g. 172.19.0.1), so url_for
       # builds https:// asset URLs. Default keeps uvicorn's loopback-only trust.
       FORWARDED_ALLOW_IPS: ${WEB_FORWARDED_ALLOW_IPS:-127.0.0.1,::1}
+      # Read-only competitor monitoring (server_app.py). Role competitor_runtime:
+      # SELECT on schema competitor only; see docs/SERVER_COMPETITOR_MONITORING.md.
+      STERBRUST_COMPETITOR_SERVER: ${STERBRUST_COMPETITOR_SERVER:-NO}
+      COMPETITOR_DB_PASSWORD: ${COMPETITOR_DB_PASSWORD:-}
       COMMERCIAL_MANUAL_MODE: "SERVER"
       COMMERCIAL_QA_UI_MANIFEST_PATH: /app/server-manifests/bounded_candidate_manifest.json
       COMMERCIAL_QA_FULL_MANIFEST_PATH: /app/server-manifests/full_candidate_manifest.json
@@ -74,7 +78,7 @@ services:
       FINAL_RC_MANIFEST_SHA256: ${FINAL_RC_MANIFEST_SHA256:?set frozen release SHA}
     depends_on:
       postgres: {condition: service_healthy}
-    command: ["python", "-m", "uvicorn", "universal_supplier.control_plane.web:app", "--host", "0.0.0.0", "--port", "8080"]
+    command: ["python", "-m", "uvicorn", "universal_supplier.control_plane.server_app:app", "--host", "0.0.0.0", "--port", "8080"]
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-58097}:8080"
     volumes:

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
@@ -16,6 +17,18 @@ PORT = '55454'
 
 def json_value(value):
     return json.loads(json.dumps(value,default=str,ensure_ascii=False))
+
+def server_identity():
+    """Compose server (docker-compose.server.yml): the target comes from the server
+    environment, not the historical Windows defaults. Every role check still applies."""
+    if os.environ.get('STERBRUST_COMPETITOR_SERVER') != 'YES':
+        return None
+    system = os.environ.get('DB_SYSTEM_IDENTIFIER', '')
+    name, host, port = (os.environ.get(k, '') for k in ('DB_NAME', 'DB_HOST', 'DB_PORT'))
+    if not re.fullmatch(r'[0-9]{15,20}', system) or not name or not host or not re.fullmatch(r'[0-9]{1,5}', port or ''):
+        raise ValueError('Competitor server identity requires DB_NAME, DB_HOST, DB_PORT and DB_SYSTEM_IDENTIFIER')
+    return {'dbname': name, 'host': host, 'port': port, 'user': 'competitor_runtime', 'system': system}
+
 
 class Store:
     def __init__(self, dsn=None):
@@ -42,7 +55,10 @@ class Store:
         expected = {'dbname':'sterbrust_unified_rc_20261019', 'host':'127.0.0.1',
                     'port':'55461', 'user':'app_competitor'}
         main = os.environ.get('STERBRUST_COMPETITOR_MAIN') == 'YES'
-        if main:
+        server = server_identity() if main else None
+        if server:
+            expected = {k: server[k] for k in ('dbname', 'host', 'port', 'user')}
+        elif main:
             expected.update(dbname='rc_verify_vi_20261019', user='competitor_runtime')
             if os.environ.get('STERBRUST_COMPETITOR_REHEARSAL') == 'YES':
                 expected['dbname']='ci_restore_target_20261028'
@@ -54,7 +70,15 @@ class Store:
         try:
             with conn.cursor() as c:
                 c.execute('SELECT current_database() db,current_user role,host(inet_server_addr()) host,inet_server_port() port')
-                if c.fetchone() != {'db':expected['dbname'],'role':expected['user'], 'host':expected['host'],'port':int(expected['port'])}:
+                actual = c.fetchone()
+                if server:
+                    # A compose service name resolves to a container address; the
+                    # cluster identifier below pins the server instead.
+                    actual.pop('host')
+                    wanted = {'db':expected['dbname'],'role':expected['user'],'port':int(expected['port'])}
+                else:
+                    wanted = {'db':expected['dbname'],'role':expected['user'], 'host':expected['host'],'port':int(expected['port'])}
+                if actual != wanted:
                     raise ValueError('Actual unified database identity mismatch')
                 c.execute("SHOW search_path")
                 if c.fetchone()['search_path'] != 'competitor, pg_catalog':
@@ -65,7 +89,7 @@ class Store:
                 if main:
                     c.execute("SELECT system_identifier::text system FROM pg_control_system()")
                     from universal_supplier.partner_pilot import SYSTEM
-                    if c.fetchone()['system'] != SYSTEM:
+                    if c.fetchone()['system'] != (server['system'] if server else SYSTEM):
                         raise ValueError('Main competitor cluster identity mismatch')
                     c.execute("SELECT 1 FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='competitor' AND t.relkind IN ('r','p') AND has_table_privilege(current_user,t.oid,'DELETE,TRUNCATE,REFERENCES,TRIGGER') LIMIT 1")
                     if c.fetchone():
