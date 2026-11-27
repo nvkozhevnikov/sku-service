@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 import logging
 import os
 import json
@@ -708,7 +709,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                 row = candidates[field]
                 if optional_int(value, 'Исходное задание') != row['parent_job_id']:
                     raise ValueError('Исходное задание изменилось. Обновите страницу.')
-                approval = ManualRequest(user, key, '', '', -1, 'RESUME', max_parallel_suppliers=maximum)
+                hours=optional_int(raw.get(f"hours_{row['id']}"), 'Лимит времени')
+                if hours is None:hours=row['time']['hours']
+                approval = ManualRequest(user, key, '', '', -1, 'RESUME', duration_hours=hours,
+                                         max_parallel_suppliers=maximum)
                 approval.validate(row['id'], None, 'manual', 'RESUME')
                 planned.append((row, None, approval))
         except (ValueError, PermissionError) as error:
@@ -1057,7 +1061,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):
-        from .manual_collection import ManualRequest, TERMINAL, enabled as manual_enabled
+        from .manual_collection import ManualRequest, TERMINAL, enabled as manual_enabled, resume_time_suggestion
         from .presentation import MANUAL_RESUME_BLOCKERS, collection_issue_message
         from .source_runtime import runtime_enabled
         from .transport_diagnostics import safe_message
@@ -1078,6 +1082,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         runtime = metadata.get('source_runtime') or {}
         manual_resume_available = None
         manual_resume_blocker = None
+        manual_resume_time = None
         if (parent_id and item.get('latest_supplier_job_id', parent_id) == parent_id
                 and item['status'] in TERMINAL and user.role in MUTATING_ROLES
                 and not getattr(type(store), 'read_only', False) and manual_enabled() and runtime_enabled()):
@@ -1095,6 +1100,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                         code, 'Не удалось подтвердить сохранённую очередь. Обновите страницу или обратитесь к администратору.')
                 else:
                     manual_resume_available = 'retry_network' if approval.retry_network else 'continue'
+                    if manual_resume_available=='continue' and user.role=='ADMIN':
+                        started,finished=item.get('started_at'),item.get('finished_at')
+                        elapsed=(finished-started).total_seconds() if isinstance(started,datetime) and isinstance(finished,datetime) else None
+                        manual_resume_time=resume_time_suggestion(runtime,elapsed)
         receipts = runtime.get('quarantined') or []
         progress = run_collection_progress(metadata)
         issues = []
@@ -1107,7 +1116,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         return templates.TemplateResponse(request, "run_detail.html",
             context(request, item=item, active="runs", collection_progress=progress,
                     collection_issues=issues, collection_issues_total=len(receipts),
-                    manual_resume_available=manual_resume_available, manual_resume_blocker=manual_resume_blocker))
+                    manual_resume_available=manual_resume_available, manual_resume_blocker=manual_resume_blocker,
+                    manual_resume_time=manual_resume_time))
 
     def progress_response(item):
         if item is None:raise HTTPException(404, "Запуск не найден")

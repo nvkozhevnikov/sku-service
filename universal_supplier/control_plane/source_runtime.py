@@ -145,7 +145,7 @@ def read_input(code,owner,sha,*,previous_engine=None):
 def runtime_enabled():return os.environ.get('STERBRUST_SOURCE_RUNTIME_ENABLED')=='YES'
 
 def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None):
-    from .manual_collection import running_manually
+    from .manual_collection import resume_duration_override, running_manually
     manual=running_manually(job)
     manual_resume=job.settings_snapshot.get('manual_resume') if manual else None
     manual_marker = job.settings_snapshot.get('manual_collection') if manual else {}
@@ -165,9 +165,12 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     if type(persist) is not bool:raise ValueError('PERSIST_SOURCE_DATA_MUST_BE_BOOLEAN')
     if persist and os.environ.get('STERBRUST_ALLOW_SOURCE_WRITES')!='YES':raise PermissionError('SOURCE_WRITES_NOT_AUTHORIZED')
     if mode=='RESUME' and not persist:raise PermissionError('RESUME_REQUIRES_SQL_READBACK')
-    limit=settings.get('max_products');pages=settings.get('max_discovery_pages',100);seconds=settings.get('max_run_duration_seconds',300)
+    limit=settings.get('max_products');pages=settings.get('max_discovery_pages',100)
+    original_seconds=settings.get('max_run_duration_seconds',300)
     if type(limit) is not int or not 1<=limit<=100000 or type(pages) is not int or not 1<=pages<=100000:raise ValueError('SOURCE_URL_BUDGET')
-    if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<seconds<=86400:raise ValueError('SOURCE_TIME_BUDGET')
+    if type(original_seconds) not in (int,float) or not math.isfinite(original_seconds) or not 0<original_seconds<=86400:raise ValueError('SOURCE_TIME_BUDGET')
+    override=resume_duration_override(job.settings_snapshot) if manual else None
+    seconds=override or original_seconds
     clock=clock or SystemClock();start=clock.monotonic();deadline=start+seconds
     approval_deadline = None
     if 'expires_at' in manual_marker:
@@ -177,7 +180,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             raise PermissionError('MANUAL_WAITING_EXPIRED')
         deadline = min(deadline, start + remaining_seconds)
     rate=compile_policy(code,'https://'+HOSTS[code],job.settings_snapshot.get('rate_settings'),approval=settings.get('host_policy_approval'))
-    if seconds>rate.max_run_duration_seconds:raise ValueError('TIME_BUDGET_EXCEEDS_HOST_PROFILE')
+    if original_seconds>rate.max_run_duration_seconds:raise ValueError('TIME_BUDGET_EXCEEDS_HOST_PROFILE')
     # A resume must use the original input AND original policy; no hidden speedup.
     owner=settings.get('resume_owner_job_id',job.id) if mode=='RESUME' else job.id
     if type(owner) is not int or owner<1:raise ValueError('RESUME_OWNER')
@@ -878,6 +881,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         from .automation_execution import stop_reason as global_stop_reason
         result['stop_scope']=failure_scope(termination,{'resume_uncertain':result['resume_uncertain'],'resume_available':result['resume_available']}) if termination else None
         result['global_stop_reason']=global_stop_reason()
+        if override is not None:result['run_duration_budget_seconds']=seconds
         if new_discovery:result['new_product_search']=True
         if result['global_stop_reason']:result['stop_scope']='system'
         if canary:result['canary']={**canary,'product_requests':list(dispatch_budget.products) if dispatch_budget else [],'robots_requests':dispatch_budget.robots if dispatch_budget else 0}

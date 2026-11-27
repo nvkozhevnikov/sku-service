@@ -39,9 +39,13 @@ def run(job_id):
         STERBRUST_RC_MATCHING_APPLY_APPROVED='NO',SCHEDULER_ENABLED='NO',
         STERBRUST_APPROVED_HOST_POLICIES=json.dumps(proof['policies']))
     job=None
-    deadline = datetime.fromisoformat(proof['expires_at'])
+    deadline = datetime.fromisoformat(proof.get('start_by',proof['expires_at']))
+    def validate_for_claim(snapshot):
+        current=validate(snapshot)
+        require(datetime.now(timezone.utc)<deadline,'MANUAL_WAITING_EXPIRED')
+        return current
     while datetime.now(timezone.utc) < deadline:
-        job=queue.claim_next(job_id=job_id,manual_validator=validate,
+        job=queue.claim_next(job_id=job_id,manual_validator=validate_for_claim,
                              manual_max_parallel=proof.get('max_parallel_suppliers'))
         if job:break
         with guarded_connect(cfg,autocommit=True) as c:

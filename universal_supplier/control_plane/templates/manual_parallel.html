@@ -39,19 +39,22 @@
   </label>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Поставщик</th><th>Последний запуск</th><th>Карточек в очереди</th></tr></thead>
+      <thead><tr><th>Поставщик</th><th>Последний запуск</th><th>Карточек в очереди</th><th>Лимит, ч</th></tr></thead>
       <tbody>
       {% for row in resume_candidates %}
       <tr>
         <td><label><input type="checkbox" name="resume_{{ row.id }}" value="{{ row.parent_job_id }}"> {{ row.name }}</label></td>
         <td><a href="/runs/{{ row.run_id }}">№{{ row.run_id }}</a></td>
         <td>{{ row.remaining if row.remaining else '—' }}</td>
+        <td><input type="number" name="hours_{{ row.id }}" value="{{ row.time.hours }}" min="1" max="24" step="1" required
+                   aria-label="Лимит времени, часов · {{ row.name }}">
+            {% if row.time.exceeds_cap %}<small>По оценке, потребуется больше 24 ч</small>{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
-  <p>Скорость и лимит времени берутся из исходного запуска каждого поставщика.</p>
+  <p>Панель рассчитывает время с запасом по оставшейся очереди. Лимит можно изменить. Скорость берётся из исходного запуска.</p>
   <button>Продолжить выбранные сборы</button>
 </form>
 {% endif %}

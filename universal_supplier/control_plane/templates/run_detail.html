@@ -32,6 +32,7 @@
   {% if rt.get('remaining') %}<p>В очереди осталось карточек: {{rt.remaining}}</p>{% endif %}
   {% if rt.get('discovery_remaining') %}<p>Осталось проверить страниц каталога: {{rt.discovery_remaining}}</p>{% endif %}
   {% if rt.get('network_retry_count') %}<p>Повторный сбор сетевых ошибок. Карточек в этой попытке: {{rt.network_retry_count}}</p>{% endif %}
+  {% if rt.get('run_duration_budget_seconds') %}<p>Лимит этого продолжения: {{(rt.run_duration_budget_seconds // 3600)|int}} ч.</p>{% endif %}
   {% if manual_resume_available %}
     <form method="post" action="/suppliers/{{item.supplier_id}}/manual-start">
       <input type="hidden" name="csrf_token" value="{{csrf_token}}">
@@ -42,6 +43,11 @@
       <button>Повторить сетевые ошибки</button>
       <p>Одна попытка для каждой карточки, которая не ответила. Уже сохранённые товары не запрашиваются.</p>
       {% else %}
+      {% if manual_resume_time %}
+      <label>Лимит времени, часов<input type="number" name="duration_hours" min="1" max="24" step="1"
+          value="{{ manual_resume_time.hours }}" required></label>
+      {% if manual_resume_time.exceeds_cap %}<p class="form-hint">По оценке, потребуется больше 24 ч.</p>{% endif %}
+      {% endif %}
       <button>Продолжить сбор</button>
       <p>Уже сохранённые карточки повторно не запрашиваются.</p>
       {% endif %}

@@ -250,6 +250,9 @@ class PostgresJobQueue:
             require(source_enabled, 'Источник выключен. Закройте ожидающее задание перед новым запуском')
             require(normalized_domain(base_url) == snapshot.get('domain'), 'Адрес источника изменился. Закройте ожидающее задание')
             approval = verify(snapshot, key)
+            if 'start_by' in approval:
+                require(utcnow() < datetime.fromisoformat(approval['start_by']),
+                        'Время ожидания запуска истекло. Закройте ожидающее задание.')
             require((approval['actor_id'], approval['actor_role'], approval['actor_sv']) ==
                     (actor.id, actor.role, actor.session_version), 'Права изменились. Закройте ожидающее задание')
 
@@ -275,7 +278,7 @@ class PostgresJobQueue:
 
     def manual_resume_candidates(self):
         """Find latest unfinished manual runs. Enqueue verifies each checkpoint."""
-        from .manual_collection import TERMINAL
+        from .manual_collection import TERMINAL, resume_time_suggestion
         from .source_jobs import RUNTIME_SOURCES
 
         with self._connect() as connection:
@@ -283,7 +286,14 @@ class PostgresJobQueue:
             with connection.transaction(), connection.cursor() as cursor:
                 cursor.execute("""
                     SELECT s.id,s.name,last_job.id,r.id,
-                           rt->'remaining',rt->'discovery_remaining',rt->'resume_available'
+                           jsonb_build_object(
+                             'remaining',rt->'remaining','discovery_remaining',rt->'discovery_remaining',
+                             'resume_available',rt->'resume_available',
+                             'approved_total_cap',rt->'approved_total_cap',
+                             'sql_committed',rt->'sql_committed',
+                             'sql_committed_this_job',rt->'sql_committed_this_job',
+                             'effective_rate_policy',rt->'effective_rate_policy'
+                           ),EXTRACT(EPOCH FROM (r.finished_at-r.started_at))::double precision
                       FROM suppliers s
                       JOIN LATERAL (
                           SELECT id,status,crawl_run_id,settings_snapshot
@@ -303,9 +313,11 @@ class PostgresJobQueue:
                      ORDER BY s.name,s.id
                 """, (list(RUNTIME_SOURCES), list(TERMINAL)))
                 return [
-                    dict(id=sid, name=name, parent_job_id=parent, run_id=run, remaining=remaining)
-                    for sid,name,parent,run,remaining,discovery,can_resume in cursor.fetchall()
-                    if any(type(value) is int and value>0 for value in (remaining,discovery)) or can_resume is True
+                    dict(id=sid, name=name, parent_job_id=parent, run_id=run, remaining=runtime['remaining'],
+                         time=resume_time_suggestion(runtime,elapsed))
+                    for sid,name,parent,run,runtime,elapsed in cursor.fetchall()
+                    if any(type(runtime[key]) is int and runtime[key]>0 for key in ('remaining','discovery_remaining'))
+                       or runtime['resume_available'] is True
                 ]
 
     def manual_resume_status(self, supplier_id, job_id, request):

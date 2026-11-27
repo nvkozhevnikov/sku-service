@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,41 @@ ROOT = Path(__file__).resolve().parents[2]
 MANUAL_EXECUTION = ContextVar('manual_collection_execution', default=None)
 TERMINAL = ('partial','failed','cancelled','stale_failed')
 INTERVESP_MIN_PAUSE = 20
+MAX_MANUAL_HOURS = 24
+
+
+def resume_time_suggestion(runtime, elapsed_seconds=None):
+    """Estimate wall time for what remains, using observed SQL saves where useful."""
+    def number(value):
+        return value if type(value) in (int, float) and math.isfinite(value) and value>0 else 0
+
+    def count(key):
+        value=runtime.get(key)
+        return value if type(value) is int and 0<value<=100000 else 0
+
+    rate=runtime.get('effective_rate_policy') or {}
+    pause=number(rate.get('min_request_interval_seconds')) + number(rate.get('jitter_max_seconds'))
+    network_overhead=min(5,number(rate.get('request_timeout_seconds')) or 5)
+    completed=count('sql_committed_this_job')
+    elapsed=number(elapsed_seconds)
+    measured=elapsed/completed if completed>=10 and elapsed else pause+network_overhead
+    remaining=count('remaining')
+    pages=count('discovery_remaining')
+    if pages and not count('sql_committed'):
+        remaining=max(remaining,count('approved_total_cap'))
+    estimate=max(1,math.ceil(1.25*(remaining*max(pause,measured,1)+pages*(pause+network_overhead))/3600))
+    return {'hours': min(estimate,MAX_MANUAL_HOURS), 'exceeds_cap': estimate>MAX_MANUAL_HOURS}
+
+
+def resume_duration_override(snapshot):
+    """Read just the signed continuation duration. The original host policy stays frozen."""
+    resume=snapshot.get('manual_resume') or {}
+    if 'duration_hours' not in resume:return None
+    hours=resume['duration_hours']
+    require((snapshot.get('crawl_settings') or {}).get('collection_mode')=='RESUME'
+            and 'retry_network_urls' not in resume and type(hours) is int and 1<=hours<=MAX_MANUAL_HOURS,
+            'Неверный лимит времени продолжения')
+    return hours*3600
 
 
 def manual_launch_settings(code, settings):
@@ -94,11 +130,12 @@ class ManualRequest:
             parallel_limit(self.max_parallel_suppliers)
         if mode!='RESUME':
             limit_value(limit)
-        elif limit is not None or self.duration_hours is not None:
-            raise ValueError('Продолжение использует сохранённые лимиты')
+        elif limit is not None:
+            raise ValueError('Продолжение использует сохранённый список карточек')
         if self.duration_hours is not None:
             require(self.actor.role=='ADMIN', 'Изменить время может только администратор')
-            if type(self.duration_hours) is not int or not 1<=self.duration_hours<=24:
+            require(not self.retry_network, 'Повтор сетевых ошибок использует исходное время')
+            if type(self.duration_hours) is not int or not 1<=self.duration_hours<=MAX_MANUAL_HOURS:
                 raise ValueError('Укажите целое число часов от 1 до 24')
 
     def preview(self, queue, connection, cursor, sid, supplier, limit):
@@ -218,6 +255,7 @@ class ManualRequest:
         snapshot['manual_resume']={'parent_job_id':parent_id,'owner_job_id':owner,
                                    'previous_engine':original['engine_sha256'],
                                    'checkpoint_sha256':state['checksum'],'legacy_timeout':receipt}
+        if self.duration_hours is not None:snapshot['manual_resume']['duration_hours']=self.duration_hours
         if legacy_redirect:snapshot['manual_resume']['legacy_redirect']=legacy_redirect
         if legacy_stop:snapshot['manual_resume']['legacy_stop']=legacy_stop
         if recovered:snapshot['manual_resume']['recovered_receipt']=recovered
@@ -232,12 +270,17 @@ class ManualRequest:
         # DB-API cursor.execute is not required to return the cursor.
         mappings=[list(row) for row in cursor.fetchall()]
         robots_attempts=getattr(self,'robots_attempts',min(2,snapshot['rate_settings']['max_attempts']))
+        override=resume_duration_override(snapshot)
+        now=datetime.now(timezone.utc)
+        start_by=now+timedelta(hours=MAX_MANUAL_HOURS) if override is not None else None
+        execution_seconds=override or snapshot['crawl_settings']['max_run_duration_seconds']
         value={'format':KIND,'nonce':self.nonce,'target':TARGET,
             'actor_id':self.actor.id,'actor_role':self.actor.role,'actor_sv':self.actor.session_version,
             'head':revision,
             'engine':engine_fingerprint(),'snapshot_sha256':digest(snapshot),'policies':self.policy,
-            'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=snapshot['crawl_settings']['max_run_duration_seconds']+300)).isoformat(),
+            'expires_at':((start_by or now)+timedelta(seconds=execution_seconds+300)).isoformat(),
             'matching_apply':False,'mappings':mappings,'robots_attempts':robots_attempts}
+        if start_by is not None:value['start_by']=start_by.isoformat()
         if self.max_parallel_suppliers is not None:
             value['max_parallel_suppliers'] = parallel_limit(self.max_parallel_suppliers)
         return {**value,'signature':signature(value,self.key)}
@@ -267,6 +310,13 @@ def verify(snapshot, key, *, now=None):
     mode=snapshot['source_input']['mode']
     resume=snapshot.get('manual_resume')
     settings=snapshot['crawl_settings']
+    override=resume_duration_override(snapshot)
+    if override is not None:
+        require(marker.get('actor_role')=='ADMIN' and 'start_by' in marker
+                and datetime.fromisoformat(marker['expires_at'])-datetime.fromisoformat(marker['start_by'])
+                    ==timedelta(seconds=override+300), 'Лимит времени продолжения не подтверждён')
+    else:
+        require('start_by' not in marker,'Лимит ожидания запуска не подтверждён')
     if settings.get('collection_mode')=='RESUME':
         require(resume and resume['owner_job_id']==settings['resume_owner_job_id']
                 and resume['previous_engine']==snapshot['source_input']['engine_sha256']

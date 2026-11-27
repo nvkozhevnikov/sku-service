@@ -579,7 +579,8 @@ def test_bounded_manual_disconnect_goes_to_tail_before_retry():
     assert details['category']=='manual_remote_disconnect'
 
 
-def test_manual_resume_skips_commit_and_retries_tail_in_saved_order():
+@pytest.mark.parametrize('duration_hours',[None,13])
+def test_manual_resume_skips_commit_and_retries_tail_in_saved_order(duration_hours):
     run,job,backend,calls=native_manual(end_window=True)
     first=run(job)
     assert calls==[1,2] and first['sql_committed']==1 and first['resume_available']
@@ -591,10 +592,13 @@ def test_manual_resume_skips_commit_and_retries_tail_in_saved_order():
                                      'checkpoint_sha256':checkpoint['checksum']},
         'crawl_settings':{**snapshot['crawl_settings'],'collection_mode':'RESUME',
                           'resume_owner_job_id':1,'resume_input_sha256':first['input_sha256']}})
+    if duration_hours is not None:
+        resumed.settings_snapshot['manual_resume']['duration_hours']=duration_hours
     second=run(resumed)
     assert calls==[1,2,3,1]
     assert second['sql_committed']==3 and second['sql_committed_this_job']==2
     assert len(backend.writes)==3 and second['deferred']==0
+    assert second.get('run_duration_budget_seconds')==(duration_hours*3600 if duration_hours else None)
 
 
 def test_manual_rate_limit_still_stops_with_checkpoint():
