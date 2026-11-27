@@ -9,7 +9,7 @@ import hashlib,json,re,subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 from .source_jobs import FROZEN_LIVE11_SOURCES,validate_url
-from .source_canary import TARGET
+from .source_canary import TARGET, same_database
 from .source_runtime import engine_fingerprint
 from .supplier_automation import digest
 
@@ -21,7 +21,7 @@ def validate(value):
     def require(ok,reason):
         if not ok:raise ValueError(reason)
     require(value.get('format')==FORMAT and value.get('execution_authorized') is False,'CANARY_PROPOSAL_ONLY')
-    require(value.get('target')==TARGET,'CANARY_TARGET_CHANGED')
+    require(same_database(value.get('target')),'CANARY_TARGET_CHANGED')
     require(re.fullmatch(r'[0-9a-f]{40}',str(value.get('head',''))) is not None and HEX.fullmatch(str(value.get('engine',''))) is not None,'CANARY_CODE_PIN')
     require(HEX.fullmatch(str(value.get('mappings1282_sha256',''))) is not None,'CANARY_MAPPING_PIN')
     require(value.get('matching_apply') is False and value.get('discovery') is False and value.get('production') is False and value.get('esol') is False,'CANARY_WRITE_SCOPE')

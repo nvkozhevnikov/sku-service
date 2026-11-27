@@ -75,7 +75,7 @@ def test_partial_scope_does_not_create_removals_and_report_rebuild(tmp_path):
     # One previously observed item is absent in an explicitly incomplete snapshot.
     state['competitor_campaign_items']=[i for i in state['competitor_campaign_items'] if i['page_version_id']!=2]
     result=export_preview(normalized_dataset(state),'2026-09-01','2026-10-12',tmp_path)
-    events=json.loads((tmp_path/'EVENTS.json').read_text())
+    events=json.loads((tmp_path/'EVENTS.json').read_text(encoding='utf-8'))
     assert not any(e['event_type'] in ('CAMPAIGN_PRODUCT_REMOVED','PRODUCT_DISAPPEARED_FROM_CURRENT_CAMPAIGN') for e in events)
     second=export_preview(normalized_dataset(state),'2026-09-01','2026-10-12',tmp_path)
     assert result['events']==second['events'] and second['new_events']==0 and second['duplicate_events']==0

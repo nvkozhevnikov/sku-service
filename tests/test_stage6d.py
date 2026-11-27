@@ -11,7 +11,7 @@ from universal_supplier.control_plane.admin_store import InMemoryAdminStore, can
 from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.security import AuthUser, SessionSigner, hash_password, normalize_username, role_allows, verify_password
 from universal_supplier.control_plane.store import SnapshotControlPlaneStore
-from conftest import control_plane_snapshot_dir
+from _support import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 
 ROOT = Path(__file__).resolve().parents[1]

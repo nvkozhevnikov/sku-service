@@ -3,6 +3,10 @@ from pathlib import Path
 import importlib.util,json
 import pytest
 
+# The host is a Windows process wrapper over the operator's existing audit venv
+# (scripts/one_shot_supplier_host.py VENV_SITE); elsewhere it refuses to import.
+if not (Path(__file__).resolve().parents[2]/'sku-service/.venv-audit/Lib/site-packages').is_dir():
+    pytest.skip('operator Windows runtime (sku-service/.venv-audit) not present', allow_module_level=True)
 spec=importlib.util.spec_from_file_location('one_shot_host',Path(__file__).parents[1]/'scripts/one_shot_supplier_host.py')
 host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
 

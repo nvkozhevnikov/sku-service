@@ -243,3 +243,5 @@ docs/ltt_uss_matching_prep_2026-10-16/TEST_SELECTION.json -text
 scripts/audit_ltt_uss_matching_input.py -text
 scripts/matching_prep_test_guard.py -text
 scripts/run_ltt_uss_matching.py -text
+# Approved LIVE11 matrix bytes (2026-10-22) pinned by source_batch.MATRIX_SHA.
+/tests/fixtures/live11_approval_matrix_20261022.csv -text

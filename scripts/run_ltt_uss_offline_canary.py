@@ -26,7 +26,7 @@ from universal_supplier.postgres import PostgresConfig, PostgresRepository
 
 BASE = ROOT / 'reports/LTT_USS_INTEGRATION_2026-10-13'
 OUT = BASE / 'OFFLINE_CANARY_15MIN'
-BIN = Path(os.environ['LOCALAPPDATA']) / 'Temp/universal_supplier_stage4_pg17_runtime/bin'
+BIN = Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset') / 'Temp/universal_supplier_stage4_pg17_runtime/bin'
 DATA = BASE / 'PRIVATE/pg17'
 ALLOWED = {'suppliers', 'source_products', 'offers', 'supplier_http_captures', 'offer_commercial_observations'}
 

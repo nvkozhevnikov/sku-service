@@ -26,7 +26,7 @@ from universal_supplier.control_plane.store import UnavailableControlPlaneStore
 from universal_supplier.control_plane.web import create_app
 from universal_supplier.stage6e import InMemoryStage6EService
 
-from conftest import require_evidence
+from _support import require_evidence
 
 # Git-ignored Stage 5D evidence; tests that replay it skip on a clean checkout.
 STAGE5D_MANIFEST = "reports/STAGE5D_2026-09-24/candidate_manifest_http_dry_run.json"

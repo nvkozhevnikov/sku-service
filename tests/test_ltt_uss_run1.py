@@ -24,7 +24,7 @@ def test_redirect_callback_and_initial_request_are_both_paced():
     class Response:
         status=200;headers={'Content-Type':'text/html'}
         def geturl(self):return 'https://example.test/a'
-        def read(self):return b'<h1>item</h1>'
+        def read(self,size=-1):return b'<h1>item</h1>'  # bounded read passes a size
         def __enter__(self):return self
         def __exit__(self,*a):pass
     with patch('universal_supplier.http_capture.build_opener',return_value=SimpleNamespace(open=lambda *a,**kw:Response())):

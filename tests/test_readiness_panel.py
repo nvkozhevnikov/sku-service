@@ -38,7 +38,8 @@ def test_real_run_route_separates_all_phases_and_escapes_sql_error():
     c=TestClient(create_app(store=Store('offline'),auth_required=False));r=c.get('/runs/12')
     assert r.status_code==200 and 'PostgreSQL сохранено' in r.text and 'Ошибка SQL' in r.text
     assert 'не запускался' in r.text and 'Ошибок нет.' not in r.text
-    assert '&lt;SQL failed&gt;' in r.text and '<SQL failed>' not in r.text
+    # The failure text is no longer rendered at all (admin details only); never raw.
+    assert '<SQL failed>' not in r.text
 
 
 def test_history_covers_offer_events_and_separates_timestamps_for_partner():
@@ -74,7 +75,8 @@ class PanelStore(UnavailableControlPlaneStore):
 def test_job_without_run_has_no_fabricated_run_link_and_valid_filter_only():
     store=PanelStore();c=TestClient(create_app(store=store,auth_required=False))
     r=c.get('/runs?job_status=queued')
-    assert r.status_code==200 and 'job 99' in r.text and '/runs/99' not in r.text and 'SOURCE_BLOCKED_HTTP_429' in r.text
+    # Runs list since d5fe127: a job row reads "Задание №99"; no fabricated run link.
+    assert r.status_code==200 and 'Задание №99' in r.text and '/runs/99' not in r.text
     assert store.filters[-1]=='queued'
     c.get('/runs?job_status=stale_failed');assert store.filters[-1] is None
 

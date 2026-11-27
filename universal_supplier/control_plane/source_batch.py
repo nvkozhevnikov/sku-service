@@ -13,7 +13,7 @@ import subprocess
 from uuid import UUID
 
 from .source_resume import digest
-from .source_canary import build_preview, validate_config, validate_connection, TARGET
+from .source_canary import build_preview, validate_config, validate_connection, TARGET, same_database
 from .source_jobs import FROZEN_LIVE11_SOURCES
 from .queue import normalized_domain
 
@@ -346,7 +346,7 @@ def confirm_beka_gate(queue, batch_id, receipt_path, receipt_sha256):
             'outside_after_sha256','mapping_preservation','evidence_class','operator','reference'}
     before = proof.get('outside_before_sha256','')
     if (set(proof) != keys or proof['format'] != 'live11-beka-isolation/v1'
-            or proof['batch_id'] != batch_id or proof['target'] != TARGET
+            or proof['batch_id'] != batch_id or not same_database(proof['target'])
             or proof['mapping_preservation'] != 'PASS'
             or proof['evidence_class'] != 'OPERATOR-CONFIRMED'
             or not proof['operator'].strip() or not proof['reference'].strip()

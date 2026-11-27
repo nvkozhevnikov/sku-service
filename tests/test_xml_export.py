@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from test_stage5 import POLICY, row, snapshot
 from test_stage6e import csrf, make_client
 from universal_supplier.control_plane.store import ProductFilters, SnapshotControlPlaneStore
-from conftest import control_plane_snapshot_dir
+from _support import control_plane_snapshot_dir
 from universal_supplier.xml_export import (
     generate_canonical_xml, pp800f_in_artifact, supplier_xml_bytes,
 )

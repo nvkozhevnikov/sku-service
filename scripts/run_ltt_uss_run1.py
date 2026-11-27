@@ -15,7 +15,11 @@ import os
 import random
 import sys
 import time
-import msvcrt
+try:
+    import msvcrt  # Windows operator workstation
+except ImportError:  # Linux/macOS (CI, server): same single-worker lock via flock
+    msvcrt=None
+    import fcntl
 import psycopg
 from psycopg import sql
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -474,11 +478,16 @@ def main():
     OUT.mkdir(parents=True,exist_ok=True)
     with (OUT/'WORKER.lock').open('a+b') as lock:
         if lock.seek(0,2)==0:lock.write(b'0');lock.flush()
-        lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
+        lock.seek(0)
+        if msvcrt:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
+        else:fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
         try:
             run=Run(resume=args.resume);run.deadline=deadline;run.state['session_http_deadline_utc']=deadline.isoformat()
             return run.main()
-        finally:lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
+        finally:
+            lock.seek(0)
+            if msvcrt:msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
+            else:fcntl.flock(lock.fileno(),fcntl.LOCK_UN)
 
 
 if __name__=='__main__':

@@ -29,6 +29,11 @@ def active_window(db, tmp_path, monkeypatch):
     # Envelope/HEAD compatibility is separately exercised with saved real
     # envelopes in test_live11_r10_dispatch. Keep native queue validation here.
     monkeypatch.setattr(recovery, 'approved_execution_deadline', lambda envelope: control.work)
+    # The controller runs on a frozen 2026-10-26 clock, while the fake queue
+    # compares the window with the real time: keep the window open relative to
+    # now, otherwise the test silently expires after that date.
+    control.work = datetime.now(timezone.utc) + timedelta(hours=1)
+    monkeypatch.setattr(recovery, 'execution_deadline', lambda envelope: control.work)
     return control, clock
 
 

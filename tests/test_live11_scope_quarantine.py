@@ -86,6 +86,12 @@ def test_unapproved_scope_receipt_stays_uncertain(saved):
 
 def test_real_156_committed_and_scope_uncertain_resume_without_http_or_ingest(saved,monkeypatch):
     data,value=saved;item=data['item'];cp=data['checkpoint'];original=data['input']
+    # The four HTTP-404 quarantines prove themselves with response files at absolute
+    # paths of the operator's Windows checkout; they are not in the fixture.
+    evidence=[r['receipt']['http_evidence']['file'] for r in cp['terminal'].values()
+              if r['state']=='QUARANTINED' and (r.get('receipt') or {}).get('http_evidence')]
+    if not all(Path(f).is_file() for f in evidence):
+        pytest.skip('operator HTTP-404 quarantine evidence files not in this checkout')
     folder=Path(os.environ['SOURCE_RUNNER_EVIDENCE_ROOT'])/'kami/job-43';folder.mkdir(parents=True)
     (folder/'checkpoint.json').write_text(json.dumps(cp,ensure_ascii=False),encoding='utf-8')
     (folder/'input.json').write_text(json.dumps(original,ensure_ascii=False),encoding='utf-8')

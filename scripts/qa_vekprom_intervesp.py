@@ -26,7 +26,7 @@ from universal_supplier.commercial_persistence import normalize_availability  # 
 from universal_supplier.postgres import PostgresConfig, PostgresRepository  # noqa: E402
 
 REPORTS = ROOT / 'reports/VEKPROM_INTERVESP_INTEGRATION_2026-10-08'
-PRIVATE = Path(os.environ['LOCALAPPDATA']) / 'UniversalSupplier/vekprom-intervesp-20261008'
+PRIVATE = Path(os.environ.get('LOCALAPPDATA') or 'LOCALAPPDATA-unset') / 'UniversalSupplier/vekprom-intervesp-20261008'
 PARSERS = {'vekprom': parse_vekprom_detail, 'intervesp': parse_intervesp_detail}
 
 

@@ -20,7 +20,7 @@ from universal_supplier.control_plane.orchestrator import Orchestrator
 from universal_supplier.control_plane.queue import CrawlJob
 from universal_supplier.control_plane.scheduler import next_occurrences, validate_schedule
 from universal_supplier.control_plane.store import ProductFilters, SnapshotControlPlaneStore, product_where
-from conftest import control_plane_snapshot_dir
+from _support import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 
 

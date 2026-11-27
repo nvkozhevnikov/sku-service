@@ -20,7 +20,7 @@ from universal_supplier.control_plane.admin_store import InMemoryAdminStore
 from universal_supplier.control_plane.queue import InMemoryJobQueue
 from universal_supplier.control_plane.security import hash_password
 from universal_supplier.control_plane.store import PostgresControlPlaneStore, SnapshotControlPlaneStore
-from conftest import control_plane_snapshot_dir
+from _support import control_plane_snapshot_dir
 from universal_supplier.control_plane.web import create_app
 from universal_supplier.stage6e import AnomalyThresholds
 from universal_supplier.yml_feed import PostgresFeedStore
