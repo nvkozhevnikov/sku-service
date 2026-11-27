@@ -55,6 +55,10 @@ services:
     environment:
       <<: *app_env
       COMMERCIAL_QA_UI_ENABLED: "YES"
+      # Behind an HTTPS reverse proxy: trust X-Forwarded-Proto/For only from the
+      # Docker gateway the published port arrives on (e.g. 172.19.0.1), so url_for
+      # builds https:// asset URLs. Default keeps uvicorn's loopback-only trust.
+      FORWARDED_ALLOW_IPS: ${WEB_FORWARDED_ALLOW_IPS:-127.0.0.1,::1}
       COMMERCIAL_MANUAL_MODE: "SERVER"
       COMMERCIAL_QA_UI_MANIFEST_PATH: /app/server-manifests/bounded_candidate_manifest.json
       COMMERCIAL_QA_FULL_MANIFEST_PATH: /app/server-manifests/full_candidate_manifest.json
