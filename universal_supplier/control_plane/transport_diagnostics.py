@@ -1,6 +1,7 @@
 """Bounded, secret-safe exception evidence. No transport or configuration mutation."""
 import errno
 import re
+import socket
 import ssl
 from urllib.error import URLError,HTTPError
 from urllib.parse import urlsplit,urlunsplit
@@ -24,6 +25,12 @@ def manual_transport_category(exception, *, allow_tls_eof=False):
         return MANUAL_TIMEOUT
     if (module=='http.client' and kind in {'RemoteDisconnected','IncompleteRead'}
             or module=='builtins' and kind in {'ConnectionResetError','ConnectionAbortedError','BrokenPipeError'}):
+        return MANUAL_DISCONNECT
+    if (module,kind)==('socket','gaierror') and exception.get('errno')==socket.EAI_AGAIN:
+        return MANUAL_DISCONNECT
+    if (module,kind)==('builtins','OSError') and (
+            exception.get('errno') in (errno.ENETDOWN,errno.ENETUNREACH,errno.EHOSTUNREACH)
+            or exception.get('winerror') in (10050,10051,10065)):
         return MANUAL_DISCONNECT
     if allow_tls_eof and (module,kind)==('ssl','SSLEOFError') and 'verify_code' not in exception:
         reason=exception.get('reason')

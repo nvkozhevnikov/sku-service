@@ -1,8 +1,9 @@
 """The authenticated manual path uses the native queue, fetcher and receipts."""
 from dataclasses import replace
 from contextlib import nullcontext
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.client import IncompleteRead, RemoteDisconnected
+import errno
 import json
 from pathlib import Path
 import socket
@@ -46,10 +47,11 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
                   product_error=TimeoutError, second_error=None, all_cards_fail=False,
                   card_count=3, initial_network_failures=0, duration=100, block_card=None,
                   stop_during_cooldown=False, redirect_target=None, redirect_card=1,
-                  first_card_failures=1, missing_cards=0, pause_card=None):
+                  first_card_failures=1, missing_cards=0, pause_card=None,
+                  max_attempts=2):
     code='partner_st'
     base='https://partner-st.ru'
-    rate_values={'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0}
+    rate_values={'max_attempts':max_attempts,'max_concurrency':1,'jitter_max_seconds':0}
     if all_cards_fail:rate_values['consecutive_error_threshold']=2
     rate=approved_policy(code,base,rate_values)
     known=[{'url':base+f'/item-{i}/','source_external_id':str(i)} for i in range(1,card_count+1)]
@@ -151,7 +153,7 @@ def test_consecutive_transport_failures_stop_with_resumable_queue(product_error)
     run,job,backend,calls=native_manual(all_cards_fail=True,product_error=product_error,duration=600)
     result=run(job)
     assert calls==[1,2,3,1,2] and not backend.writes
-    assert result['termination_reason']=='SOURCE_NETWORK_CIRCUIT_OPEN'
+    assert result['termination_reason']=='SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW'
     assert result['network_pauses']==3
     assert result['deferred']==3 and result['remaining']==1 and result['resume_available']
     starts=backend.product_started_at
@@ -180,6 +182,102 @@ def test_night_collection_waits_after_five_failed_cards(block_card,stop_during_c
     assert any(summary.get('phase')=='NETWORK_COOLDOWN' for summary in backend.summaries)==(duration==600)
     if len(expected_calls)>5:
         assert backend.product_started_at[5]-backend.product_started_at[4]>=60
+
+
+def test_long_outage_recovers_after_more_than_three_pauses():
+    run,job,backend,calls=native_manual(card_count=6,initial_network_failures=9,
+        duration=1800,robots_replies=iter((200,)))
+    result=run(job)
+    assert calls==['robots',1,2,3,4,5,6,1,2,3,4,5,6]
+    assert result['network_pauses']==5 and result['termination_reason'] is None
+    assert result['remaining']==0 and len(backend.writes)==result['sql_committed']==3
+    assert result['deferred']==3 and result['canary']['robots_requests']==1
+    starts=backend.product_started_at
+    assert [b-a for a,b in zip(starts[4:9],starts[5:10])]==pytest.approx([60,120,240,240,240])
+
+
+def test_signed_single_supplier_window_prevents_a_late_probe():
+    run,job,backend,calls=native_manual(card_count=6,initial_network_failures=5,duration=600)
+    job.settings_snapshot['manual_collection']['expires_at']=(
+        datetime.now(timezone.utc)+timedelta(seconds=45)).isoformat()
+    result=run(job)
+    assert calls==[1,2,3,4,5] and backend.writes==[]
+    assert result['termination_reason']=='SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW'
+    assert result['resume_available']
+
+
+@pytest.mark.parametrize(('attempts','expected'),[
+    (1,[1,2,3]), (2,[1,2,3,1]), (3,[1,2,3,1,1]),
+])
+def test_network_item_retries_stay_behind_other_cards_and_within_signed_cap(attempts,expected):
+    run,job,backend,calls=native_manual(first_card_failures=2,max_attempts=attempts,
+        robots_replies=iter((200,)),robots_limit=min(2,attempts))
+    result=run(job)
+    assert calls==['robots',*expected]
+    assert result['canary']['product_requests']==[
+        'https://partner-st.ru/item-'+str(item)+'/' for item in expected]
+    assert result['sql_committed']==len(backend.writes)==(3 if attempts==3 else 2)
+    assert result['deferred']==(0 if attempts==3 else 1)
+
+
+@pytest.mark.parametrize('error',[
+    lambda: URLError(socket.gaierror(socket.EAI_AGAIN, 'temporary DNS failure')),
+    lambda: OSError(errno.ENETUNREACH, 'network unavailable'),
+])
+def test_temporary_connection_setup_failure_retries_after_other_cards(error):
+    run,job,backend,calls=native_manual(product_error=lambda _message:error())
+    result=run(job)
+    assert calls==[1,2,3,1]
+    assert result['status']=='succeeded' and len(backend.writes)==3
+
+
+def test_manual_catalog_node_recovers_in_same_job():
+    from test_ivstankomaster import BASE, CODE, URL, card
+    from universal_supplier.control_plane.source_discovery import root_urls
+
+    seed,=root_urls(CODE)
+    rate=approved_policy(CODE,BASE,{'max_attempts':3,'consecutive_error_threshold':2})
+    source_input={'format':'source-runtime-input/v1','supplier_code':CODE,'mode':'DISCOVERY',
+                  'entries':[],'seeds':[seed],'rate_policy':rate.snapshot(),
+                  'engine_sha256':engine_fingerprint()}
+    settings={'collection_mode':'DISCOVERY','persist_source_data':True,'max_products':1,
+              'max_discovery_pages':5,'max_run_duration_seconds':300,
+              'host_policy_approval':approval_for(BASE)}
+    job=CrawlJob(1,1,CODE,CODE,BASE+'/','manual','full','running',datetime.now(timezone.utc),
+        {'source_input':source_input,'rate_settings':rate.snapshot(),'crawl_settings':settings,
+         'manual_collection':{'signed':True}})
+    clock=Clock()
+    backend=Backend()
+    calls=[]
+
+    class Client:
+        def get_validated(self,url,*,validator,timeout_seconds):
+            validator(url)
+            self.before_request(url)
+            calls.append(url)
+            if url.endswith('/robots.txt'):
+                return HttpResponse(url,200,'text/plain',b'User-agent: *\nAllow: /\n')
+            if url==seed:
+                if calls.count(seed)<=2:
+                    raise TimeoutError('catalog temporarily unavailable')
+                body=f'<a href="{URL}">Станок</a>'
+            else:
+                body=card('<p>280600 (с НДС)</p>')
+            return HttpResponse(url,200,'text/html; charset=utf-8',body.encode())
+
+    lease=LEASED_HOST.set(job.domain)
+    auth=MANUAL_EXECUTION.set(job.id)
+    try:
+        result=run_source(job,None,backend_factory=lambda cfg,code:backend,
+                          client_factory=Client,clock=clock)
+    finally:
+        MANUAL_EXECUTION.reset(auth)
+        LEASED_HOST.reset(lease)
+
+    assert calls==[BASE+'/robots.txt',seed,seed,seed,URL]
+    assert result['status']=='succeeded',result
+    assert result['network_pauses']==result['sql_committed']==len(backend.writes)==1
+    assert result['discovery_visited']==1 and not result['deferred']
 
 
 def test_timeout_then_reset_does_not_stop_remaining_cards():

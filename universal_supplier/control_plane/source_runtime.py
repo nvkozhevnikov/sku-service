@@ -164,7 +164,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<seconds<=86400:raise ValueError('SOURCE_TIME_BUDGET')
     clock=clock or SystemClock();start=clock.monotonic();deadline=start+seconds
     approval_deadline = None
-    if 'max_parallel_suppliers' in manual_marker:
+    if 'expires_at' in manual_marker:
         approval_deadline = datetime.fromisoformat(manual_marker['expires_at'])
         remaining_seconds = (approval_deadline - datetime.now(timezone.utc)).total_seconds()
         if remaining_seconds <= 0:
@@ -247,6 +247,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     robots_exception_applied=None
     isolated=[];consecutive_card_errors=0;network_pauses=0
+    network_backoff=0
     from .source_resume import (MANUAL_TRANSPORT_ERRORS, MANUAL_TLS_EOF, STOPPED_REQUEST, manual_redirect_receipt,
                                 manual_stop_receipt, manual_transport_receipt, quarantine_evidence_present)
 
@@ -403,7 +404,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         fetcher.error_sink=archive_error
         origin={'source':code,'job_id':owner,'manifest_sha256':sha}
 
-        def defer_transport_error(checkpoint,outcome):
+        product_attempts=dispatch_budget.attempts if dispatch_budget is not None else rate.max_attempts
+        if retry_network is not None:product_attempts=1
+
+        def defer_transport_error(checkpoint,outcome,attempt_limit):
             nonlocal consecutive_card_errors
             if not (manual and (outcome.timeout_refusal or outcome.disconnect_refusal) and outcome.response is None
                     and outcome.transport_started is True):return False
@@ -413,8 +417,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                                   and backend.probe(byurl[outcome.url],receipt)=='NOT_FOUND'):
                 return False
             history=checkpoint.state['terminal'].get(outcome.url,{}).get('history',[])
-            first=not any(item.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS for item in history)
-            retry=not is_tls_eof and first and rate.max_attempts>1
+            previous_failures=sum(item.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS
+                                  for item in history)
+            retry=not is_tls_eof and previous_failures+1<attempt_limit
             checkpoint.record_terminal([receipt],defer_to_tail=retry)
             consecutive_card_errors+=1
             if consecutive_card_errors>=rate.consecutive_error_threshold and not fetcher.network_pause.is_set():
@@ -422,16 +427,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             return True
 
         def wait_for_network():
-            nonlocal network_pauses,consecutive_card_errors
-            if network_pauses==len(MANUAL_NETWORK_PAUSES):
-                fetcher.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
-                return False
-            delay=max(rate.cooldown_seconds,MANUAL_NETWORK_PAUSES[network_pauses])
+            nonlocal network_pauses,network_backoff,consecutive_card_errors
+            delay=max(rate.cooldown_seconds,MANUAL_NETWORK_PAUSES[network_backoff])
             until=clock.monotonic()+delay
             if until>=deadline:
                 fetcher.stop('SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW')
                 return False
             network_pauses+=1
+            network_backoff=min(network_backoff+1,len(MANUAL_NETWORK_PAUSES)-1)
             if backend:backend.progress({'phase':'NETWORK_COOLDOWN','network_pauses':network_pauses})
             while not fetcher.aborted():
                 remaining=until-clock.monotonic()
@@ -518,14 +521,18 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 robots();nodes=0
                 while discovery.state['frontier'] and nodes<pages and len(discovered())<limit and not fetcher.aborted():
                     if clock.monotonic()>=deadline:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');break
-                    node=discovery.claim_batch(1)[0];outcomes=fetch([node],request_scope='discovery');nodes+=1
+                    if fetcher.network_pause.is_set() and not wait_for_network():break
+                    node=discovery.claim_batch(1)[0];outcomes=fetch([node],request_scope='discovery')
                     if manual and outcomes and outcomes[0].transport_started is False:
                         discovery.return_not_requested({'url':node,'state':'NOT_REQUESTED','transport_started':False,
                             'origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcomes[0].error})
+                        if fetcher.network_pause.is_set():continue
                         fetcher.stop(fetcher.stop_reason or 'SOURCE_REQUEST_NOT_DISPATCHED')
                         break
-                    if outcomes and defer_transport_error(discovery,outcomes[0]):continue
+                    nodes+=1
+                    if outcomes and defer_transport_error(discovery,outcomes[0],rate.max_attempts):continue
                     if not outcomes or outcomes[0].error or outcomes[0].response.status_code!=200:raise ValueError(fetcher.stop_reason or 'DISCOVERY_HTTP_FAILED')
+                    network_backoff=0
                     rec=records[node];body=read_body(rec)
                     children,products=decode_node(code,node,body)
                     # Source parser validates every detail candidate before SQL.
@@ -705,9 +712,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if cp.state['frontier'] and not termination:
                 if robot is None:robots()
                 fetched_count=0
-                # A manually deferred timeout can be visited once more at the
-                # tail. The product identity limit remains the frozen manifest.
-                dispatch_limit=limit*2 if manual and rate.max_attempts>1 else limit
+                # A proven transport failure goes to the end of the same
+                # queue. Both the original identities and attempt limits hold.
+                dispatch_limit=limit*product_attempts if manual else limit
                 if retry_network is not None:dispatch_limit=len(retry_network)
                 while cp.state['frontier'] and fetched_count<dispatch_limit and not fetcher.aborted():
                     if clock.monotonic()>=deadline:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');break
@@ -729,7 +736,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     # starting a GET. Those claims do not consume HTTP budget.
                     fetched_count+=sum(o.transport_started is not False for o in outcomes) if manual else len(urls)
                     for outcome in outcomes:
-                        if defer_transport_error(cp,outcome):continue
+                        if defer_transport_error(cp,outcome,product_attempts):continue
                         if manual and (outcome.error_diagnostics or {}).get('wire_outcome')=='REDIRECT_NOT_FOLLOWED':
                             receipt=manual_redirect_receipt(origin,outcome.url,job.id,error_files[outcome.url])
                             cp.record_terminal([receipt])
@@ -768,6 +775,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                             continue
                         # All successful responses are already durably captured.
                         if fetcher.stop_reason:continue
+                        network_backoff=0
                         try:
                             process(byurl[outcome.url],records[outcome.url]);consecutive_card_errors=0
                         except CardExtractionError as error:isolate(byurl[outcome.url],error,record=records[outcome.url])
@@ -778,7 +786,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR')
             resume_safe=plan['automatic_resume_allowed'] and bool(cp.state['frontier'] or plan['offline_pending'])
         else:
-            plan={'uncertain':[],'failed_requires_decision':[]};resume_safe=bool(termination=='DISCOVERY_PAGE_BUDGET' and not discovery.state['inflight'])
+            plan={'uncertain':[],'failed_requires_decision':[]}
+            discovery_pause=manual and termination in ('MAX_RUN_DURATION_EXCEEDED','SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW')
+            resume_safe=bool((termination=='DISCOVERY_PAGE_BUDGET' or discovery_pause)
+                             and discovery.state['frontier'] and not discovery.state['inflight'])
         if matching_pending and not (termination and termination.startswith(('SOURCE_BLOCKED','OPERATOR','SQL_','UNCERTAIN','HOST_LEASE','AUTONOMOUS','AUTOMATION','COMMERCIAL_REFRESH_'))):
             finish_pending_matching()
     except Exception as e:
