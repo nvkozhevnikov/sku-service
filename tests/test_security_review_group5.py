@@ -27,15 +27,28 @@ EVIL = "https://evil.example"
 PATH_VALUES = {"supplier_id": "1", "case_id": "1", "rule_id": "1", "mapping_id": "1", "profile_id": "1",
                "canonical_property_id": "1", "user_id": "2", "preview_id": "1", "supplier_code": "partner_st",
                "external_id": "1", "identifier":"qa-session"}
+PARALLEL_COLLECTION_ROUTES = {"/suppliers/manual-parallel", "/suppliers/manual-parallel/resume"}
 ADMIN_ONLY = {
     "/roles", "/users", "/users/{user_id}/profile", "/users/{user_id}/reset-password",
     '/suppliers/{supplier_id}/parsing','/suppliers/{supplier_id}/parsing/approve-host',
+    *PARALLEL_COLLECTION_ROUTES,
     "/suppliers/{supplier_id}/enabled", "/suppliers/{supplier_id}/data-quality-policy",
     "/suppliers/{supplier_id}/missing-policy", "/scheduler/{supplier_id}", "/rules", "/rules/{rule_id}/active",
     "/properties/canonical", "/properties/profiles", "/properties/profiles/{profile_id}/{canonical_property_id}/remove",
     "/properties/profiles/{profile_id}/{canonical_property_id}/update", "/settings/users",
     "/settings/users/{user_id}/active", "/settings/users/{user_id}/revoke-sessions",
 }
+
+
+@pytest.fixture(autouse=True)
+def enable_manual_collection_routes(request, monkeypatch):
+    """Exercise the request guards with group collection available."""
+    case = getattr(request.node, "callspec", None)
+    if case is None or case.params.get("path") not in PARALLEL_COLLECTION_ROUTES:
+        return
+    monkeypatch.setenv("STERBRUST_MANUAL_COLLECTION_ENABLED", "YES")
+    monkeypatch.setenv("STERBRUST_SOURCE_RUNTIME_ENABLED", "YES")
+    monkeypatch.delenv("STERBRUST_PARTNER_PILOT", raising=False)
 
 
 def _users():
