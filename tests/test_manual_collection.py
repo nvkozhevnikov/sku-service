@@ -287,6 +287,83 @@ def test_parallel_form_requires_administrator(tmp_path,monkeypatch):
     monkeypatch.setenv('STERBRUST_SOURCE_RUNTIME_ENABLED','YES')
     c,_=client(tmp_path,monkeypatch,role='OPERATOR')
     assert c.get('/suppliers/manual-parallel').status_code==403
+    assert c.post('/suppliers/manual-parallel/resume').status_code==403
+
+
+def test_parallel_resume_uses_exact_selected_parents_and_isolates_refusals(tmp_path,monkeypatch):
+    c,store=client(tmp_path,monkeypatch)
+    monkeypatch.setattr(store,'suppliers',lambda:[
+        {'id':1,'code':'kami','name':'КАМИ','products':7},
+        {'id':2,'code':'optimum','name':'Optimum','products':9},
+        {'id':3,'code':'ltt_msk','name':'LTT Москва','products':11},
+    ])
+    candidates=[
+        dict(id=1,name='КАМИ',parent_job_id=21,run_id=31,remaining=2),
+        dict(id=2,name='Optimum',parent_job_id=22,run_id=32,remaining=3),
+        dict(id=3,name='LTT Москва',parent_job_id=23,run_id=33,remaining=4),
+    ]
+    queue=c.app.state.queue
+    monkeypatch.setattr(queue,'manual_resume_candidates',lambda:candidates)
+    requests=[]; launches=[]
+    def enqueue(sid, **options):
+        requests.append((sid, options))
+        if sid==2:
+            raise ValueError('RESUME_CHECKPOINT_CHANGED')
+        return EnqueueResult(300+sid,'queued')
+    monkeypatch.setattr(queue,'enqueue',enqueue)
+    monkeypatch.setattr(manual_collection,'launch',lambda jid,**kwargs:launches.append(jid))
+    page=c.get('/suppliers/manual-parallel')
+    assert page.status_code==200
+    assert 'Продолжить выбранные сборы' in page.text and 'Начать выбранные сборы' in page.text
+    assert 'name="resume_1" value="21"' in page.text and '/runs/31' in page.text
+    endpoint='/suppliers/manual-parallel/resume'
+    form={'max_parallel_suppliers':'3','resume_2':'22','resume_1':'21'}
+    assert c.post(endpoint,data=form).status_code==403
+    form['csrf_token']=csrf(page)
+    assert c.post(endpoint,data={**form,'resume_1':'20'}).status_code==400
+    assert c.post(endpoint,data={**form,'max_parallel_suppliers':'13'}).status_code==400
+    assert c.post(endpoint,data={**form,'resume_999':'99'}).status_code==400
+    assert not requests and not launches
+    result=c.post(endpoint,data={**form,'duration_hours':'24','max_products':'100000'})
+    assert result.status_code==200
+    assert {sid for sid,_ in requests}=={1,2} and launches==[301]
+    for sid,options in requests:
+        assert options['source_mode']=='RESUME' and options['source_limit'] is None
+        assert options['resume_job_id']==20+sid
+        assert options['manual_request'].max_parallel_suppliers==3
+        assert options['manual_request'].duration_hours is None
+    assert '/runs?job_id=301' in result.text and '/runs/32' in result.text
+    assert 'Не удалось подтвердить целостность сохранённой очереди.' in result.text
+
+
+def test_worker_accepts_signed_group_resume_with_original_limits():
+    from types import SimpleNamespace
+    from universal_supplier.control_plane.source_resume import digest as source_digest
+
+    actor=AuthUser(1,'qa','QA','ADMIN')
+    db=DB('uss_stanko')
+    first=ManualRequest(actor,KEY,'2','3',0)
+    db.queue().enqueue(1,trigger_type='manual',crawl_type='full',source_mode='REFRESH',
+                       source_limit=2,manual_request=first)
+    snapshot=deepcopy(db.snapshots[0])
+    prior=snapshot.pop('manual_collection')
+    original=snapshot['source_input']
+    snapshot['crawl_settings'].update(collection_mode='RESUME',resume_owner_job_id=44,
+        resume_input_sha256=source_digest(original))
+    snapshot['manual_resume']={'owner_job_id':44,'parent_job_id':44,'previous_engine':original['engine_sha256']}
+    request=ManualRequest(actor,KEY,'','',-1,'RESUME',max_parallel_suppliers=3)
+    request.validate(1,None,'manual','RESUME')
+    request.nonce='resume-qa'
+    request.policy=prior['policies']
+    request.robots_attempts=prior['robots_attempts']
+    cursor=SimpleNamespace(execute=lambda *_:None,fetchall=lambda:[(900,800)])
+    snapshot['manual_collection']=request.seal(snapshot,cursor)
+    assert verify(snapshot,KEY)['max_parallel_suppliers']==3
+    assert snapshot['source_input']==db.snapshots[0]['source_input']
+    assert snapshot['crawl_settings']['max_run_duration_seconds']==db.snapshots[0]['crawl_settings']['max_run_duration_seconds']
+    request.retry_network=True
+    with pytest.raises(PermissionError):
+        request.validate(1,None,'manual','RESUME')
 
 
 def test_worker_waits_for_exact_job_past_old_thirty_second_limit(monkeypatch):

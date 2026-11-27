@@ -600,20 +600,29 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         parallel_collection_guard(request)
         sources = parallel_collection_sources()
         count = len(sources) if any(row['limit'] > 0 and not row['busy'] for row in sources) else 0
+        resume_candidates = queue.manual_resume_candidates()
         return templates.TemplateResponse(request, 'manual_parallel.html',
-            context(request, active='suppliers', sources=sources, parallel_options=range(1, count + 1)))
+            context(request, active='suppliers', sources=sources, parallel_options=range(1, count + 1),
+                    resume_candidates=resume_candidates, resume_options=range(1, len(sources) + 1)))
 
     def launch_parallel_jobs(planned, user_id, key):
         from .manual_collection import launch
+        from .presentation import MANUAL_RESUME_BLOCKERS
 
         results = []
         for row,count,approval in planned:
             sid = row['id']
             try:
                 result = queue.enqueue(sid, trigger_type='manual', crawl_type='full', requested_by_user_id=user_id,
-                    source_mode=row['mode'], source_limit=count, manual_request=approval)
-            except (ValueError, PermissionError, KeyError):
-                results.append(dict(row, message='Запуск не подготовлен. Проверьте настройки поставщика.'))
+                    source_mode=approval.mode, source_limit=count, resume_job_id=row.get('parent_job_id'),
+                    manual_request=approval)
+            except (ValueError, PermissionError, KeyError) as error:
+                if approval.mode == 'RESUME':
+                    message = MANUAL_RESUME_BLOCKERS.get(str(error),
+                        'Очередь не прошла проверку. Откройте предыдущий запуск для подробностей.')
+                else:
+                    message = 'Запуск не подготовлен. Проверьте настройки поставщика.'
+                results.append(dict(row, message=message))
                 continue
             except Exception:
                 results.append(dict(row, message='Не удалось подтвердить постановку в очередь. Проверьте задания поставщика.'))
@@ -666,6 +675,39 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                     revision, row['mode'], hours, max_parallel_suppliers=maximum)
                 approval.validate(sid, count, 'manual', row['mode'])
                 planned.append((row, count, approval))
+        except (ValueError, PermissionError) as error:
+            return page_error(request, str(error))
+
+        results = await run_in_threadpool(launch_parallel_jobs, planned, user.id, key)
+        return templates.TemplateResponse(request, 'manual_parallel.html',
+            context(request, active='suppliers', results=results))
+
+    @app.post('/suppliers/manual-parallel/resume', response_class=HTMLResponse)
+    async def parallel_collection_resume(request: Request):
+        from .manual_collection import ManualRequest, parallel_limit
+
+        user = parallel_collection_guard(request)
+        require_trusted_origin(request)
+        raw = await form_values(request)
+        check_csrf(request, raw)
+        selected = {key:value for key,value in raw.items() if key.startswith('resume_')}
+        if not selected:
+            return page_error(request, 'Выберите сборы для продолжения')
+        candidates = {f"resume_{row['id']}": row
+                      for row in await run_in_threadpool(queue.manual_resume_candidates)}
+        if not selected.keys() <= candidates.keys():
+            return page_error(request, 'Список незавершённых сборов изменился. Обновите страницу.')
+        key = signer.secret.decode('utf-8')
+        planned = []
+        try:
+            maximum = parallel_limit(optional_int(raw.get('max_parallel_suppliers'), 'Одновременных сборов'))
+            for field,value in selected.items():
+                row = candidates[field]
+                if optional_int(value, 'Исходное задание') != row['parent_job_id']:
+                    raise ValueError('Исходное задание изменилось. Обновите страницу.')
+                approval = ManualRequest(user, key, '', '', -1, 'RESUME', max_parallel_suppliers=maximum)
+                approval.validate(row['id'], None, 'manual', 'RESUME')
+                planned.append((row, None, approval))
         except (ValueError, PermissionError) as error:
             return page_error(request, str(error))
 

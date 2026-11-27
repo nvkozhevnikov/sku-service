@@ -89,8 +89,8 @@ class ManualRequest:
                 and mode==self.mode and mode in ('REFRESH','DISCOVERY','RESUME'), 'Недопустимый режим ручного сбора')
         require(not self.retry_network or mode=='RESUME', 'Повтор сетевых ошибок доступен из итогов завершённого сбора')
         if self.max_parallel_suppliers is not None:
-            require(self.actor.role == 'ADMIN' and mode in ('REFRESH', 'DISCOVERY'),
-                    'Настроить параллельный сбор может только администратор при новом запуске')
+            require(self.actor.role == 'ADMIN' and not self.retry_network,
+                    'Параллельный сбор доступен администратору для новых запусков и продолжений')
             parallel_limit(self.max_parallel_suppliers)
         if mode!='RESUME':
             limit_value(limit)
@@ -281,7 +281,8 @@ def verify(snapshot, key, *, now=None):
     else:
         require(not resume and snapshot['source_input']['engine_sha256']==marker['engine'], 'Изменился исходный запуск')
     if 'max_parallel_suppliers' in marker:
-        require(marker.get('actor_role') == 'ADMIN' and not resume, 'Параллельный сбор не подтверждён')
+        require(marker.get('actor_role') == 'ADMIN' and not (resume or {}).get('retry_network_urls'),
+                'Параллельный сбор не подтверждён')
         parallel_limit(marker['max_parallel_suppliers'])
     require(code in RUNTIME_SOURCES and (mode=='REFRESH' or (code==IVSTANKOMASTER and mode=='DISCOVERY'))
             and snapshot['source_input']['supplier_code']==code and snapshot['adapter_name']==code

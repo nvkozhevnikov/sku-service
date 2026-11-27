@@ -11,6 +11,9 @@
     <div>
       <h4>{{ row.name }}</h4>
       {% if row.message != 'В очереди.' %}<p>{{ row.message }}</p>{% endif %}
+      {% if row.run_id and row.message != 'В очереди.' %}
+      <p><a href="/runs/{{ row.run_id }}">Предыдущий запуск №{{ row.run_id }}</a></p>
+      {% endif %}
       {% if row.job_id %}
       <p><a href="/runs?job_id={{ row.job_id }}">Задание №{{ row.job_id }}</a></p>
       {{ progress_meter(url='/api/jobs/' ~ row.job_id ~ '/progress', show_link=true) }}
@@ -18,13 +21,45 @@
     </div>
     {% endfor %}
   </div>
-  <p><a class="button" href="/runs">Сбор и запуски</a></p>
+  <p><a class="button" href="/runs">Сбор и запуски</a> <a href="/suppliers/manual-parallel">К параллельному сбору</a></p>
 </section>
 <script type="module" src="{{ url_for('static',path='collection-progress.js') }}" nonce="{{ csp_nonce }}"></script>
-{% elif not parallel_options %}
+{% else %}
+{% if resume_candidates %}
+<form method="post" action="/suppliers/manual-parallel/resume" class="panel">
+  <h3>Продолжить незавершённые сборы</h3>
+  <p>Выберите поставщиков. Панель проверит сохранённые очереди и пропустит уже сохранённые карточки.</p>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Общий лимит одновременных сборов
+    <select name="max_parallel_suppliers">
+      {% for count in resume_options %}
+      <option value="{{ count }}"{% if count == 2 %} selected{% endif %}>{{ count }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Поставщик</th><th>Последний запуск</th><th>Карточек в очереди</th></tr></thead>
+      <tbody>
+      {% for row in resume_candidates %}
+      <tr>
+        <td><label><input type="checkbox" name="resume_{{ row.id }}" value="{{ row.parent_job_id }}"> {{ row.name }}</label></td>
+        <td><a href="/runs/{{ row.run_id }}">№{{ row.run_id }}</a></td>
+        <td>{{ row.remaining if row.remaining else '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p>Скорость и лимит времени берутся из исходного запуска каждого поставщика.</p>
+  <button>Продолжить выбранные сборы</button>
+</form>
+{% endif %}
+{% if not parallel_options %}
 <p class="notice">Свободных поставщиков для запуска сейчас нет.</p>
 {% else %}
 <form method="post" action="/suppliers/manual-parallel" class="panel">
+  <h3>Запустить новые сборы</h3>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <label>Общий лимит одновременных сборов
     <select name="max_parallel_suppliers">
@@ -66,5 +101,6 @@
   <p>Запуск включает выбранные источники. Прогресс каждого сбора виден в разделе «Сбор и запуски».</p>
   <button>Начать выбранные сборы</button>
 </form>
+{% endif %}
 {% endif %}
 {% endblock %}

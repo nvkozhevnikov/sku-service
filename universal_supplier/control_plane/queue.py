@@ -254,6 +254,41 @@ class PostgresJobQueue:
             raise ValueError('RESUME_PARENT_NOT_LATEST')
         return previous
 
+    def manual_resume_candidates(self):
+        """Find latest unfinished manual runs. Enqueue verifies each checkpoint."""
+        from .manual_collection import TERMINAL
+        from .source_jobs import RUNTIME_SOURCES
+
+        with self._connect() as connection:
+            connection.read_only = True
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT s.id,s.name,last_job.id,r.id,
+                           rt->'remaining',rt->'discovery_remaining',rt->'resume_available'
+                      FROM suppliers s
+                      JOIN LATERAL (
+                          SELECT id,status,crawl_run_id,settings_snapshot
+                            FROM crawl_jobs
+                           WHERE supplier_id=s.id AND status<>'skipped_already_queued'
+                           ORDER BY id DESC LIMIT 1
+                      ) last_job ON true
+                      JOIN crawl_runs r ON r.id=last_job.crawl_run_id
+                      CROSS JOIN LATERAL (SELECT r.metadata->'source_runtime' AS rt) metadata
+                     WHERE s.code=ANY(%s) AND s.adapter_name=s.code
+                       AND last_job.status=ANY(%s) AND last_job.settings_snapshot ? 'manual_collection'
+                       AND (rt->>'termination_reason') IS DISTINCT FROM 'ROBOTS_REQUIRES_SLOWER_PROFILE'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM crawl_jobs active
+                            WHERE active.supplier_id=s.id AND active.status IN ('queued','running')
+                       )
+                     ORDER BY s.name,s.id
+                """, (list(RUNTIME_SOURCES), list(TERMINAL)))
+                return [
+                    dict(id=sid, name=name, parent_job_id=parent, run_id=run, remaining=remaining)
+                    for sid,name,parent,run,remaining,discovery,can_resume in cursor.fetchall()
+                    if any(type(value) is int and value>0 for value in (remaining,discovery)) or can_resume is True
+                ]
+
     def manual_resume_status(self, supplier_id, job_id, request):
         """Read-only equivalent of the resume admission used at enqueue."""
         request.validate(supplier_id, None, 'manual', 'RESUME')
@@ -641,6 +676,9 @@ class InMemoryJobQueue:
     def __init__(self) -> None:
         self.jobs: list[dict[str, Any]] = []
         self._lock = threading.Lock()
+
+    def manual_resume_candidates(self):
+        return []
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
                 scheduled_for: datetime | None = None, settings_snapshot: dict | None = None,
