@@ -535,16 +535,17 @@ def test_ltt_unicode_wire_form_stays_inside_approved_manual_batch(code):
     assert result['sql_committed']==1 and result['canary']['product_requests']==[url]
 
 
-def test_optimum_public_license_replays_only_verified_saved_capture():
+@pytest.mark.parametrize('slug',['litsenziya_primo_credit_token','litsenziya_primo_credit_token_bez_ogranicheniy'])
+def test_optimum_public_license_replays_only_verified_saved_capture(slug):
     import hashlib
-    from universal_supplier.commercial_persistence import OPTIMUM_PUBLIC_LICENSE_URL, _safe_url
-    from universal_supplier.control_plane.manual_saved_recovery import optimum_archive_receipt
+    from universal_supplier.commercial_persistence import _safe_url
+    from universal_supplier.control_plane.manual_saved_recovery import ARCHIVE_ERROR, optimum_archive_receipt
     from universal_supplier.control_plane.source_runtime import job_dir
 
-    url=OPTIMUM_PUBLIC_LICENSE_URL
+    url='https://optimum.su/catalog/aksessuary/'+slug+'/'
     assert _safe_url(url)==url
     for unsafe in (url+'?token=example',url+'#token',url.replace('optimum.su','example.invalid'),
-                   url.replace('https://','https://anyone@')):
+                   url.replace('https://','https://anyone@'),url.rstrip('/')+'_other/'):
         with pytest.raises(ValueError):
             _safe_url(unsafe)
     origin={'source':'optimum','job_id':17,'manifest_sha256':'a'*64}
@@ -552,20 +553,24 @@ def test_optimum_public_license_replays_only_verified_saved_capture():
     evidence_sha=hashlib.sha256(payload).hexdigest()
     folder=job_dir('optimum',17)
     body=folder/'captures'/(evidence_sha+'.html')
-    record_path=folder/'responses'/('b'*64+'.json')
+    observed='2026-11-26T00:00:00+00:00'
+    record_path=folder/'responses'/(hashlib.sha256((url+'|'+observed).encode()).hexdigest()+'.json')
     body.parent.mkdir(parents=True)
     record_path.parent.mkdir()
     body.write_bytes(payload)
     record_path.write_text(json.dumps(dict(origin_job_id=17,input_sha256=origin['manifest_sha256'],
         url=url,final_url=url,http_status=200,error=None,redirects=[],response_sha256=evidence_sha,
         evidence_sha256=evidence_sha,file=str(body),content_type='text/html',
-        observed_at='2026-11-26T00:00:00+00:00')),encoding='utf-8')
-    receipt=optimum_archive_receipt(dict(origin=origin,url=url),record_path)
+        observed_at=observed)),encoding='utf-8')
+    failed=dict(state='FAILED',reason=ARCHIVE_ERROR,origin=origin,url=url)
+    receipt=optimum_archive_receipt(failed,record_path)
     assert receipt['state']=='HTTP_CAPTURED_NOT_COMMITTED'
-    assert receipt['original_capture_metadata']['observed_at']=='2026-11-26T00:00:00+00:00'
+    assert receipt['original_capture_metadata']['observed_at']==observed
+    with pytest.raises(ValueError,match='MANUAL_SAVED_CAPTURE_NOT_PROVEN'):
+        optimum_archive_receipt({**failed,'reason':'HTTP_500'},record_path)
     body.write_bytes(b'tampered')
     with pytest.raises(ValueError,match='MANUAL_SAVED_CAPTURE_NOT_PROVEN'):
-        optimum_archive_receipt(dict(origin=origin,url=url),record_path)
+        optimum_archive_receipt(failed,record_path)
 
 
 def test_bounded_manual_disconnect_goes_to_tail_before_retry():

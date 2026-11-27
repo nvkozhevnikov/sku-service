@@ -43,6 +43,10 @@ def normalize_availability(value: str | None) -> str:
     return _AVAILABILITY.get(token, "unknown")
 _SECRET_TEXT_RE = re.compile(r"(?:sessid|bitrix_sessid|cookie|authorization|access_token|api[_-]?key|token)", re.I)
 OPTIMUM_PUBLIC_LICENSE_URL = 'https://optimum.su/catalog/aksessuary/litsenziya_primo_credit_token/'
+OPTIMUM_PUBLIC_LICENSE_URLS = frozenset({
+    OPTIMUM_PUBLIC_LICENSE_URL,
+    'https://optimum.su/catalog/aksessuary/litsenziya_primo_credit_token_bez_ogranicheniy/',
+})
 
 
 def _sha256(value: str, field_name: str) -> str:
@@ -59,8 +63,8 @@ def _safe_url(value: str) -> str:
         raise ValueError("capture URL must not retain userinfo or a fragment")
     # Detail-page captures have canonical, query-free URLs.  Reject every
     # query rather than maintaining an incomplete credential denylist.
-    # This exact public Optimum SKU ends in "_token" as a product name.
-    if parsed.query or (_SECRET_TEXT_RE.search(unquote(value)) and value != OPTIMUM_PUBLIC_LICENSE_URL):
+    # Exact public Optimum product slugs may contain "token" in their names.
+    if parsed.query or (_SECRET_TEXT_RE.search(unquote(value)) and value not in OPTIMUM_PUBLIC_LICENSE_URLS):
         raise ValueError("capture URL must not retain query or credential data")
     return value
 

@@ -233,10 +233,12 @@ class ManualRequest:
                 if len(failed)==1 and failed[0].get('reason')==ARCHIVE_ERROR:
                     for path in (folder/'responses').glob('*.json'):
                         try:
-                            recovered=optimum_archive_receipt(failed[0],path)
+                            candidate=optimum_archive_receipt(failed[0],path)
                         except (OSError,ValueError,KeyError,TypeError):
                             continue
-                        break
+                        if recovered is not None:
+                            raise ValueError('Найдено несколько сохранённых ответов для этой карточки. Требуется сверка.')
+                        recovered=candidate
             retries=[]
             if self.retry_network:
                 require(not reason and not state['frontier'] and not state['inflight'],

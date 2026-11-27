@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from universal_supplier.commercial_persistence import OPTIMUM_PUBLIC_LICENSE_URL
+from universal_supplier.commercial_persistence import OPTIMUM_PUBLIC_LICENSE_URLS
 from universal_supplier.http_capture import public_transport_url
 from .source_resume import FROZEN_BATCH_REFUSAL
 from .transport_diagnostics import safe_message
@@ -69,7 +69,8 @@ def optimum_archive_receipt(old, path):
     origin = old['origin']
     owner, sha = origin['job_id'], origin['manifest_sha256']
     folder = job_dir('optimum',owner)
-    if (old['url'] != OPTIMUM_PUBLIC_LICENSE_URL or origin['source'] != 'optimum'
+    if (old['url'] not in OPTIMUM_PUBLIC_LICENSE_URLS or origin['source'] != 'optimum'
+            or old.get('state') != 'FAILED' or old.get('reason') != ARCHIVE_ERROR
             or not re.fullmatch(r'[0-9a-f]{64}\.json', path.name)
             or path.parent != folder/'responses'):
         raise ValueError('MANUAL_SAVED_CAPTURE_NOT_PROVEN')
@@ -77,7 +78,8 @@ def optimum_archive_receipt(old, path):
     record = json.loads(raw)
     evidence_sha = record['evidence_sha256']
     body = folder/'captures'/(evidence_sha+'.html')
-    if (record['origin_job_id'] != owner or record['input_sha256'] != sha
+    expected_file = hashlib.sha256((old['url']+'|'+record['observed_at']).encode()).hexdigest()+'.json'
+    if (path.name != expected_file or record['origin_job_id'] != owner or record['input_sha256'] != sha
             or record['url'] != old['url'] or record['final_url'] != old['url']
             or record['http_status'] != 200 or record['error'] or record['redirects']
             or not re.fullmatch(r'[0-9a-f]{64}',evidence_sha) or body != Path(record['file'])
