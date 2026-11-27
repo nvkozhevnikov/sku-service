@@ -35,6 +35,7 @@ ADMIN_ONLY = {
     "/properties/canonical", "/properties/profiles", "/properties/profiles/{profile_id}/{canonical_property_id}/remove",
     "/properties/profiles/{profile_id}/{canonical_property_id}/update", "/settings/users",
     "/settings/users/{user_id}/active", "/settings/users/{user_id}/revoke-sessions",
+    "/suppliers/manual-parallel", "/suppliers/manual-parallel/resume",
 }
 
 

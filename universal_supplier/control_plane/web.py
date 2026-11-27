@@ -567,15 +567,28 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         if callable(getattr(type(store),'automation_overview',None)):automation=store.automation_overview(rows)
         return templates.TemplateResponse(request, "suppliers.html", context(request, suppliers=rows,automation=automation,active="suppliers"))
 
-    def parallel_collection_guard(request):
+    def parallel_collection_available():
         from .manual_collection import enabled as manual_enabled
         from .source_runtime import runtime_enabled
         from universal_supplier.partner_pilot import enabled as pilot_enabled
 
-        user = guard(request, {'ADMIN'})
         if getattr(type(store), 'read_only', False) or not manual_enabled() or not runtime_enabled() or pilot_enabled():
             raise HTTPException(403, 'Параллельный сбор здесь недоступен')
+
+    def parallel_collection_guard(request):
+        user = guard(request, {'ADMIN'})
+        parallel_collection_available()
         return user
+
+    async def parallel_collection_post_guard(request):
+        # Role, origin and CSRF come before any feature or business check,
+        # as on every other mutating route (security review group 5).
+        user = guard(request, {'ADMIN'})
+        require_trusted_origin(request)
+        raw = await form_values(request)
+        check_csrf(request, raw)
+        parallel_collection_available()
+        return user, raw
 
     def parallel_collection_sources():
         from .manual_collection import manual_launch_settings
@@ -647,10 +660,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     async def parallel_collection_start(request: Request):
         from .manual_collection import ManualRequest, parallel_limit
 
-        user = parallel_collection_guard(request)
-        require_trusted_origin(request)
-        raw = await form_values(request)
-        check_csrf(request, raw)
+        user, raw = await parallel_collection_post_guard(request)
         sources = {f"include_{row['id']}": row for row in await run_in_threadpool(parallel_collection_sources)}
         selected = {key for key,value in raw.items() if key.startswith('include_') and value == 'yes'}
         if not selected or not selected <= sources.keys():
@@ -690,10 +700,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
     async def parallel_collection_resume(request: Request):
         from .manual_collection import ManualRequest, parallel_limit
 
-        user = parallel_collection_guard(request)
-        require_trusted_origin(request)
-        raw = await form_values(request)
-        check_csrf(request, raw)
+        user, raw = await parallel_collection_post_guard(request)
         selected = {key:value for key,value in raw.items() if key.startswith('resume_')}
         if not selected:
             return page_error(request, 'Выберите сборы для продолжения')
