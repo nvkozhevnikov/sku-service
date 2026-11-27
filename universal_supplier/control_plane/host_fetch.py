@@ -12,7 +12,7 @@ import hashlib,json,math,os,threading
 from .rate_control import (DomainRatePolicy,DomainRateLimiter,RequestMetrics,
     CircuitBreaker,CircuitOpen,SystemClock,RequestAborted,request_with_resilience,retry_after_seconds)
 from universal_supplier.http_capture import UnfollowedProductRedirect, has_blocking_interstitial
-from .transport_diagnostics import MANUAL_DISCONNECT, manual_transport_category
+from .transport_diagnostics import MANUAL_DISCONNECT, MANUAL_TLS_EOF, manual_transport_category
 
 # Request-local approval from an authenticated, audited manual launch. Never
 # mutate the serving process's environment or leak trust to another request.
@@ -127,7 +127,7 @@ class BoundedHostFetcher:
         self.manual_robots_attempts=manual_robots_attempts
         self.network_pause=threading.Event()
         self.network_probe=False
-        self._product_transport_failures=0
+        self._manual_transport_failures=0
         self.source=source;self.robots_url=robots_url;self.error_sink=error_sink
     def stop(self,reason='OPERATOR_STOP'):
         with self._lock:
@@ -142,11 +142,11 @@ class BoundedHostFetcher:
     def dispatch_paused(self):
         return self.aborted() or self.network_pause.is_set()
     def reopen_for_probe(self):
-        """Called only after the product batch drained and its cooldown elapsed."""
+        """Called only after the current requests drained and their cooldown elapsed."""
         with self._lock:
             self.breaker.success()
             self.network_probe=True
-            self._product_transport_failures=0
+            self._manual_transport_failures=0
             self.network_pause.clear()
     def _validate(self,url):
         self.validator(url)
@@ -201,7 +201,7 @@ class BoundedHostFetcher:
                         with self._lock:
                             self.metrics.record_status(error.status,self.clock.monotonic()-request_started)
                             self.breaker.success()
-                            self._product_transport_failures=0
+                            self._manual_transport_failures=0
                             self.network_probe=False
                         raise RequestAborted('PRODUCT_REDIRECT_OUTSIDE_BATCH') from error
                     if self.prevent_unknown_retry and not isinstance(error,RequestAborted):
@@ -223,7 +223,8 @@ class BoundedHostFetcher:
                         self.stop('AUTOMATION_UNKNOWN_HTTP_OUTCOME')
                         raise RequestAborted('AUTOMATION_UNKNOWN_HTTP_OUTCOME') from error
                     manual_request=self.manual_product_attempts and request_scope!='robots'
-                    category=manual_transport_category(diagnostics['original_exception']) if manual_request else None
+                    category=manual_transport_category(diagnostics['original_exception'],
+                        allow_tls_eof=self.source=='kami' and request_scope=='product') if manual_request else None
                     legacy_timeout=self.isolate_timeouts and isinstance(error,TimeoutError)
                     if category is None and not legacy_timeout:raise
                     # Keep the real network failure and native breaker. The typed
@@ -234,13 +235,13 @@ class BoundedHostFetcher:
                         trips_before=self.metrics.circuit_breaker_trips
                         self.breaker.failure(error_type)
                         tripped=self.metrics.circuit_breaker_trips>trips_before
-                        temporary_product_error=category is not None and request_scope=='product'
-                        if temporary_product_error:
-                            self._product_transport_failures+=1
-                            if self.network_probe or self._product_transport_failures>=self.rate.consecutive_error_threshold:
+                        if category is not None:
+                            self._manual_transport_failures+=1
+                            if self.network_probe or self._manual_transport_failures>=self.rate.consecutive_error_threshold:
                                 self.network_pause.set()
                     if tripped and not self.network_pause.is_set():self.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
                     if category==MANUAL_DISCONNECT:raise RemoteDisconnectRefusal('REMOTE_DISCONNECTED_UNKNOWN') from error
+                    if category==MANUAL_TLS_EOF:raise RemoteDisconnectRefusal('TLS_EOF_UNKNOWN') from error
                     raise ReadTimeoutRefusal(url) from error
                 self._validate(response.final_url)
                 for target in response.redirects:self._validate(target)
@@ -251,7 +252,7 @@ class BoundedHostFetcher:
                     stop_statuses.add(503);self.stop('SOURCE_RETRY_AFTER_HTTP_503')
                 elif has_blocking_interstitial(response.body):self.stop('SOURCE_BLOCKED_INTERSTITIAL')
                 with self._lock:
-                    self._product_transport_failures=0
+                    self._manual_transport_failures=0
                     self.network_probe=False
                 return response
             policy=self.rate

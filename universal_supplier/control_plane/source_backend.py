@@ -135,14 +135,23 @@ class SourceBackend:
                        observation.price_type,observation.price_raw,observation.price_source,Jsonb(observation.extraction_evidence)))
         return {'ingest_counts':counts}
     def probe(self,entry,receipt):
-        from .source_resume import MANUAL_REDIRECT, MANUAL_STOP_INTERRUPTED, MANUAL_TRANSPORT_ERRORS, digest, quarantine_evidence_present
+        from .source_resume import (MANUAL_REDIRECT, MANUAL_STOP_INTERRUPTED, MANUAL_TLS_EOF,
+                                    MANUAL_TRANSPORT_ERRORS, digest, quarantine_evidence_present)
         if receipt and receipt.get('state')=='QUARANTINED' and receipt.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS:
             # This outcome was archived before any capture could reach ingest.
             return 'NOT_FOUND' if quarantine_evidence_present(receipt,entry) else 'UNKNOWN'
         category = (receipt or {}).get('isolation',{}).get('category')
-        if receipt and receipt.get('state')=='QUARANTINED' and category in (MANUAL_REDIRECT, MANUAL_STOP_INTERRUPTED):
+        proofs = {MANUAL_REDIRECT:'redirect_evidence', MANUAL_STOP_INTERRUPTED:'stop_evidence',
+                  MANUAL_TLS_EOF:'timeout_evidence'}
+        proof = None
+        if receipt and receipt.get('state')=='QUARANTINED' and category in proofs:
             if not quarantine_evidence_present(receipt,entry):return 'UNKNOWN'
-            proof = receipt['stop_evidence' if category == MANUAL_STOP_INTERRUPTED else 'redirect_evidence']
+            proof = receipt[proofs[category]]
+        if receipt and receipt.get('state')=='NOT_REQUESTED' and receipt.get('wire_evidence'):
+            from .manual_saved_recovery import proven_wire_refusal
+            if not proven_wire_refusal(receipt,entry):return 'UNKNOWN'
+            proof = receipt['wire_evidence']
+        if proof:
             with self.repo.connection.cursor() as q:
                 q.execute("""SELECT j.settings_snapshot->'source_input',
                     EXISTS(SELECT 1 FROM supplier_http_captures c

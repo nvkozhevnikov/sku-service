@@ -6,6 +6,13 @@ This release uses compose.release.yml and PostgreSQL17.11 outside Compose; older
 Compose/server examples below are historical contracts. RELEASE_READY remains NO
 until current-price canary and operator acceptance. Stage6 import remains blocked.
 
+## Ветки и публикация
+
+`develop` — рабочая ветка для разработки и проверок. `production` — конечная
+ветка релиза. Публикация на GitHub приостановлена до отдельного прямого
+указания оператора. Для изменений `production` и развёртывания требуется
+отдельное разрешение.
+
 ## Current state
 
 The latest verified feature state is in [`CURRENT_STATE.md`](CURRENT_STATE.md); the stage sections below are history. Supported suppliers:

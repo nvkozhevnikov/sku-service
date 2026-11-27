@@ -11,7 +11,7 @@ from contextlib import contextmanager
 import hashlib,json,os,re,threading
 from universal_supplier.kami_checkpoint import write_checkpoint
 from universal_supplier.postgres import SUPPLIER_CONFIGS
-from .transport_diagnostics import MANUAL_DISCONNECT, MANUAL_TIMEOUT, manual_transport_category, safe_message
+from .transport_diagnostics import MANUAL_DISCONNECT, MANUAL_TIMEOUT, MANUAL_TLS_EOF, manual_transport_category, safe_message
 
 STATES=frozenset({'COMMITTED','HTTP_CAPTURED_NOT_COMMITTED','FAILED','NOT_REQUESTED','UNCERTAIN','QUARANTINED'})
 MANUAL_TRANSPORT_ERRORS = frozenset({MANUAL_TIMEOUT, MANUAL_DISCONNECT})
@@ -25,12 +25,13 @@ def manual_transport_receipt(origin, url, job_id, evidence_path, *, expected_err
     path=Path(evidence_path)
     raw=path.read_bytes()
     exception=json.loads(raw)['diagnostics']['original_exception']
-    category=manual_transport_category(exception)
+    category=manual_transport_category(exception,allow_tls_eof=origin['source']=='kami')
     if category is None or (expected_error is not None
             and expected_error!=exception['type']+':'+exception['message']):
         raise ValueError('DEFERRED_TRANSPORT_PROOF_REQUIRED')
     proof={'job_id':job_id,'file':path.name,'sha256':hashlib.sha256(raw).hexdigest()}
-    reason={MANUAL_TIMEOUT:'READ_TIMEOUT_UNKNOWN',MANUAL_DISCONNECT:'REMOTE_DISCONNECTED_UNKNOWN'}[category]
+    reason={MANUAL_TIMEOUT:'READ_TIMEOUT_UNKNOWN',MANUAL_DISCONNECT:'REMOTE_DISCONNECTED_UNKNOWN',
+            MANUAL_TLS_EOF:'TLS_EOF_UNKNOWN'}[category]
     receipt={'url':url,'state':'QUARANTINED','origin':dict(origin),'timeout_evidence':proof,
              'isolation':{'before_ingest':True,'category':category,'reason':reason}}
     if not quarantine_evidence_present(receipt,{'url':url}):raise ValueError('DEFERRED_TIMEOUT_PROOF_REQUIRED')
@@ -143,7 +144,7 @@ def quarantine_evidence_present(receipt,entry):
     if category==MANUAL_REDIRECT:
         try:return _manual_redirect_proven(receipt,entry)
         except (OSError,ValueError,KeyError,TypeError):return False
-    if category in MANUAL_TRANSPORT_ERRORS:
+    if category in MANUAL_TRANSPORT_ERRORS or category == MANUAL_TLS_EOF:
         proof=receipt.get('timeout_evidence') or {}
         origin=receipt.get('origin') or {}
         try:
@@ -155,13 +156,19 @@ def quarantine_evidence_present(receipt,entry):
             raw=(job_dir(source,jid)/'transport-errors'/name).read_bytes()
             if hashlib.sha256(raw).hexdigest()!=proof['sha256']:return False
             record=json.loads(raw);diag=record['diagnostics']
+            if category == MANUAL_TLS_EOF and (
+                source!='kami' or jid<origin['job_id'] or diag['request_scope']!='product'
+                or diag.get('wire_outcome')!='UNKNOWN'
+            ):
+                return False
             return (receipt['url']==entry['url'] and record['url']==safe_message(entry['url'])
                     and record['job_id']==jid and record['owner_job_id']==origin['job_id']
                     and record['input_sha256']==origin['manifest_sha256']
                     and record['transport_started'] is True and record['http_status'] is None
                     and diag['source']==source and diag['request_scope'] in ('product','discovery')
                     and diag['response_available'] is False
-                    and manual_transport_category(diag['original_exception'])==category)
+                    and manual_transport_category(diag['original_exception'],
+                                                  allow_tls_eof=category==MANUAL_TLS_EOF)==category)
         except (OSError,ValueError,KeyError,TypeError):return False
     if receipt.get('isolation',{}).get('category')=='operator_scope':
         from .source_recovery import approved_scope_item
@@ -204,7 +211,8 @@ def classify(entries,receipts,sql_probe,*,source,parent_job_id,manifest_sha256):
             if state=='QUARANTINED' and not quarantine_evidence_present(receipt,entry):state='UNCERTAIN'
             if state=='QUARANTINED' and not (receipt.get('isolation',{}).get('before_ingest') is True and
                     receipt['isolation'].get('category') in ('parse','identity','http','matching','operator_scope',
-                                                            MANUAL_REDIRECT,MANUAL_STOP_INTERRUPTED,*MANUAL_TRANSPORT_ERRORS)):state='UNCERTAIN'
+                                                            MANUAL_REDIRECT,MANUAL_STOP_INTERRUPTED,MANUAL_TLS_EOF,
+                                                            *MANUAL_TRANSPORT_ERRORS)):state='UNCERTAIN'
             if state=='QUARANTINED' and receipt['isolation']['category']=='matching':
                 proof=receipt['isolation'].get('rejection_proof',{})
                 if not (proof.get('rollback_verified') is True and proof.get('sql_absent') is True and
@@ -350,6 +358,21 @@ class SourceCheckpoint:
                 self.state['terminal'][url]={'state':'NOT_REQUESTED','receipt':dict(entry),
                     'history':item['history']+[entry]}
                 self.state['frontier'].insert(0,url)
+    def restore_wire_refusal(self, receipt):
+        """Put a proven pre-dispatch refusal at the end of its original queue."""
+        from .manual_saved_recovery import proven_wire_refusal
+        url = receipt['url']
+        with self._change():
+            self.validator(url)
+            item = self.state['terminal'].get(url)
+            if (not item or item['state']!='UNCERTAIN' or url in self.state['inflight']
+                    or url in self.state['frontier'] or receipt['state']!='NOT_REQUESTED'
+                    or receipt['origin'] != item['receipt']['origin']
+                    or not proven_wire_refusal(receipt, {'url':url})):
+                raise ValueError('MANUAL_WIRE_REFUSAL_NOT_PROVEN')
+            self.state['terminal'][url] = {'state':'NOT_REQUESTED','receipt':deepcopy(receipt),
+                                           'history':item['history']+[deepcopy(receipt)]}
+            self.state['frontier'].append(url)
     def retry_network(self,urls):
         """Admit only proven, operator-selected network failures from a drained queue."""
         with self._change():

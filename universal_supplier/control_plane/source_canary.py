@@ -42,7 +42,7 @@ def validate_connection(connection):
     if (db,system,version,host,port)!=(DATABASE[2],SYSTEM,'17.11',DATABASE[0],DATABASE[1]) or Path(data).resolve()!=PGDATA.resolve():
         raise PermissionError('CANARY_CLUSTER_IDENTITY_MISMATCH')
 
-def build_preview(supplier_id,supplier,rows,config,limit,mode='REFRESH'):
+def build_preview(supplier_id,supplier,rows,config,limit,mode='REFRESH',*,discovery_known_urls=None):
     """Rows are already SQL-limited: (PK, external_id, URL, total unique known)."""
     from .source_runtime import checked_input,engine_fingerprint,runtime_enabled
     from .queue import normalized_domain
@@ -71,6 +71,8 @@ def build_preview(supplier_id,supplier,rows,config,limit,mode='REFRESH'):
            'canary':{'format':FORMAT,'mode':mode,'supplier_id':supplier_id,'max_products':limit,'selected':len(entries) if mode=='REFRESH' else 0,
                      'host_policy_approval':settings.get('host_policy_approval'),'safety_gate_size':gate,'max_discovery_pages':pages,'max_run_duration_seconds':duration,
                      'total_known':total,'supplier_enabled':enabled,'database':dict(TARGET)}}
+    if discovery_known_urls is not None:
+        value['discovery_known_urls']=discovery_known_urls
     checked_input(value,code);validate_input(value,settings,config)
     snapshot={'supplier_code':code,'adapter_name':code,'domain':normalized_domain(base),'crawl_type':'full',
               'crawl_settings':settings,'rate_settings':policy,'source_input':value}
@@ -133,6 +135,11 @@ class DispatchBudget:
         self.attempts=1 if value['canary']['format']=='source-canary/v1' else value['rate_policy']['max_attempts']
         self.robots_url=robots_url;self.robots_limit=robots_limit;self.products=[];self.robots=0;self.lock=threading.Lock()
         self.isolate_repeats=isolate_repeats
+    def select_discovered_products(self, urls):
+        if self.urls or self.products or len(urls)>self.limit:
+            raise ValueError('CANARY_DISCOVERED_SCOPE_CHANGED')
+        self.urls.update(urls)
+
     def __call__(self,url):
         with self.lock:
             if url==self.robots_url:

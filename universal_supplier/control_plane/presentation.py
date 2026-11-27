@@ -113,6 +113,8 @@ def job_message(value):
         return 'Ожидающее задание закрыто до начала сбора.'
     if upper == 'MANUAL_WORKER_BUSY':
         return 'Исполнитель был занят. Можно создать новый запуск.'
+    if upper == 'MANUAL_WAITING_EXPIRED':
+        return 'Пока задание ожидало запуска, истёк срок подтверждения. Можно создать новый запуск.'
     if upper == 'MANUAL_WORKER_REFUSED':
         return 'Подтверждение запуска не прошло проверку. Откройте поставщика, чтобы создать новый запуск.'
     if upper in {'SOURCE_ROBOTS_UNAVAILABLE','CANARY_ROBOTS_REQUEST_LIMIT'}:
@@ -183,6 +185,8 @@ def collection_issue_message(receipt):
         return 'Карточка ведёт на другой адрес. Исходный адрес отложен для проверки.'
     if category == 'manual_stop_interrupted':
         return 'Сбор остановлен во время запроса. Карточка оставлена на проверку.'
+    if category == 'manual_tls_eof':
+        return 'Защищённое соединение оборвалось до получения карточки. Адрес оставлен на проверку.'
     if category == 'matching':
         return job_message(reason) if 'EXISTING_LINK_CONFLICT' in str(reason) else 'Обновление требует проверки сопоставления.'
     if category == 'identity':

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 import logging
 import os
 import json
@@ -17,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from universal_supplier.postgres import PostgresConfig
 from universal_supplier.stage6e import (
@@ -565,6 +567,161 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         if callable(getattr(type(store),'automation_overview',None)):automation=store.automation_overview(rows)
         return templates.TemplateResponse(request, "suppliers.html", context(request, suppliers=rows,automation=automation,active="suppliers"))
 
+    def parallel_collection_guard(request):
+        from .manual_collection import enabled as manual_enabled
+        from .source_runtime import runtime_enabled
+        from universal_supplier.partner_pilot import enabled as pilot_enabled
+
+        user = guard(request, {'ADMIN'})
+        if getattr(type(store), 'read_only', False) or not manual_enabled() or not runtime_enabled() or pilot_enabled():
+            raise HTTPException(403, 'Параллельный сбор здесь недоступен')
+        return user
+
+    def parallel_collection_sources():
+        from .manual_collection import manual_launch_settings
+        from .source_jobs import RUNTIME_SOURCES
+        from .supplier_automation import settings_for
+        from universal_supplier.adapters.ivstankomaster import CODE as discovery_source
+
+        sources = []
+        for row in store.suppliers():
+            if row['code'] not in RUNTIME_SOURCES:
+                continue
+            available = min(100000, row.get('products') or 0)
+            busy = row.get('job_status') in ('queued', 'running') or row.get('has_queued_job') or row.get('has_running_job')
+            sources.append(dict(id=row['id'], name=row.get('name') or row['code'],
+                                mode='DISCOVERY' if row['code']==discovery_source or not available else 'REFRESH',
+                                busy=bool(busy),limit=available or 20,
+                                settings=manual_launch_settings(row['code'], settings_for(row))))
+        return sources
+
+    @app.get('/suppliers/manual-parallel', response_class=HTMLResponse)
+    def parallel_collection_page(request: Request):
+        parallel_collection_guard(request)
+        sources = parallel_collection_sources()
+        count = len(sources) if any(row['limit'] > 0 and not row['busy'] for row in sources) else 0
+        resume_candidates = queue.manual_resume_candidates()
+        return templates.TemplateResponse(request, 'manual_parallel.html',
+            context(request, active='suppliers', sources=sources, parallel_options=range(1, count + 1),
+                    resume_candidates=resume_candidates, resume_options=range(1, len(sources) + 1)))
+
+    def launch_parallel_jobs(planned, user_id, key):
+        from .manual_collection import launch
+        from .presentation import MANUAL_RESUME_BLOCKERS
+
+        results = []
+        for row,count,approval in planned:
+            sid = row['id']
+            try:
+                result = queue.enqueue(sid, trigger_type='manual', crawl_type='full', requested_by_user_id=user_id,
+                    source_mode=approval.mode, source_limit=count, resume_job_id=row.get('parent_job_id'),
+                    manual_request=approval)
+            except (ValueError, PermissionError, KeyError) as error:
+                if approval.mode == 'RESUME':
+                    message = MANUAL_RESUME_BLOCKERS.get(str(error),
+                        'Очередь не прошла проверку. Откройте предыдущий запуск для подробностей.')
+                else:
+                    message = 'Запуск не подготовлен. Проверьте настройки поставщика.'
+                results.append(dict(row, message=message))
+                continue
+            except Exception:
+                results.append(dict(row, message='Не удалось подтвердить постановку в очередь. Проверьте задания поставщика.'))
+                continue
+            if not result.enqueued:
+                results.append(dict(row, job_id=result.deduplicated_job_id,
+                                    message='У поставщика уже есть активное задание.'))
+                continue
+            try:
+                if manual_launcher is not None:
+                    manual_launcher(result.job_id)
+                else:
+                    launch(result.job_id, key=key)
+            except Exception:
+                message = 'Задание сохранено. Его можно запустить со страницы поставщика.'
+            else:
+                message = 'В очереди.'
+            results.append(dict(row, job_id=result.job_id, message=message))
+        return results
+
+    @app.post('/suppliers/manual-parallel', response_class=HTMLResponse)
+    async def parallel_collection_start(request: Request):
+        from .manual_collection import ManualRequest, parallel_limit
+
+        user = parallel_collection_guard(request)
+        require_trusted_origin(request)
+        raw = await form_values(request)
+        check_csrf(request, raw)
+        sources = {f"include_{row['id']}": row for row in await run_in_threadpool(parallel_collection_sources)}
+        selected = {key for key,value in raw.items() if key.startswith('include_') and value == 'yes'}
+        if not selected or not selected <= sources.keys():
+            return page_error(request, 'Выберите доступных поставщиков')
+        key = signer.secret.decode('utf-8')
+        planned = []
+        try:
+            maximum = parallel_limit(optional_int(raw.get('max_parallel_suppliers'), 'Одновременных сборов'))
+            if maximum > len(sources):
+                raise ValueError('Число одновременных сборов превышает число доступных поставщиков')
+            hours = optional_int(raw.get('duration_hours'), 'Лимит времени')
+            group_mode=raw.get('collection_mode','')
+            if group_mode not in ('','DISCOVERY'):
+                raise ValueError('Выберите режим сбора')
+            for field,row in sources.items():
+                if field not in selected:
+                    continue
+                sid = row['id']
+                count = optional_int(raw.get(f'limit_{sid}'), 'Количество карточек')
+                cfg = row['settings']
+                revision = optional_int(raw.get(f'revision_{sid}'), 'Версия настроек')
+                if revision != cfg['revision'] or not row['limit']:
+                    raise ValueError('Список или настройки изменились. Откройте форму заново')
+                mode=group_mode or row['mode']
+                approval = ManualRequest(user, key, str(cfg['delay_min_seconds']), str(cfg['delay_max_seconds']),
+                    revision, mode, hours, max_parallel_suppliers=maximum)
+                approval.validate(sid, count, 'manual', mode)
+                planned.append((row, count, approval))
+        except (ValueError, PermissionError) as error:
+            return page_error(request, str(error))
+
+        results = await run_in_threadpool(launch_parallel_jobs, planned, user.id, key)
+        return templates.TemplateResponse(request, 'manual_parallel.html',
+            context(request, active='suppliers', results=results))
+
+    @app.post('/suppliers/manual-parallel/resume', response_class=HTMLResponse)
+    async def parallel_collection_resume(request: Request):
+        from .manual_collection import ManualRequest, parallel_limit
+
+        user = parallel_collection_guard(request)
+        require_trusted_origin(request)
+        raw = await form_values(request)
+        check_csrf(request, raw)
+        selected = {key:value for key,value in raw.items() if key.startswith('resume_')}
+        if not selected:
+            return page_error(request, 'Выберите сборы для продолжения')
+        candidates = {f"resume_{row['id']}": row
+                      for row in await run_in_threadpool(queue.manual_resume_candidates)}
+        if not selected.keys() <= candidates.keys():
+            return page_error(request, 'Список незавершённых сборов изменился. Обновите страницу.')
+        key = signer.secret.decode('utf-8')
+        planned = []
+        try:
+            maximum = parallel_limit(optional_int(raw.get('max_parallel_suppliers'), 'Одновременных сборов'))
+            for field,value in selected.items():
+                row = candidates[field]
+                if optional_int(value, 'Исходное задание') != row['parent_job_id']:
+                    raise ValueError('Исходное задание изменилось. Обновите страницу.')
+                hours=optional_int(raw.get(f"hours_{row['id']}"), 'Лимит времени')
+                if hours is None:hours=row['time']['hours']
+                approval = ManualRequest(user, key, '', '', -1, 'RESUME', duration_hours=hours,
+                                         max_parallel_suppliers=maximum)
+                approval.validate(row['id'], None, 'manual', 'RESUME')
+                planned.append((row, None, approval))
+        except (ValueError, PermissionError) as error:
+            return page_error(request, str(error))
+
+        results = await run_in_threadpool(launch_parallel_jobs, planned, user.id, key)
+        return templates.TemplateResponse(request, 'manual_parallel.html',
+            context(request, active='suppliers', results=results))
+
     @app.get('/scheduler/execution',response_class=HTMLResponse)
     def automation_executions(request: Request):
         guard(request)
@@ -904,7 +1061,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):
-        from .manual_collection import ManualRequest, TERMINAL, enabled as manual_enabled
+        from .manual_collection import ManualRequest, TERMINAL, enabled as manual_enabled, resume_time_suggestion
         from .presentation import MANUAL_RESUME_BLOCKERS, collection_issue_message
         from .source_runtime import runtime_enabled
         from .transport_diagnostics import safe_message
@@ -925,6 +1082,7 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         runtime = metadata.get('source_runtime') or {}
         manual_resume_available = None
         manual_resume_blocker = None
+        manual_resume_time = None
         if (parent_id and item.get('latest_supplier_job_id', parent_id) == parent_id
                 and item['status'] in TERMINAL and user.role in MUTATING_ROLES
                 and not getattr(type(store), 'read_only', False) and manual_enabled() and runtime_enabled()):
@@ -942,6 +1100,10 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
                         code, 'Не удалось подтвердить сохранённую очередь. Обновите страницу или обратитесь к администратору.')
                 else:
                     manual_resume_available = 'retry_network' if approval.retry_network else 'continue'
+                    if manual_resume_available=='continue' and user.role=='ADMIN':
+                        started,finished=item.get('started_at'),item.get('finished_at')
+                        elapsed=(finished-started).total_seconds() if isinstance(started,datetime) and isinstance(finished,datetime) else None
+                        manual_resume_time=resume_time_suggestion(runtime,elapsed)
         receipts = runtime.get('quarantined') or []
         progress = run_collection_progress(metadata)
         issues = []
@@ -954,7 +1116,8 @@ def create_app(*, store=None, queue=None, admin_store=None, stage6e_service=None
         return templates.TemplateResponse(request, "run_detail.html",
             context(request, item=item, active="runs", collection_progress=progress,
                     collection_issues=issues, collection_issues_total=len(receipts),
-                    manual_resume_available=manual_resume_available, manual_resume_blocker=manual_resume_blocker))
+                    manual_resume_available=manual_resume_available, manual_resume_blocker=manual_resume_blocker,
+                    manual_resume_time=manual_resume_time))
 
     def progress_response(item):
         if item is None:raise HTTPException(404, "Запуск не найден")

@@ -1,13 +1,16 @@
 """The authenticated manual path uses the native queue, fetcher and receipts."""
 from dataclasses import replace
 from contextlib import nullcontext
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.client import IncompleteRead, RemoteDisconnected
+import errno
 import json
 from pathlib import Path
 import socket
+import ssl
 from types import SimpleNamespace
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request
 
 import pytest
@@ -44,10 +47,11 @@ def native_manual(*, fail_tail=False, end_window=False, block=False, robots_repl
                   product_error=TimeoutError, second_error=None, all_cards_fail=False,
                   card_count=3, initial_network_failures=0, duration=100, block_card=None,
                   stop_during_cooldown=False, redirect_target=None, redirect_card=1,
-                  first_card_failures=1, missing_cards=0, pause_card=None):
+                  first_card_failures=1, missing_cards=0, pause_card=None,
+                  max_attempts=2):
     code='partner_st'
     base='https://partner-st.ru'
-    rate_values={'max_attempts':2,'max_concurrency':1,'jitter_max_seconds':0}
+    rate_values={'max_attempts':max_attempts,'max_concurrency':1,'jitter_max_seconds':0}
     if all_cards_fail:rate_values['consecutive_error_threshold']=2
     rate=approved_policy(code,base,rate_values)
     known=[{'url':base+f'/item-{i}/','source_external_id':str(i)} for i in range(1,card_count+1)]
@@ -149,7 +153,7 @@ def test_consecutive_transport_failures_stop_with_resumable_queue(product_error)
     run,job,backend,calls=native_manual(all_cards_fail=True,product_error=product_error,duration=600)
     result=run(job)
     assert calls==[1,2,3,1,2] and not backend.writes
-    assert result['termination_reason']=='SOURCE_NETWORK_CIRCUIT_OPEN'
+    assert result['termination_reason']=='SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW'
     assert result['network_pauses']==3
     assert result['deferred']==3 and result['remaining']==1 and result['resume_available']
     starts=backend.product_started_at
@@ -178,6 +182,102 @@ def test_night_collection_waits_after_five_failed_cards(block_card,stop_during_c
     assert any(summary.get('phase')=='NETWORK_COOLDOWN' for summary in backend.summaries)==(duration==600)
     if len(expected_calls)>5:
         assert backend.product_started_at[5]-backend.product_started_at[4]>=60
+
+
+def test_long_outage_recovers_after_more_than_three_pauses():
+    run,job,backend,calls=native_manual(card_count=6,initial_network_failures=9,
+        duration=1800,robots_replies=iter((200,)))
+    result=run(job)
+    assert calls==['robots',1,2,3,4,5,6,1,2,3,4,5,6]
+    assert result['network_pauses']==5 and result['termination_reason'] is None
+    assert result['remaining']==0 and len(backend.writes)==result['sql_committed']==3
+    assert result['deferred']==3 and result['canary']['robots_requests']==1
+    starts=backend.product_started_at
+    assert [b-a for a,b in zip(starts[4:9],starts[5:10])]==pytest.approx([60,120,240,240,240])
+
+
+def test_signed_single_supplier_window_prevents_a_late_probe():
+    run,job,backend,calls=native_manual(card_count=6,initial_network_failures=5,duration=600)
+    job.settings_snapshot['manual_collection']['expires_at']=(
+        datetime.now(timezone.utc)+timedelta(seconds=45)).isoformat()
+    result=run(job)
+    assert calls==[1,2,3,4,5] and backend.writes==[]
+    assert result['termination_reason']=='SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW'
+    assert result['resume_available']
+
+
+@pytest.mark.parametrize(('attempts','expected'),[
+    (1,[1,2,3]), (2,[1,2,3,1]), (3,[1,2,3,1,1]),
+])
+def test_network_item_retries_stay_behind_other_cards_and_within_signed_cap(attempts,expected):
+    run,job,backend,calls=native_manual(first_card_failures=2,max_attempts=attempts,
+        robots_replies=iter((200,)),robots_limit=min(2,attempts))
+    result=run(job)
+    assert calls==['robots',*expected]
+    assert result['canary']['product_requests']==[
+        'https://partner-st.ru/item-'+str(item)+'/' for item in expected]
+    assert result['sql_committed']==len(backend.writes)==(3 if attempts==3 else 2)
+    assert result['deferred']==(0 if attempts==3 else 1)
+
+
+@pytest.mark.parametrize('error',[
+    lambda: URLError(socket.gaierror(socket.EAI_AGAIN, 'temporary DNS failure')),
+    lambda: OSError(errno.ENETUNREACH, 'network unavailable'),
+])
+def test_temporary_connection_setup_failure_retries_after_other_cards(error):
+    run,job,backend,calls=native_manual(product_error=lambda _message:error())
+    result=run(job)
+    assert calls==[1,2,3,1]
+    assert result['status']=='succeeded' and len(backend.writes)==3
+
+
+def test_manual_catalog_node_recovers_in_same_job():
+    from test_ivstankomaster import BASE, CODE, URL, card
+    from universal_supplier.control_plane.source_discovery import root_urls
+
+    seed,=root_urls(CODE)
+    rate=approved_policy(CODE,BASE,{'max_attempts':3,'consecutive_error_threshold':2})
+    source_input={'format':'source-runtime-input/v1','supplier_code':CODE,'mode':'DISCOVERY',
+                  'entries':[],'seeds':[seed],'rate_policy':rate.snapshot(),
+                  'engine_sha256':engine_fingerprint()}
+    settings={'collection_mode':'DISCOVERY','persist_source_data':True,'max_products':1,
+              'max_discovery_pages':5,'max_run_duration_seconds':300,
+              'host_policy_approval':approval_for(BASE)}
+    job=CrawlJob(1,1,CODE,CODE,BASE+'/','manual','full','running',datetime.now(timezone.utc),
+        {'source_input':source_input,'rate_settings':rate.snapshot(),'crawl_settings':settings,
+         'manual_collection':{'signed':True}})
+    clock=Clock()
+    backend=Backend()
+    calls=[]
+
+    class Client:
+        def get_validated(self,url,*,validator,timeout_seconds):
+            validator(url)
+            self.before_request(url)
+            calls.append(url)
+            if url.endswith('/robots.txt'):
+                return HttpResponse(url,200,'text/plain',b'User-agent: *\nAllow: /\n')
+            if url==seed:
+                if calls.count(seed)<=2:
+                    raise TimeoutError('catalog temporarily unavailable')
+                body=f'<a href="{URL}">Станок</a>'
+            else:
+                body=card('<p>280600 (с НДС)</p>')
+            return HttpResponse(url,200,'text/html; charset=utf-8',body.encode())
+
+    lease=LEASED_HOST.set(job.domain)
+    auth=MANUAL_EXECUTION.set(job.id)
+    try:
+        result=run_source(job,None,backend_factory=lambda cfg,code:backend,
+                          client_factory=Client,clock=clock)
+    finally:
+        MANUAL_EXECUTION.reset(auth)
+        LEASED_HOST.reset(lease)
+
+    assert calls==[BASE+'/robots.txt',seed,seed,seed,URL]
+    assert result['status']=='succeeded',result
+    assert result['network_pauses']==result['sql_committed']==len(backend.writes)==1
+    assert result['discovery_visited']==1 and not result['deferred']
 
 
 def test_timeout_then_reset_does_not_stop_remaining_cards():
@@ -332,12 +432,145 @@ def test_old_transport_receipt_must_match_terminal_error():
                                  expected_error='TimeoutError:no response')
 
 
+@pytest.mark.parametrize('wrong_evidence',[None,'certificate','scope','http','wrong_job'])
+def test_kami_tls_eof_requires_an_exact_no_response_archive_and_sql_probe(wrong_evidence):
+    from universal_supplier.control_plane.source_resume import classify, retryable_network_urls
+    from universal_supplier.control_plane.source_runtime import job_dir
+    from universal_supplier.control_plane.transport_diagnostics import exception_evidence, safe_message
+
+    source,owner,job_id='kami',17,19
+    url='https://www.stanki.ru/catalog/test-1/'
+    origin={'source':source,'job_id':owner,'manifest_sha256':'a'*64}
+    error=ssl.SSLEOFError(8,'connection closed while reading')
+    error.reason='UNEXPECTED_EOF_WHILE_READING'
+    if wrong_evidence=='certificate':
+        error=ssl.SSLCertVerificationError(1,'certificate verify failed')
+    outer=URLError(error)
+    evidence=job_dir(source,job_id)/'transport-errors'/('b'*64+'.json')
+    evidence.parent.mkdir(parents=True)
+    record={'url':url,'job_id':18 if wrong_evidence=='wrong_job' else job_id,'owner_job_id':owner,
+            'input_sha256':origin['manifest_sha256'],'transport_started':True,
+            'http_status':200 if wrong_evidence=='http' else None,
+            'diagnostics':{**exception_evidence(outer),'source':source,
+            'request_scope':'robots' if wrong_evidence=='scope' else 'product',
+            'response_available':False,'wire_outcome':'UNKNOWN'}}
+    evidence.write_text(json.dumps(record),encoding='utf-8')
+    if wrong_evidence:
+        with pytest.raises(ValueError):
+            manual_transport_receipt(origin,url,job_id,evidence,expected_error='URLError:'+safe_message(outer))
+        return
+    receipt=manual_transport_receipt(origin,url,job_id,evidence,expected_error='URLError:'+safe_message(outer))
+    assert receipt['isolation']['category']=='manual_tls_eof'
+    def classified(probe):
+        return classify([{'url':url}],[receipt],lambda *args:probe,source=source,parent_job_id=owner,
+                        manifest_sha256=origin['manifest_sha256'])[0]['state']
+    assert classified('NOT_FOUND')=='QUARANTINED'
+    assert classified('COMMITTED')==classified('UNKNOWN')=='UNCERTAIN'
+    assert not retryable_network_urls({'terminal':{url:{'state':'QUARANTINED','receipt':receipt}}})
+
+
+def test_kami_fetcher_classifies_tls_eof_without_retry():
+    from universal_supplier.control_plane.host_fetch import BoundedHostFetcher
+    source='kami';base='https://www.stanki.ru'
+    rate=approved_policy(source,base,{'max_attempts':3,'max_concurrency':1})
+    calls=[]
+    class Client:
+        def get_validated(self,url,**kwargs):
+            self.before_request(url)
+            calls.append(url)
+            error=ssl.SSLEOFError(8,'connection closed while reading')
+            error.reason='UNEXPECTED_EOF_WHILE_READING'
+            raise URLError(error)
+    runner=BoundedHostFetcher('www.stanki.ru',rate,Client,validator=lambda _:None,robots_allowed=lambda _:True,
+                            robots_delay_seconds=0,lease_acquired=True,clock=Clock(),source=source,
+                            approval=approval_for(base),manual_product_attempts=True)
+    url=base+'/catalog/test-1/'
+    outcome,=runner.fetch([url],limit=1,seconds=60)
+    assert calls==[url] and outcome.disconnect_refusal and outcome.response is None
+    assert outcome.error=='RemoteDisconnectRefusal:TLS_EOF_UNKNOWN'
+    assert runner.metrics.network_errors==1 and runner.metrics.retry_count==0 and not runner.stop_reason
+
+
 def test_other_urlerror_keeps_unknown_result_blocked():
     run,job,backend,calls=native_manual(product_error=URLError)
     result=run(job)
     assert calls==[1] and not backend.writes
     assert result['termination_reason']=='SOURCE_CARD_HTTP_FAILED'
     assert result['deferred']==0 and not result['resume_available']
+
+
+@pytest.mark.parametrize('code',('ltt_msk','ltt_sib'))
+def test_ltt_unicode_wire_form_stays_inside_approved_manual_batch(code):
+    from test_source_jobs import saved_case
+    from universal_supplier.control_plane.source_jobs import parse_existing
+    from universal_supplier.http_capture import public_transport_url
+
+    body,url,charset,_=saved_case(code)
+    url=url.rstrip('/')+'-проверка/'
+    wire=public_transport_url(url)
+    assert wire != url
+    base='https://'+urlsplit(url).hostname
+    rate=approved_policy(code,base,{'max_concurrency':1})
+    ext=parse_existing(code,body.decode(charset),url).site_internal_id
+    supplier=(code,code,base+'/',True,{'host_policy_approval':approval_for(base)},rate.snapshot())
+    snapshot=build_preview(1,supplier,[(1,ext,url,1)],CFG,1)['snapshot']
+    snapshot['manual_collection']={'robots_attempts':1}
+    job=CrawlJob(1,1,code,code,base+'/','manual','full','running',datetime.now(timezone.utc),snapshot)
+    calls=[];backend=Backend()
+    class Client:
+        def get_validated(self,target,*,validator,timeout_seconds):
+            validator(target)
+            validator(public_transport_url(target))
+            self.before_request(target)
+            calls.append(target)
+            if target.endswith('/robots.txt'):
+                return HttpResponse(target,200,'text/plain',b'User-agent: *\nAllow: /\n')
+            return HttpResponse(wire,200,'text/html; charset='+charset,body)
+    lease=LEASED_HOST.set(job.domain);manual=MANUAL_EXECUTION.set(job.id)
+    try:
+        result=run_source(job,CFG,backend_factory=lambda *args:backend,client_factory=Client,clock=Clock())
+    finally:
+        MANUAL_EXECUTION.reset(manual);LEASED_HOST.reset(lease)
+    assert calls==[base+'/robots.txt',url]
+    assert result['sql_committed']==1 and result['canary']['product_requests']==[url]
+
+
+@pytest.mark.parametrize('slug',['litsenziya_primo_credit_token','litsenziya_primo_credit_token_bez_ogranicheniy'])
+def test_optimum_public_license_replays_only_verified_saved_capture(slug):
+    import hashlib
+    from universal_supplier.commercial_persistence import _safe_url
+    from universal_supplier.control_plane.manual_saved_recovery import ARCHIVE_ERROR, optimum_archive_receipt
+    from universal_supplier.control_plane.source_runtime import job_dir
+
+    url='https://optimum.su/catalog/aksessuary/'+slug+'/'
+    assert _safe_url(url)==url
+    for unsafe in (url+'?token=example',url+'#token',url.replace('optimum.su','example.invalid'),
+                   url.replace('https://','https://anyone@'),url.rstrip('/')+'_other/'):
+        with pytest.raises(ValueError):
+            _safe_url(unsafe)
+    origin={'source':'optimum','job_id':17,'manifest_sha256':'a'*64}
+    payload=b'<h1>Public licence</h1>'
+    evidence_sha=hashlib.sha256(payload).hexdigest()
+    folder=job_dir('optimum',17)
+    body=folder/'captures'/(evidence_sha+'.html')
+    observed='2026-11-26T00:00:00+00:00'
+    record_path=folder/'responses'/(hashlib.sha256((url+'|'+observed).encode()).hexdigest()+'.json')
+    body.parent.mkdir(parents=True)
+    record_path.parent.mkdir()
+    body.write_bytes(payload)
+    record_path.write_text(json.dumps(dict(origin_job_id=17,input_sha256=origin['manifest_sha256'],
+        url=url,final_url=url,http_status=200,error=None,redirects=[],response_sha256=evidence_sha,
+        evidence_sha256=evidence_sha,file=str(body),content_type='text/html',
+        observed_at=observed)),encoding='utf-8')
+    failed=dict(state='FAILED',reason=ARCHIVE_ERROR,origin=origin,url=url)
+    receipt=optimum_archive_receipt(failed,record_path)
+    assert receipt['state']=='HTTP_CAPTURED_NOT_COMMITTED'
+    assert receipt['original_capture_metadata']['observed_at']==observed
+    with pytest.raises(ValueError,match='MANUAL_SAVED_CAPTURE_NOT_PROVEN'):
+        optimum_archive_receipt({**failed,'reason':'HTTP_500'},record_path)
+    body.write_bytes(b'tampered')
+    with pytest.raises(ValueError,match='MANUAL_SAVED_CAPTURE_NOT_PROVEN'):
+        optimum_archive_receipt(failed,record_path)
 
 
 def test_bounded_manual_disconnect_goes_to_tail_before_retry():
@@ -351,7 +584,8 @@ def test_bounded_manual_disconnect_goes_to_tail_before_retry():
     assert details['category']=='manual_remote_disconnect'
 
 
-def test_manual_resume_skips_commit_and_retries_tail_in_saved_order():
+@pytest.mark.parametrize('duration_hours',[None,13])
+def test_manual_resume_skips_commit_and_retries_tail_in_saved_order(duration_hours):
     run,job,backend,calls=native_manual(end_window=True)
     first=run(job)
     assert calls==[1,2] and first['sql_committed']==1 and first['resume_available']
@@ -363,10 +597,13 @@ def test_manual_resume_skips_commit_and_retries_tail_in_saved_order():
                                      'checkpoint_sha256':checkpoint['checksum']},
         'crawl_settings':{**snapshot['crawl_settings'],'collection_mode':'RESUME',
                           'resume_owner_job_id':1,'resume_input_sha256':first['input_sha256']}})
+    if duration_hours is not None:
+        resumed.settings_snapshot['manual_resume']['duration_hours']=duration_hours
     second=run(resumed)
     assert calls==[1,2,3,1]
     assert second['sql_committed']==3 and second['sql_committed_this_job']==2
     assert len(backend.writes)==3 and second['deferred']==0
+    assert second.get('run_duration_budget_seconds')==(duration_hours*3600 if duration_hours else None)
 
 
 def test_manual_rate_limit_still_stops_with_checkpoint():

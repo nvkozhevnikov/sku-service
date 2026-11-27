@@ -1,4 +1,7 @@
 {% extends 'base.html' %}{% from '_supplier_cards.html' import supplier_cards with context %}{% block content %}
 <div class="pagehead"><div><h2>Источники</h2><p>Состояние сбора и переход к настройкам поставщика.</p></div><div class="actions"><a class="button secondary" href="/exports/suppliers.xlsx">Скачать таблицу</a><a class="quiet-link" href="/exports/suppliers.csv">Скачать CSV</a></div></div>
+{% if current_user.role=='ADMIN' and manual_collection_enabled and source_runtime_enabled and not control_plane_read_only and not partner_pilot_enabled %}
+<p><a class="button" href="/suppliers/manual-parallel">Параллельный сбор</a></p>
+{% endif %}
 {{supplier_cards(suppliers)}}
 {% endblock %}

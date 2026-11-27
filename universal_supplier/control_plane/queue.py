@@ -119,7 +119,7 @@ class PostgresJobQueue:
                 WHERE status='queued' AND settings_snapshot->'automation'->>'approval_sha256'=%s""",(sha,))
         for supplier_id,job_id in running:self.stop_source(supplier_id,job_id)
 
-    def _canary_preview(self,connection,cursor,supplier_id,supplier,limit,mode='REFRESH'):
+    def _canary_preview(self,connection,cursor,supplier_id,supplier,limit,mode='REFRESH',*,discovery_new_only=False):
         from .source_canary import limit_value,validate_config,validate_connection,build_preview
         limit_value(limit);validate_config(self.config);validate_connection(connection)
         from .automation_execution import ACTIVE
@@ -128,6 +128,25 @@ class PostgresJobQueue:
             if mode!='REFRESH' or limit!=ACTIVE.value['suppliers'][supplier[0]]['limits']['REFRESH']:
                 raise PermissionError('COMMERCIAL_REFRESH_LIMIT_CHANGED')
             return preview(self.config,supplier_id,supplier)
+        if discovery_new_only:
+            from .source_jobs import validate_url
+            cursor.execute("""SELECT DISTINCT address.url COLLATE "C"
+                FROM source_products p
+                CROSS JOIN LATERAL (VALUES (p.source_url), (p.canonical_url)) AS address(url)
+                WHERE p.supplier_id=%s AND p.active AND p.external_id_is_stable AND address.url IS NOT NULL
+                ORDER BY 1 LIMIT 200001""", (supplier_id,))
+            known_rows=cursor.fetchall()
+            if len(known_rows)>200000:
+                raise ValueError('Слишком много сохранённых адресов для одного поиска')
+            known_urls=[]
+            for url, in known_rows:
+                try:
+                    validate_url(supplier[0],url)
+                except ValueError:
+                    continue
+                known_urls.append(url)
+            return build_preview(supplier_id,supplier,[],self.config,limit,mode,
+                                 discovery_known_urls=known_urls)
         cursor.execute('''WITH known AS (
             SELECT DISTINCT ON (coalesce(canonical_url,source_url)) id,external_id,coalesce(canonical_url,source_url) AS url
             FROM source_products WHERE supplier_id=%s AND active AND external_id_is_stable
@@ -231,6 +250,9 @@ class PostgresJobQueue:
             require(source_enabled, 'Источник выключен. Закройте ожидающее задание перед новым запуском')
             require(normalized_domain(base_url) == snapshot.get('domain'), 'Адрес источника изменился. Закройте ожидающее задание')
             approval = verify(snapshot, key)
+            if 'start_by' in approval:
+                require(utcnow() < datetime.fromisoformat(approval['start_by']),
+                        'Время ожидания запуска истекло. Закройте ожидающее задание.')
             require((approval['actor_id'], approval['actor_role'], approval['actor_sv']) ==
                     (actor.id, actor.role, actor.session_version), 'Права изменились. Закройте ожидающее задание')
 
@@ -253,6 +275,50 @@ class PostgresJobQueue:
         if not previous:
             raise ValueError('RESUME_PARENT_NOT_LATEST')
         return previous
+
+    def manual_resume_candidates(self):
+        """Find latest unfinished manual runs. Enqueue verifies each checkpoint."""
+        from .manual_collection import TERMINAL, resume_time_suggestion
+        from .source_jobs import RUNTIME_SOURCES
+
+        with self._connect() as connection:
+            connection.read_only = True
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT s.id,s.name,last_job.id,r.id,
+                           jsonb_build_object(
+                             'remaining',rt->'remaining','discovery_remaining',rt->'discovery_remaining',
+                             'resume_available',rt->'resume_available',
+                             'approved_total_cap',rt->'approved_total_cap',
+                             'sql_committed',rt->'sql_committed',
+                             'sql_committed_this_job',rt->'sql_committed_this_job',
+                             'effective_rate_policy',rt->'effective_rate_policy'
+                           ),EXTRACT(EPOCH FROM (r.finished_at-r.started_at))::double precision
+                      FROM suppliers s
+                      JOIN LATERAL (
+                          SELECT id,status,crawl_run_id,settings_snapshot
+                            FROM crawl_jobs
+                           WHERE supplier_id=s.id AND status<>'skipped_already_queued'
+                           ORDER BY id DESC LIMIT 1
+                      ) last_job ON true
+                      JOIN crawl_runs r ON r.id=last_job.crawl_run_id
+                      CROSS JOIN LATERAL (SELECT r.metadata->'source_runtime' AS rt) metadata
+                     WHERE s.code=ANY(%s) AND s.adapter_name=s.code
+                       AND last_job.status=ANY(%s) AND last_job.settings_snapshot ? 'manual_collection'
+                       AND (rt->>'termination_reason') IS DISTINCT FROM 'ROBOTS_REQUIRES_SLOWER_PROFILE'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM crawl_jobs active
+                            WHERE active.supplier_id=s.id AND active.status IN ('queued','running')
+                       )
+                     ORDER BY s.name,s.id
+                """, (list(RUNTIME_SOURCES), list(TERMINAL)))
+                return [
+                    dict(id=sid, name=name, parent_job_id=parent, run_id=run, remaining=runtime['remaining'],
+                         time=resume_time_suggestion(runtime,elapsed))
+                    for sid,name,parent,run,runtime,elapsed in cursor.fetchall()
+                    if any(type(runtime[key]) is int and runtime[key]>0 for key in ('remaining','discovery_remaining'))
+                       or runtime['resume_available'] is True
+                ]
 
     def manual_resume_status(self, supplier_id, job_id, request):
         """Read-only equivalent of the resume admission used at enqueue."""
@@ -453,18 +519,31 @@ class PostgresJobQueue:
             )
             return EnqueueResult(cursor.fetchone()[0], "queued")
 
-    def claim_next(self, *, job_id=None, manual_validator=None) -> CrawlJob | None:
+    def claim_next(self, *, job_id=None, manual_validator=None, manual_max_parallel=None) -> CrawlJob | None:
+        from .manual_collection import parallel_limit
+        from .scheduler_main import read_max_parallel_supplier_jobs
+
         if job_id is not None and (type(job_id) is not int or job_id<1 or not callable(manual_validator)):
             raise PermissionError('Нужен точный подтверждённый номер ручного задания')
+        ordinary_maximum = read_max_parallel_supplier_jobs()
+        maximum = ordinary_maximum
+        if manual_max_parallel is not None:
+            if job_id is None:
+                raise PermissionError('Параметр параллельного сбора действует только для ручного задания')
+            maximum = parallel_limit(manual_max_parallel)
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
             # Serialize claims across worker processes, not only each thread pool.
             # Existing host session lease remains the final network guard.
             cursor.execute('SELECT pg_advisory_xact_lock(%s)', (8611011,))
-            cursor.execute("SELECT count(*) FROM crawl_jobs WHERE status='running'")
-            # Global cap across worker processes: the same setting the
-            # orchestrator uses (default 2), not a hard-coded 2 (review K5).
-            from .scheduler_main import read_max_parallel_supplier_jobs
-            if cursor.fetchone()[0] >= read_max_parallel_supplier_jobs():
+            capacity_sql = "SELECT count(*) FROM crawl_jobs WHERE status='running'"
+            if maximum > ordinary_maximum:
+                capacity_sql = """SELECT count(*), count(*) FILTER (WHERE NOT (settings_snapshot ? 'manual_collection'))
+                    FROM crawl_jobs WHERE status='running'"""
+            cursor.execute(capacity_sql)
+            capacity = cursor.fetchone()
+            # Separately authorized background jobs retain the ordinary global limit.
+            effective_maximum = ordinary_maximum if len(capacity) > 1 and capacity[1] else maximum
+            if capacity[0] >= effective_maximum:
                 return None
             # Frozen deadlines remain evidence. An exact approved extension must
             # also govern queue expiry, before per-snapshot dispatch validation.
@@ -514,7 +593,11 @@ class PostgresJobQueue:
                 if row[0]!=job_id or not row[9].get('manual_collection'):raise PermissionError('Чужое задание не запускается')
                 if normalized_domain(row[4]) != row[9].get('domain'):
                     raise PermissionError('Домен источника изменился')
-                manual_validator(row[9])
+                approval = manual_validator(row[9])
+                if manual_max_parallel is not None and (
+                    not isinstance(approval, dict) or approval.get('max_parallel_suppliers') != maximum
+                ):
+                    raise PermissionError('Изменился подтверждённый лимит параллельного сбора')
             from . import automation_execution
             if automation_execution.ACTIVE is not None and not row[9].get('automation'):
                 # Deliberate hard stop: a session starts only with no foreign queued
@@ -624,6 +707,9 @@ class InMemoryJobQueue:
     def __init__(self) -> None:
         self.jobs: list[dict[str, Any]] = []
         self._lock = threading.Lock()
+
+    def manual_resume_candidates(self):
+        return []
 
     def enqueue(self, supplier_id: int, *, trigger_type: str, crawl_type: str,
                 scheduled_for: datetime | None = None, settings_snapshot: dict | None = None,

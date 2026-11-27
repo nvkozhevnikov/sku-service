@@ -1,5 +1,9 @@
 {% set cfg=parsing.settings %}
-<h3>Сбор товаров</h3><p>{% if item.code=='ivstankomaster' %}Система обойдёт открытые разделы каталога и обработает карточки в пределах указанного лимита.{% else %}Задайте скорость и количество карточек. Система запустит одно задание обновления известных товаров.{% endif %}</p>
+{% set minimum_pause=20 if item.code=='intervesp' else 2 if item.code=='ivstankomaster' else 0.001 %}
+{% set default_search=item.code=='ivstankomaster' or item.products==0 %}
+{% set displayed_min=[minimum_pause,cfg.delay_min_seconds]|max %}
+{% set displayed_max=[minimum_pause,cfg.delay_max_seconds]|max %}
+<h3>Сбор товаров</h3>
 {% if item.manual_job_expired %}<p class="notice">Нет связи с исполнителем. Можно закрыть прерванное задание, сохранив его результаты.</p><form method="post" action="/suppliers/{{item.id}}/close-expired-job"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="job_id" value="{{item.job_id}}"><button class="secondary">Закрыть прерванное задание</button></form>
 {% elif item.has_running_job or item.job_status=='running' %}<p class="notice">Сбор выполняется. Ход работы — в разделе «Сбор и запуски».</p><form method="post" action="/suppliers/{{item.id}}/stop-source"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="job_id" value="{{item.job_id}}"><button class="secondary">Остановить парсинг</button></form>
 {% elif item.manual_job_queued %}
@@ -15,11 +19,16 @@
 {% elif item.has_queued_job or item.job_status=='queued' %}<p class="notice">Задание ожидает начала. Повторный запуск не создаст второй сбор.</p>{% endif %}
 {% if not item.manual_job_expired and not item.manual_job_queued %}<form method="post" action="/suppliers/{{item.id}}/manual-start" class="manual-start">
 <input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="revision" value="{{cfg.revision}}">
-{% if item.code=='ivstankomaster' %}<input type="hidden" name="collection_mode" value="DISCOVERY">{% endif %}
-<fieldset><legend>Пауза между запросами, сек.</legend><div class="collection-range"><label>От<input type="number" name="delay_min_seconds" min="0.001" max="86400" step="0.001" value="{{cfg.delay_min_seconds|number}}" required {{'readonly' if current_user.role!='ADMIN'}}></label><label>До<input type="number" name="delay_max_seconds" min="0.001" max="86400" step="0.001" value="{{cfg.delay_max_seconds|number}}" required {{'readonly' if current_user.role!='ADMIN'}}></label></div></fieldset>
+<label>Режим сбора<select name="collection_mode">
+  <option value="REFRESH">Обновить известные товары</option>
+  <option value="DISCOVERY"{% if default_search %} selected{% endif %}>Найти новые товары</option>
+</select></label>
+<p class="form-hint">Поиск обходит каталог или карту сайта и пропускает сохранённые адреса.</p>
+<fieldset><legend>Пауза между запросами, сек.</legend><div class="collection-range"><label>От<input type="number" name="delay_min_seconds" min="{{minimum_pause}}" max="86400" step="0.001" value="{{displayed_min|number}}" required {{'readonly' if current_user.role!='ADMIN'}}></label><label>До<input type="number" name="delay_max_seconds" min="{{minimum_pause}}" max="86400" step="0.001" value="{{displayed_max|number}}" required {{'readonly' if current_user.role!='ADMIN'}}></label></div></fieldset>
+{% if item.code=='intervesp' %}<p class="form-hint">По последней проверке правил Intervesp требуется пауза от 20 секунд.</p>{% endif %}
 <p class="form-hint">Меньше пауза — быстрее сбор. Правила сайта могут увеличить задержку.</p>
 <label>Количество карточек<input type="number" name="max_products" min="1" max="100000" required placeholder="Например, 100"></label>
 {% if current_user.role=='ADMIN' %}<label>Лимит времени, часов<input type="number" name="duration_hours" min="1" max="24" step="1" placeholder="По настройкам источника"></label>{% endif %}
 {% if not item.enabled %}<p class="form-hint">Запуск включит этот источник. Другие поставщики и расписание не изменятся.</p>{% endif %}
-<button class="manual-start-button">Начать парсинг</button><p class="form-hint manual-form-hint" role="status">{% if item.code=='ivstankomaster' %}В карточках сохраняются цены с НДС.{% else %}Будут обновлены сохранённые карточки.{% endif %} Импорт на сайт не выполняется.</p>
+<button class="manual-start-button">Начать парсинг</button><p class="form-hint manual-form-hint" role="status">{% if item.code=='ivstankomaster' %}В карточках сохраняются цены с НДС. {% endif %}Найденные товары сохраняются в панели. Импорт на сайт не выполняется.</p>
 </form>{% endif %}<p><a href="/suppliers/{{item.id}}/parsing">Дополнительные настройки и история</a></p>

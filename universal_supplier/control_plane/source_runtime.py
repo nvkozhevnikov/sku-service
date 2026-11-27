@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import asdict,replace
 from datetime import datetime, timezone
 from pathlib import Path
-import hashlib, json, math, os, time, threading
+import hashlib, json, math, os, re, time, threading
 from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -19,7 +19,8 @@ from .source_jobs import RUNTIME_SOURCES, NATIVE_SOURCES, validate_url, parse_ex
 from .rate_control import SystemClock
 from .source_backend import SourceUpdateRejected
 from universal_supplier.commercial_persistence import HttpCapture, product_card_from_snapshot
-from universal_supplier.http_capture import ProductTargetOutsideBatch, UrllibPublicHttpClient, MAX_RESPONSE_BYTES, sanitise_html
+from universal_supplier.http_capture import (ProductTargetOutsideBatch, UrllibPublicHttpClient,
+                                             MAX_RESPONSE_BYTES, public_transport_url, sanitise_html)
 from universal_supplier.ltt_uss_capture import sanitise_for_charset, charset_from_response
 from universal_supplier.kami_checkpoint import write_checkpoint
 
@@ -124,6 +125,12 @@ def checked_input(value,code,*,previous_engine=None):
     if value['mode']=='REFRESH' and not entries:raise ValueError('REFRESH_HAS_NO_KNOWN_URLS')
     for u in value.get('seeds',[]):validate_node(code,u)
     if value['mode']=='DISCOVERY' and not value.get('seeds'):raise ValueError('DISCOVERY_SEEDS_REQUIRED')
+    if 'discovery_known_urls' in value:
+        known=value['discovery_known_urls']
+        if (value['mode']!='DISCOVERY' or not isinstance(known,list) or len(known)>200000
+                or any(type(url) is not str or not url or len(url)>4096 for url in known)
+                or known!=sorted(set(known))):
+            raise ValueError('DISCOVERY_KNOWN_URLS_INVALID')
     if 'canary' in value:
         from .source_canary import validate_input
         validate_input(value)
@@ -138,10 +145,11 @@ def read_input(code,owner,sha,*,previous_engine=None):
 def runtime_enabled():return os.environ.get('STERBRUST_SOURCE_RUNTIME_ENABLED')=='YES'
 
 def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None):
-    from .manual_collection import running_manually
+    from .manual_collection import resume_duration_override, running_manually
     manual=running_manually(job)
     manual_resume=job.settings_snapshot.get('manual_resume') if manual else None
-    manual_robots_attempts=job.settings_snapshot['manual_collection'].get('robots_attempts',1) if manual else None
+    manual_marker = job.settings_snapshot.get('manual_collection') if manual else {}
+    manual_robots_attempts=manual_marker.get('robots_attempts',1) if manual else None
     if job.settings_snapshot.get('source_batch'):
         from .source_batch import validate_snapshot
         validate_snapshot(job.settings_snapshot)
@@ -157,12 +165,22 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     if type(persist) is not bool:raise ValueError('PERSIST_SOURCE_DATA_MUST_BE_BOOLEAN')
     if persist and os.environ.get('STERBRUST_ALLOW_SOURCE_WRITES')!='YES':raise PermissionError('SOURCE_WRITES_NOT_AUTHORIZED')
     if mode=='RESUME' and not persist:raise PermissionError('RESUME_REQUIRES_SQL_READBACK')
-    limit=settings.get('max_products');pages=settings.get('max_discovery_pages',100);seconds=settings.get('max_run_duration_seconds',300)
+    limit=settings.get('max_products');pages=settings.get('max_discovery_pages',100)
+    original_seconds=settings.get('max_run_duration_seconds',300)
     if type(limit) is not int or not 1<=limit<=100000 or type(pages) is not int or not 1<=pages<=100000:raise ValueError('SOURCE_URL_BUDGET')
-    if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<seconds<=86400:raise ValueError('SOURCE_TIME_BUDGET')
+    if type(original_seconds) not in (int,float) or not math.isfinite(original_seconds) or not 0<original_seconds<=86400:raise ValueError('SOURCE_TIME_BUDGET')
+    override=resume_duration_override(job.settings_snapshot) if manual else None
+    seconds=override or original_seconds
     clock=clock or SystemClock();start=clock.monotonic();deadline=start+seconds
+    approval_deadline = None
+    if 'expires_at' in manual_marker:
+        approval_deadline = datetime.fromisoformat(manual_marker['expires_at'])
+        remaining_seconds = (approval_deadline - datetime.now(timezone.utc)).total_seconds()
+        if remaining_seconds <= 0:
+            raise PermissionError('MANUAL_WAITING_EXPIRED')
+        deadline = min(deadline, start + remaining_seconds)
     rate=compile_policy(code,'https://'+HOSTS[code],job.settings_snapshot.get('rate_settings'),approval=settings.get('host_policy_approval'))
-    if seconds>rate.max_run_duration_seconds:raise ValueError('TIME_BUDGET_EXCEEDS_HOST_PROFILE')
+    if original_seconds>rate.max_run_duration_seconds:raise ValueError('TIME_BUDGET_EXCEEDS_HOST_PROFILE')
     # A resume must use the original input AND original policy; no hidden speedup.
     owner=settings.get('resume_owner_job_id',job.id) if mode=='RESUME' else job.id
     if type(owner) is not int or owner<1:raise ValueError('RESUME_OWNER')
@@ -183,6 +201,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         original=checked_input(original,code)
         if original['rate_policy']!=rate.snapshot():raise ValueError('SOURCE_POLICY_SNAPSHOT_CHANGED')
     canary=original.get('canary')
+    new_discovery='discovery_known_urls' in original
+    if new_discovery and not (manual and canary):
+        raise PermissionError('MANUAL_DISCOVERY_AUTHORIZATION_REQUIRED')
     if original['mode']=='REFRESH' and len(original['entries'])>limit:raise ValueError('SNAPSHOT_EXCEEDS_APPROVED_TOTAL_CAP')
     gate_size=(canary or {}).get('safety_gate_size',settings.get('safety_gate_size',5))
     if type(gate_size) is not int or not 1<=gate_size<=20:raise ValueError('SAFETY_GATE_SIZE')
@@ -214,6 +235,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     lease_alive=LEASE_ALIVE.get()
     batch_execution_until=None
     def stopped():
+        if approval_deadline is not None and datetime.now(timezone.utc) >= approval_deadline:
+            return 'MAX_RUN_DURATION_EXCEEDED'
         from .source_autonomy import stop_reason
         autonomous_stop=stop_reason()
         if autonomous_stop:return autonomous_stop
@@ -236,7 +259,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
     identity={'status':'NOT_RUN','matching_applied':False,'total':0};records={};robot=None
     robots_exception_applied=None
     isolated=[];consecutive_card_errors=0;network_pauses=0
-    from .source_resume import (MANUAL_TRANSPORT_ERRORS, STOPPED_REQUEST, manual_redirect_receipt,
+    network_backoff=0
+    from .source_resume import (MANUAL_TRANSPORT_ERRORS, MANUAL_TLS_EOF, STOPPED_REQUEST, manual_redirect_receipt,
                                 manual_stop_receipt, manual_transport_receipt, quarantine_evidence_present)
 
     def deferred_count(checkpoint):
@@ -286,7 +310,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             return robot is not None and robot.can_fetch(AGENT,url)
         robots_url='https://'+HOSTS[code]+'/robots.txt'
         dispatch_budget=None
-        if canary and original['mode']=='REFRESH':
+        if canary and (original['mode']=='REFRESH' or new_discovery):
             from .source_canary import DispatchBudget
             isolate_repeats=False
             if approved and approved.get('continuation',{}).get('operator_extension'):
@@ -296,14 +320,25 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                                            robots_limit=manual_robots_attempts or 1)
             if retry_network is not None:dispatch_budget.attempts=1
         frozen_urls={entry['url'] for entry in original['entries']}
+        wire_scope = {}
+        discovery_products_selected=False
+        if manual and canary and code in ('ltt_msk', 'ltt_sib', 'ltt_yug') and original['mode']=='REFRESH':
+            for logical in frozen_urls:
+                wire = public_transport_url(logical)
+                if wire in wire_scope and wire_scope[wire] != logical:
+                    raise ValueError('SOURCE_TRANSPORT_URL_COLLISION')
+                wire_scope[wire] = logical
         def request_url(url):
+            url = wire_scope.get(url, url)
             if url in blocked_scope_urls:
                 if fetcher is not None:fetcher.stop('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
                 raise ValueError('OPERATOR_SCOPE_QUARANTINE_NO_HTTP')
             outside_retry=retry_network is not None and url not in (robots_url,retry_target)
             outside_refresh=(canary or scope_policy_active) and original['mode']=='REFRESH' and url!=robots_url and url not in frozen_urls
+            outside_discovery=(new_discovery and discovery_products_selected
+                               and url!=robots_url and url not in frozen_urls)
             already_saved=manual and cp.state['terminal'].get(url,{}).get('state')=='COMMITTED'
-            if outside_retry or outside_refresh or already_saved:
+            if outside_retry or outside_refresh or outside_discovery or already_saved:
                 if manual:
                     from universal_supplier.url_safety import validate_public_http_url
                     p=urlsplit(url)
@@ -324,8 +359,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     else:raise FrozenScopeRefusal(url)
                 if fetcher is not None:fetcher.stop('CANARY_URL_OUTSIDE_FROZEN_BATCH')
                 raise ValueError('CANARY_URL_OUTSIDE_FROZEN_BATCH')
-            p=urlsplit(url)
             if url==robots_url:return url
+            if new_discovery and not discovery_products_selected:return validate_node(code,url)
             try:return validate_url(code,url)
             except ValueError:return validate_node(code,url)
         isolate_timeouts=False
@@ -338,7 +373,11 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             prevent_unknown_retry=bool(job.settings_snapshot.get('automation')),robots_url=robots_url,
             manual_product_attempts=manual,manual_robots_attempts=manual_robots_attempts)
         fetcher.stop_sink=lambda reason:frozen_json(run_folder/'FIRST_STOP.json',{'reason':reason,'job_id':job.id,'observed_at':datetime.now(timezone.utc).isoformat()})
-        if dispatch_budget:fetcher.request_start_guard=dispatch_budget
+        if dispatch_budget:
+            def guard_dispatch(url):
+                if not new_discovery or url==robots_url or discovery_products_selected:
+                    dispatch_budget(wire_scope.get(url,url))
+            fetcher.request_start_guard=guard_dispatch
         capture_archive_lock = threading.Lock()
         def archive(outcome):
             if outcome.response is None:return
@@ -383,14 +422,22 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         fetcher.error_sink=archive_error
         origin={'source':code,'job_id':owner,'manifest_sha256':sha}
 
-        def defer_transport_error(checkpoint,outcome):
+        product_attempts=dispatch_budget.attempts if dispatch_budget is not None else rate.max_attempts
+        if retry_network is not None:product_attempts=1
+
+        def defer_transport_error(checkpoint,outcome,attempt_limit):
             nonlocal consecutive_card_errors
             if not (manual and (outcome.timeout_refusal or outcome.disconnect_refusal) and outcome.response is None
                     and outcome.transport_started is True):return False
             receipt=manual_transport_receipt(origin,outcome.url,job.id,error_files[outcome.url])
+            is_tls_eof = receipt['isolation']['category'] == MANUAL_TLS_EOF
+            if is_tls_eof and not (canary and original['mode']=='REFRESH' and backend
+                                  and backend.probe(byurl[outcome.url],receipt)=='NOT_FOUND'):
+                return False
             history=checkpoint.state['terminal'].get(outcome.url,{}).get('history',[])
-            first=not any(item.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS for item in history)
-            retry=first and rate.max_attempts>1
+            previous_failures=sum(item.get('isolation',{}).get('category') in MANUAL_TRANSPORT_ERRORS
+                                  for item in history)
+            retry=not is_tls_eof and previous_failures+1<attempt_limit
             checkpoint.record_terminal([receipt],defer_to_tail=retry)
             consecutive_card_errors+=1
             if consecutive_card_errors>=rate.consecutive_error_threshold and not fetcher.network_pause.is_set():
@@ -398,16 +445,14 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             return True
 
         def wait_for_network():
-            nonlocal network_pauses,consecutive_card_errors
-            if network_pauses==len(MANUAL_NETWORK_PAUSES):
-                fetcher.stop('SOURCE_NETWORK_CIRCUIT_OPEN')
-                return False
-            delay=max(rate.cooldown_seconds,MANUAL_NETWORK_PAUSES[network_pauses])
+            nonlocal network_pauses,network_backoff,consecutive_card_errors
+            delay=max(rate.cooldown_seconds,MANUAL_NETWORK_PAUSES[network_backoff])
             until=clock.monotonic()+delay
             if until>=deadline:
                 fetcher.stop('SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW')
                 return False
             network_pauses+=1
+            network_backoff=min(network_backoff+1,len(MANUAL_NETWORK_PAUSES)-1)
             if backend:backend.progress({'phase':'NETWORK_COOLDOWN','network_pauses':network_pauses})
             while not fetcher.aborted():
                 remaining=until-clock.monotonic()
@@ -490,20 +535,36 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if mode!='RESUME':discovery.add_urls(original['seeds'])
             if discovery.state['inflight']:raise ValueError('UNCERTAIN_DISCOVERY_REQUIRES_RECONCILIATION')
             discovered=lambda:{p['url']:p for r in discovery.state['discovery_receipts'].values() for p in r.get('products',[])}
+            excluded_urls=set()
+            if new_discovery:
+                excluded_urls.update(public_transport_url(url) for url in original['discovery_known_urls'])
+                excluded_urls.update(public_transport_url(url) for url in discovered())
             if discovery.state['frontier'] and len(discovered())<limit:
                 robots();nodes=0
                 while discovery.state['frontier'] and nodes<pages and len(discovered())<limit and not fetcher.aborted():
                     if clock.monotonic()>=deadline:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');break
-                    node=discovery.claim_batch(1)[0];outcomes=fetch([node],request_scope='discovery');nodes+=1
+                    if fetcher.network_pause.is_set() and not wait_for_network():break
+                    node=discovery.claim_batch(1)[0];outcomes=fetch([node],request_scope='discovery')
                     if manual and outcomes and outcomes[0].transport_started is False:
                         discovery.return_not_requested({'url':node,'state':'NOT_REQUESTED','transport_started':False,
                             'origin':{'source':code,'job_id':owner,'manifest_sha256':sha},'reason':outcomes[0].error})
+                        if fetcher.network_pause.is_set():continue
                         fetcher.stop(fetcher.stop_reason or 'SOURCE_REQUEST_NOT_DISPATCHED')
                         break
-                    if outcomes and defer_transport_error(discovery,outcomes[0]):continue
+                    nodes+=1
+                    if outcomes and defer_transport_error(discovery,outcomes[0],rate.max_attempts):continue
                     if not outcomes or outcomes[0].error or outcomes[0].response.status_code!=200:raise ValueError(fetcher.stop_reason or 'DISCOVERY_HTTP_FAILED')
+                    network_backoff=0
                     rec=records[node];body=read_body(rec)
                     children,products=decode_node(code,node,body)
+                    if new_discovery:
+                        candidates=[]
+                        for candidate in products:
+                            wire=public_transport_url(candidate['url'])
+                            if wire not in excluded_urls:
+                                excluded_urls.add(wire)
+                                candidates.append(candidate)
+                        products=candidates
                     # Source parser validates every detail candidate before SQL.
                     discovery.complete_discovery_node(node,children,evidence_sha256=rec['evidence_sha256'],products=products)
                     consecutive_card_errors=0
@@ -516,6 +577,11 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                 candidates={p['url']:p for r in discovery.state['discovery_receipts'].values() for p in r.get('products',[])}
                 entries=[candidates[u] for u in sorted(candidates)[:limit]]
                 frozen_json(folder/'manifest.json',{'format':'source-discovered-manifest/v1','supplier_code':code,'input_sha256':sha,'entries':entries,'traversal_finished':not bool(discovery.state['frontier']),'external_catalog_completeness':'NOT_PROVEN'})
+                if new_discovery:
+                    frozen_urls={entry['url'] for entry in entries}
+                    wire_scope={public_transport_url(url):url for url in frozen_urls}
+                    dispatch_budget.select_discovered_products(frozen_urls)
+                    discovery_products_selected=True
         elif mode!='RESUME':
             frozen_json(folder/'manifest.json',{'format':'source-refresh-manifest/v1','supplier_code':code,'input_sha256':sha,'entries':entries})
         # Persist the entire frontier once. Large manifests are consumed in
@@ -523,14 +589,31 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         if entries and not termination:
             cp.add_urls([e['url'] for e in entries]);byurl={e['url']:e for e in entries}
             legacy = manual_resume or {}
-            requires_sql = legacy.get('legacy_redirect') or legacy.get('legacy_stop')
-            receipt = requires_sql or legacy.get('legacy_timeout')
+            receipt = legacy.get('legacy_redirect') or legacy.get('legacy_stop') or legacy.get('legacy_timeout')
             if receipt:
                 if not quarantine_evidence_present(receipt,{'url':receipt['url']}):
                     raise ValueError('MANUAL_ISOLATION_PROOF_REQUIRED')
-                if requires_sql and backend.probe(byurl[receipt['url']],receipt)!='NOT_FOUND':
+                category = receipt['isolation']['category']
+                if category not in MANUAL_TRANSPORT_ERRORS and backend.probe(byurl[receipt['url']],receipt)!='NOT_FOUND':
                     raise ValueError('MANUAL_ISOLATION_SQL_ABSENCE_NOT_PROVEN')
                 cp.record_terminal([receipt])
+            recovered = legacy.get('recovered_receipt')
+            if recovered:
+                url = recovered['url']
+                previous = cp.state['terminal'][url]
+                if recovered.get('wire_evidence'):
+                    if (previous['state']!='UNCERTAIN' or recovered['state']!='NOT_REQUESTED'
+                            or backend.probe(byurl[url],recovered)!='NOT_FOUND'):
+                        raise ValueError('MANUAL_WIRE_REFUSAL_NOT_PROVEN')
+                    cp.restore_wire_refusal(recovered)
+                else:
+                    from .manual_saved_recovery import optimum_archive_receipt
+                    filename = recovered['saved_response']['file']
+                    if (previous['state']!='FAILED' or not re.fullmatch(r'[a-f0-9]{64}\.json',filename)
+                            or digest(optimum_archive_receipt(previous['receipt'],folder/'responses'/filename))!=digest(recovered)
+                            or backend.probe(byurl[url],recovered) not in ('NOT_FOUND','COMMITTED')):
+                        raise ValueError('MANUAL_SAVED_CAPTURE_NOT_PROVEN')
+                    cp.record_terminal([recovered])
             if scope_policy_active and original['mode']=='DISCOVERY':
                 from .source_recovery import scope_policy_exclusions
                 for entry,receipt in scope_policy_exclusions(backend.repo.connection,approved,code,entries,owner,sha):
@@ -552,7 +635,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                         receipts.append(receipt)
                     elif url in cp.state['frontier']:receipts.append({'url':url,'state':'NOT_REQUESTED','origin':{'source':code,'job_id':owner,'manifest_sha256':sha}})
                 def probe(e,r):
-                    if r and r['state']=='NOT_REQUESTED':return 'NOT_FOUND'
+                    if r and r['state']=='NOT_REQUESTED' and not r.get('wire_evidence'):return 'NOT_FOUND'
                     return backend.probe(e,r) if backend else 'UNKNOWN'
                 classified=classify(entries,receipts,probe,source=code,parent_job_id=owner,manifest_sha256=sha)
                 from . import automation_execution
@@ -664,9 +747,9 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if cp.state['frontier'] and not termination:
                 if robot is None:robots()
                 fetched_count=0
-                # A manually deferred timeout can be visited once more at the
-                # tail. The product identity limit remains the frozen manifest.
-                dispatch_limit=limit*2 if manual and rate.max_attempts>1 else limit
+                # A proven transport failure goes to the end of the same
+                # queue. Both the original identities and attempt limits hold.
+                dispatch_limit=limit*product_attempts if manual else limit
                 if retry_network is not None:dispatch_limit=len(retry_network)
                 while cp.state['frontier'] and fetched_count<dispatch_limit and not fetcher.aborted():
                     if clock.monotonic()>=deadline:fetcher.stop('MAX_RUN_DURATION_EXCEEDED');break
@@ -688,7 +771,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                     # starting a GET. Those claims do not consume HTTP budget.
                     fetched_count+=sum(o.transport_started is not False for o in outcomes) if manual else len(urls)
                     for outcome in outcomes:
-                        if defer_transport_error(cp,outcome):continue
+                        if defer_transport_error(cp,outcome,product_attempts):continue
                         if manual and (outcome.error_diagnostics or {}).get('wire_outcome')=='REDIRECT_NOT_FOLLOWED':
                             receipt=manual_redirect_receipt(origin,outcome.url,job.id,error_files[outcome.url])
                             cp.record_terminal([receipt])
@@ -727,6 +810,7 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
                             continue
                         # All successful responses are already durably captured.
                         if fetcher.stop_reason:continue
+                        network_backoff=0
                         try:
                             process(byurl[outcome.url],records[outcome.url]);consecutive_card_errors=0
                         except CardExtractionError as error:isolate(byurl[outcome.url],error,record=records[outcome.url])
@@ -737,7 +821,10 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
             if not plan['automatic_resume_allowed']:raise ValueError('UNCERTAIN_OR_FAILED_RESUME_REQUIRES_OPERATOR')
             resume_safe=plan['automatic_resume_allowed'] and bool(cp.state['frontier'] or plan['offline_pending'])
         else:
-            plan={'uncertain':[],'failed_requires_decision':[]};resume_safe=bool(termination=='DISCOVERY_PAGE_BUDGET' and not discovery.state['inflight'])
+            plan={'uncertain':[],'failed_requires_decision':[]}
+            discovery_pause=manual and termination in ('MAX_RUN_DURATION_EXCEEDED','SOURCE_NETWORK_RETRY_OUTSIDE_WINDOW')
+            resume_safe=bool((termination=='DISCOVERY_PAGE_BUDGET' or discovery_pause)
+                             and discovery.state['frontier'] and not discovery.state['inflight'])
         if matching_pending and not (termination and termination.startswith(('SOURCE_BLOCKED','OPERATOR','SQL_','UNCERTAIN','HOST_LEASE','AUTONOMOUS','AUTOMATION','COMMERCIAL_REFRESH_'))):
             finish_pending_matching()
     except Exception as e:
@@ -794,6 +881,8 @@ def run_source(job,config,*,backend_factory=None,client_factory=None,clock=None)
         from .automation_execution import stop_reason as global_stop_reason
         result['stop_scope']=failure_scope(termination,{'resume_uncertain':result['resume_uncertain'],'resume_available':result['resume_available']}) if termination else None
         result['global_stop_reason']=global_stop_reason()
+        if override is not None:result['run_duration_budget_seconds']=seconds
+        if new_discovery:result['new_product_search']=True
         if result['global_stop_reason']:result['stop_scope']='system'
         if canary:result['canary']={**canary,'product_requests':list(dispatch_budget.products) if dispatch_budget else [],'robots_requests':dispatch_budget.robots if dispatch_budget else 0}
         write_checkpoint(run_folder/'result.json',result,durable=True)

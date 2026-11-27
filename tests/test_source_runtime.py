@@ -38,13 +38,20 @@ def isolation(monkeypatch,tmp_path):
     monkeypatch.setattr(socket.socket,'connect',deny);monkeypatch.setattr(socket,'getaddrinfo',deny)
     monkeypatch.setattr('psycopg.connect',deny)
 
-def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',backend=None,config=None):
+def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',backend=None,config=None,
+          new_search=False,known_card=False,all_known=False,redirect_to_known=False):
+    from xml.sax.saxutils import escape
+    from universal_supplier.control_plane.manual_collection import MANUAL_EXECUTION
+
     if code=='partner_st':
         from test_partner_pilot import html
         body,url,charset,_=html(1).encode(),'https://partner-st.ru/item-1/','utf-8',None
     elif code=='optimum':
         from test_optimum_source import HTML,URL
         body,url,charset,_=HTML.encode(),URL,'utf-8',None
+    elif code=='ivstankomaster':
+        from test_ivstankomaster import URL,card
+        body,url,charset,_=card('<p>280600 (с НДС)</p>').encode(),URL,'utf-8',None
     else:body,url,charset,_=saved_case(code)
     clock=Clock();calls=[];backend=backend or Backend()
     from universal_supplier.ltt_uss_capture import sanitise_for_charset
@@ -56,21 +63,79 @@ def setup(code,mode='REFRESH',*,status=200,robots='User-agent: *\nAllow: /\n',ba
         'seeds':root_urls(code) if mode=='DISCOVERY' else [],'rate_policy':rate.snapshot(),'engine_sha256':engine_fingerprint()}
     job=CrawlJob(1,1,code,code,'https://'+HOSTS[code]+'/','manual','full','running',datetime.now(timezone.utc),
         {'source_input':value,'rate_settings':rate.snapshot(),'crawl_settings':{'collection_mode':mode,'persist_source_data':True,'max_products':5,'max_discovery_pages':5,'host_policy_approval':approval_for('https://'+HOSTS[code])}})
+    base='https://'+HOSTS[code]
+    known=url if all_known else base+'/known-card/'
+    if new_search:
+        from test_source_canary import CFG
+        from universal_supplier.control_plane.source_canary import build_preview
+        config=CFG
+        supplier=(code,code,base+'/',True,{'host_policy_approval':approval_for(base)},rate.snapshot())
+        snapshot=build_preview(1,supplier,[],config,1,'DISCOVERY',
+                               discovery_known_urls=[known] if known_card or all_known else [])['snapshot']
+        snapshot['manual_collection']={'robots_attempts':1}
+        job=replace(job,settings_snapshot=snapshot)
+        backend.matching=lambda ids:{'status':'succeeded','matching_applied':False}
     class Client:
         def get_validated(self,target,*,validator,timeout_seconds):
             validator(target);self.before_request(target);calls.append((target,clock.monotonic(),timeout_seconds))
             if target.endswith('/robots.txt'):return HttpResponse(target,200,'text/plain',robots.encode())
             if target in root_urls(code):
-                content=(f'<div class="productCard"><a class="productCard__name" href="{url}">Machine</a></div>' if code=='kami' else f'<urlset><url><loc>{url}</loc></url></urlset>')
-                return HttpResponse(target,200,'text/html' if code=='kami' else 'application/xml',content.encode())
+                if code=='kami':
+                    content=f'<div class="productCard"><a class="productCard__name" href="{url}">Machine</a></div>'
+                elif code=='ivstankomaster':
+                    content=f'<a href="{url}">Machine</a>'
+                else:
+                    locs=[known,url] if known_card else [url]
+                    content='<urlset>'+''.join(f'<url><loc>{escape(loc)}</loc></url>' for loc in locs)+'</urlset>'
+                return HttpResponse(target,200,'text/html' if code in ('kami','ivstankomaster') else 'application/xml',content.encode())
+            if redirect_to_known:
+                from urllib.request import Request
+                from universal_supplier.http_capture import _BoundedRedirectHandler
+                handler=_BoundedRedirectHandler(validator,self.before_request)
+                handler.redirect_request(Request(target),None,302,'Found',{},known)
+                pytest.fail('A new-card request must never follow a redirect to an old address')
             return HttpResponse(target,status,'text/html; charset='+charset,body,headers={'Retry-After':'120'})
     def run(j=job):
         token=LEASED_HOST.set(j.domain)
+        manual_token=MANUAL_EXECUTION.set(j.id if new_search else None)
         try:
-            if code in ('partner_st','optimum'):return run_source(j,config,client_factory=Client,backend_factory=lambda cfg,source:backend,clock=clock)
+            if new_search or code in ('partner_st','optimum'):return run_source(j,config,client_factory=Client,backend_factory=lambda cfg,source:backend,clock=clock)
             return make_source_runner(code,transport_factory=Client,runtime_backend_factory=lambda cfg,source:backend,runtime_clock=clock)(j,config)
-        finally:LEASED_HOST.reset(token)
+        finally:
+            MANUAL_EXECUTION.reset(manual_token)
+            LEASED_HOST.reset(token)
     return run,job,backend,calls,url
+
+
+@pytest.mark.parametrize('code',(*SOURCES,'optimum','partner_st','ivstankomaster'))
+def test_manual_new_search_uses_real_adapter_after_discovery(code):
+    run,job,backend,calls,url=setup(code,'DISCOVERY',new_search=True)
+    result=run()
+    assert result['status']=='succeeded',result
+    assert result['new_product_search'] and result['sql_committed']==len(backend.writes)==1
+    assert result['canary']['product_requests']==[url]
+    assert result['canary']['robots_requests']==1
+    assert not result['deactivation_allowed'] and not result['matching_applied']
+
+
+@pytest.mark.parametrize('all_known',[False,True])
+def test_new_search_skips_active_urls_before_counting_towards_card_limit(all_known):
+    run,_,backend,calls,url=setup('partner_st','DISCOVERY',new_search=True,
+                                  known_card=True,all_known=all_known)
+    result=run()
+    assert result['status']=='succeeded',result
+    expected=[] if all_known else [url]
+    assert result['canary']['product_requests']==expected
+    assert result['found']==len(backend.writes)==len(expected)
+    assert [target for target,_,_ in calls]==['https://partner-st.ru/robots.txt',*root_urls('partner_st'),*expected]
+
+
+def test_new_search_cannot_follow_product_redirect_to_known_address():
+    run,_,backend,_,url=setup('partner_st','DISCOVERY',new_search=True,known_card=True,redirect_to_known=True)
+    result=run()
+    assert result['status']=='partial' and not result['termination_reason']
+    assert result['canary']['product_requests']==[url] and not backend.writes
+    assert result['quarantined'][0]['isolation']['category']=='manual_out_of_scope_redirect'
 
 @pytest.mark.parametrize('code',SOURCES)
 @pytest.mark.parametrize('mode',['REFRESH','DISCOVERY'])
