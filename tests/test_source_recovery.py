@@ -9,6 +9,7 @@ from pathlib import Path
 import socket
 
 import pytest
+import subprocess
 
 from universal_supplier.control_plane import source_recovery as recovery, source_batch as batch
 from universal_supplier.control_plane.source_resume import digest
@@ -415,6 +416,9 @@ def test_exact_original_windows_engine_reconstruction(real):
     value=real[0];root=Path(__file__).resolve().parents[1]
     try:
         hashes=recovery.base_files(root,value['parents'][0][4]['source_batch']['head'],value['input']['engine_sha256'])
+    except subprocess.CalledProcessError:
+        # Shallow clones (CI checkout depth 1) do not contain the batch base commit.
+        pytest.skip('LIVE11 base commit not in this clone (shallow checkout)')
     except PermissionError as error:
         if str(error)!='RECOVERY_UNCHANGED_FILE_CHANGED':raise
         # A point-in-time proof: it holds only while every non-engine file still

@@ -4,6 +4,23 @@ import pytest
 from competitor_intel.execution import CollectionService,settings,execution_lock
 from competitor_intel.worker_dispatch import liveness,process_identity,load
 
+def _breakaway_allowed():
+    """The worker spawns with CREATE_BREAKAWAY_FROM_JOB so it outlives the UI.
+
+    Hosted CI runners (GitHub Actions Windows) wrap every process in a job that
+    forbids breakaway; the spawn then fails closed by design. Real-process tests
+    need a host where breakaway is allowed (the operator workstation).
+    """
+    if os.name!='nt':return True
+    try:
+        proc=subprocess.Popen([sys.executable,'-c','pass'],creationflags=subprocess.CREATE_NO_WINDOW|subprocess.CREATE_BREAKAWAY_FROM_JOB)
+    except OSError:return False
+    proc.wait(30);return True
+
+
+needs_breakaway=pytest.mark.skipif(not _breakaway_allowed(),reason='host job object forbids CREATE_BREAKAWAY_FROM_JOB (hosted CI)')
+
+
 def fixture_service(path,**spec):
     path.mkdir(parents=True,exist_ok=True)
     (path/'fixture.json').write_text(json.dumps({'mode':'ISOLATED_FIXTURE_ONLY',**spec}),encoding='utf-8')
@@ -42,6 +59,7 @@ def test_fixture_backend_cannot_use_business_runtime(tmp_path):
     from competitor_intel.execution import ROOT
     with pytest.raises(ValueError):CollectionService(None,None,ROOT/'competitor-data/collection',fixture_spec=tmp_path/'fixture.json')
 
+@needs_breakaway
 def test_failed_worker_finalizes_without_secret_leak(tmp_path):
     s=fixture_service(tmp_path,fail=True);result=s.submit('OPERATOR_UI',['metalmaster'],1)
     assert result['status']!='FAILED' or result.get('run_id')
@@ -73,6 +91,7 @@ def test_pending_start_reservation_blocks_cli_and_second_UI(tmp_path):
     assert s.run('CLI_MANUAL')['status']=='SKIP_ALREADY_RUNNING'
     assert not (tmp_path/'fixture-runs.json').exists()
 
+@needs_breakaway
 @pytest.mark.skipif(os.name != 'nt' and not Path('/proc/self/stat').exists(),
                     reason='worker_dispatch.process_identity reads Win32 or Linux /proc (not macOS)')
 def test_actual_worker_disappearance_is_orphan_not_UI_failure(tmp_path):
